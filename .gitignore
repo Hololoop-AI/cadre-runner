@@ -1,0 +1,5 @@
+# Local-only: holds machine-specific repo list + allowed_actors (no secrets,
+# but per-machine). Copy from config.example.toml on each host.
+config.toml
+__pycache__/
+*.pyc

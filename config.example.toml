@@ -1,0 +1,37 @@
+# PR-gated pipeline — local runner config
+# Copy to config.toml (same dir) or pass --config. Paths may use ~.
+
+[runner]
+poll_interval = 45                                  # seconds between poll passes
+data_dir = "~/.local/state/pipeline-runner"         # registry, etags, checkouts, logs
+skills_source = "~/dev-config/ai-workflow-config/skills"  # where `install` links skills from
+
+[claude]
+bin = "claude"
+effort = "high"
+# Autonomy requires no permission prompts. "bypass" = --dangerously-skip-permissions,
+# confined to the runner-owned checkout by convention (not enforcement). Anything else
+# is passed through as --permission-mode <value> (runs may then block on prompts).
+permission_mode = "bypass"
+timeout_seconds = 7200
+# Models are ALWAYS passed explicitly (sessions must not inherit the laptop default).
+default_model = "opus"
+
+[claude.stage_models]
+intake = "opus"
+grill = "opus"
+contracts = "opus"
+tests = "sonnet"
+build = "sonnet"
+revise = "sonnet"
+
+[limits]
+max_rounds_per_stage = 5           # grill rounds / revise rounds per PR before escalation
+allowed_actors = ["BrandonPerez-Dev"]  # GitHub logins whose comments/merges are honored
+
+# One [[repos]] block per target repo the runner may operate on.
+[[repos]]
+name = "BrandonPerez-Dev/pipeline-sandbox"   # owner/repo on GitHub
+variant = "change-spec"                      # "change-spec" | "spec-as-source"
+default_branch = "main"
+# checkout is optional; defaults to <data_dir>/checkouts/<repo-name>
