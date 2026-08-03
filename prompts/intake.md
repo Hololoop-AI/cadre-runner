@@ -17,8 +17,14 @@ Do, in order:
 3. **Planning artifacts.** Create `$planning_branch` off `$feature_branch` — use exactly this branch name; the daemon routes events by it. Load context first — read the codebase: stack, conventions, structure, existing tests (invoke the investigating skill for anything non-obvious). Then derive the scope using the slicing skill's methodology in autonomous mode: no user checkpoints — record reasoning, alternatives, and non-goals in the artifact instead.
 
    **Write for a fast read. The driver reviews this and their reading time is the bottleneck — a scope that could be settled in a few prompts must not become a 300-line spec.** Lead with the decision, cut restatement and ceremony, and only write down what needs durable capture (decisions, contracts, non-obvious trade-offs) — not a narration of everything.
-   - Variant **change-spec**: write `changes/$story_slug/change-spec.md`, kept tight and scannable (aim well under ~120 lines for a normal change): **problem** (2–3 sentences), **approach** (one short paragraph), **slices** (one line each — name + what it delivers), **open questions** (only those that genuinely need the driver). Add a repo map or per-file notes *only where they add signal the slice list doesn't* — as terse one-liners, never a paragraph per file.
-   - Variant **spec-as-source**: land scope as `spec/*.md` stubs + `context/*.md` decision entries per the engineering skill's model — same concision bar.
+   - Variant **change-spec**: write `changes/$story_slug/change-spec.md` with **EXACTLY these four sections and no others** — target **under 80 lines total**:
+     - **Problem** — 2–3 sentences.
+     - **Approach** — one paragraph: the solution's shape and the load-bearing decisions. Name a rejected alternative only if it genuinely matters, as a single clause — never its own section.
+     - **Slices** — one line each: name + what it delivers.
+     - **Open questions** — only what genuinely needs the driver, one line each.
+
+     Do **NOT** add sections such as "repo map", "file-level change details", "verified against code", "wiring status", or "rejected alternatives". Fold any essential such point into Approach or an Open Question as one terse line. You will often have done deep code analysis and self-interrogation to get here — the **conclusions** belong in the spec; the analysis does not. Self-interrogation findings go as PR review comments (step 5), never as write-backs inside the spec.
+   - Variant **spec-as-source**: land scope as `spec/*.md` stubs + `context/*.md` decision entries per the engineering skill's model — same four-part, under-80-line bar per spec file.
    Commit and push.
 
 4. **Planning PR.** Open with base `$feature_branch`, head `$planning_branch`, title "[planning] $story_id: $story_title". Body: story summary, slice list, and a **"How to drive this PR"** section: leave line comments or a review on the artifact; summon the agent with `@claude` in a comment or review body (write the token in backticks here — PR bodies are not scanned for summons, but comments are, and ground rule 5 still applies to everything else you post); merging this PR approves the scope and starts contract authoring.
