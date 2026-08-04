@@ -87,7 +87,7 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
 
 
 def coalesce(actions_with_events: list[tuple[dict, dict]]) -> list[tuple[dict, dict]]:
-    """One run per (stage, pr, slice) per pass — a single grill/revise run
+    """One run per (stage, pr, slice) per pass — a single interrogate/revise run
     processes ALL open threads, so N summons collapse into one invocation."""
     out, seen_keys = [], set()
     for action, event in actions_with_events:

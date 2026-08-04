@@ -19,14 +19,14 @@ default_model = "opus"
 
 [claude.stage_models]
 intake = "opus"
-grill = "opus"
+interrogate = "opus"
 contracts = "opus"
 tests = "sonnet"
 build = "sonnet"
 revise = "sonnet"
 
 [limits]
-max_rounds_per_stage = 5           # grill rounds / revise rounds per PR before escalation
+max_rounds_per_stage = 5           # interrogate rounds / revise rounds per PR before escalation
 allowed_actors = ["BrandonPerez-Dev"]  # GitHub logins whose comments/merges are honored
 
 # One [[repos]] block per target repo the runner may operate on.

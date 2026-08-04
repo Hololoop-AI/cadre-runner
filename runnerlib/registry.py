@@ -68,8 +68,8 @@ class Registry:
             "feature_branch": feature_branch(slug),
             "tracking_issue": None,
             "status": "active",          # active | escalated | done
-            "phase": "grill",            # grill | slices | assembly-pending | done
-            "iterations": {"grill": 0, "revise": {}},  # revise keyed by PR number
+            "phase": "interrogate",            # interrogate | slices | assembly-pending | done
+            "iterations": {"interrogate": 0, "revise": {}},  # revise keyed by PR number
             "slices": {},                # name -> {contract_pr, contract_merged, tests_pr, ...}
             "seen": {"comments": [], "review_comments": [], "reviews": [], "merged": []},
             "since": _now_iso(),

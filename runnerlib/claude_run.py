@@ -9,10 +9,10 @@ from string import Template
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 # Skills the pipeline's sessions rely on; `install` links these into the target
-# repo's .claude/skills (grill and auto-* exist only in the skills repo, not
+# repo's .claude/skills (interrogate and auto-* exist only in the skills repo, not
 # in ~/.claude/skills, so without this step sessions can't load them).
 PIPELINE_SKILLS = [
-    "engineering", "slicing", "grill", "investigating",
+    "engineering", "slicing", "interrogate", "investigating",
     "test-planning", "auto-test-planning",
     "test-writer", "auto-test-writer",
     "build", "auto-build", "tdd", "refactor", "code-review",

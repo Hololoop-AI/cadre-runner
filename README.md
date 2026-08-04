@@ -7,7 +7,7 @@ The "work version" of the pipeline in `../design.md`: a polling daemon that driv
 ## Lifecycle
 
 ```
-pipeline start ─▶ [Planning PR + self-grill] ──you merge──▶ [Contract PR × slice] ──you merge──▶
+pipeline start ─▶ [Planning PR + self-interrogation] ──you merge──▶ [Contract PR × slice] ──you merge──▶
   [Tests PR (red, locked on merge)] ──you merge──▶ [Build PR (TDD)] ──you merge──▶ … all slices …
   ──▶ assembly stub comment (S5 not yet implemented) ──▶ you open feature→main
 ```
@@ -20,7 +20,7 @@ Slices advance independently: merge slice A's contract and its tests/build proce
 cp config.example.toml config.toml       # edit: allowed_actors, [[repos]]
 python3 pipeline.py install --repo owner/name        # clone + link skills into the checkout
 python3 pipeline.py start --repo owner/name \
-    --story-id ENG-123 --story "As a user, I want ..."   # S0: planning PR + self-grill
+    --story-id ENG-123 --story "As a user, I want ..."   # S0: planning PR + self-interrogation
 python3 pipeline.py run                  # the daemon; leave it running
 python3 pipeline.py status               # local view of every story
 ```
@@ -42,11 +42,11 @@ Deterministic, no model calls — `runnerlib/dispatcher.py`:
 
 | Event | Guard | Action |
 |---|---|---|
-| Planning PR merged | phase == grill | run `contracts` (opens one Contract PR per slice) |
+| Planning PR merged | phase == interrogate | run `contracts` (opens one Contract PR per slice) |
 | Contract PR (slice s) merged | phase == slices | run `tests` for s |
 | Tests PR (slice s) merged | phase == slices | run `build` for s |
 | Build PR (slice s) merged | phase == slices | mark built; when **all** slices built + no open pipeline PRs → assembly stub |
-| `@claude` on Planning PR | phase == grill, round < cap | run `grill` (processes every open thread) |
+| `@claude` on Planning PR | phase == interrogate, round < cap | run `interrogate` (processes every open thread) |
 | `@claude` on contract/tests/build PR | round < cap for that PR | run `revise` on that PR |
 | `/status`, `/escalate` | actor allowed | status post / stop story |
 | anything by a non-allowed actor, or any body carrying the agent marker | — | dropped (loop guard) |

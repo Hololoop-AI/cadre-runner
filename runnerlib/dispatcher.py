@@ -8,7 +8,7 @@ Events (dicts):
   {"kind": "command", "name": "status|escalate", "actor": login, "id": comment_id}
 
 Actions (dicts):
-  {"type": "run_stage", "stage": "contracts|grill|tests|build|revise", "slice": ..., "pr": ...}
+  {"type": "run_stage", "stage": "contracts|interrogate|tests|build|revise", "slice": ..., "pr": ...}
   {"type": "post_status"} | {"type": "escalate", "reason": str}
   {"type": "assembly_stub"} | {"type": "noop", "reason": str}
 """
@@ -40,7 +40,7 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
     if kind == "pr_merged":
         role = event["role"]
         if role == "planning":
-            if story["phase"] != "grill":
+            if story["phase"] != "interrogate":
                 return _noop(f"planning merge in phase {story['phase']!r} — phase-lock")
             return {"type": "run_stage", "stage": "contracts", "slice": None, "pr": event["pr"]}
         if story["phase"] != "slices":
@@ -58,13 +58,13 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
     if kind == "summon":
         role = event["role"]
         if role == "planning":
-            if story["phase"] != "grill":
-                return _noop("summon on planning PR outside grill phase — phase-lock")
-            rounds = story["iterations"]["grill"]
+            if story["phase"] != "interrogate":
+                return _noop("summon on planning PR outside interrogate phase — phase-lock")
+            rounds = story["iterations"]["interrogate"]
             if rounds >= limits["max_rounds_per_stage"]:
                 return {"type": "escalate",
-                        "reason": f"grill hit {rounds} rounds (cap {limits['max_rounds_per_stage']})"}
-            return {"type": "run_stage", "stage": "grill", "slice": None, "pr": event["pr"]}
+                        "reason": f"interrogate hit {rounds} rounds (cap {limits['max_rounds_per_stage']})"}
+            return {"type": "run_stage", "stage": "interrogate", "slice": None, "pr": event["pr"]}
         if role in ("contract", "tests", "build"):
             key = str(event["pr"])
             rounds = story["iterations"]["revise"].get(key, 0)

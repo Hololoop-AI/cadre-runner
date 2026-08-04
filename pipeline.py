@@ -4,7 +4,7 @@
 Commands:
   install --repo owner/name              clone + link pipeline skills into the checkout
   start   --repo owner/name --story ...  run intake (S0): feature branch, tracking issue,
-                                         planning PR + self-grill
+                                         planning PR + self-interrogation
   run                                    poll daemon: dispatch merges/summons to stages
   once                                   single poll pass (testing)
   status                                 print local registry state
@@ -174,7 +174,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     claude_run.ensure_checkout(story["repo"], checkout, repo_cfg["default_branch"])
     claude_run.install_skills(checkout, cfg.skills_source)
 
-    base = {"grill": stage_branch(slug, "planning")}.get(stage, story["feature_branch"])
+    base = {"interrogate": stage_branch(slug, "planning")}.get(stage, story["feature_branch"])
     if stage == "revise":
         base = story["prs_cache"][str(pr)]["head"]
     claude_run.prepare(checkout, base)
@@ -185,7 +185,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
         "planning_pr": story.get("planning_pr") or pr or "",
         "pr": pr or "", "slice": slice_name or "", "role": action.get("role", ""),
         "slice_suffix": f", slice {slice_name}" if slice_name else "",
-        "iteration": story["iterations"]["grill"] + 1 if stage == "grill"
+        "iteration": story["iterations"]["interrogate"] + 1 if stage == "interrogate"
         else story["iterations"]["revise"].get(str(pr), 0) + 1,
         "max_rounds": cfg.limits["max_rounds_per_stage"],
         "tests_branch": stage_branch(slug, "tests", slice_name) if slice_name else "",
@@ -198,8 +198,8 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     ok, result, usage = _run(cfg, stage, prompt, checkout, slug)
     log(f"{slug}: stage {stage} {'done' if ok else 'FAILED'} — {result[:200]}")
 
-    if stage == "grill":
-        story["iterations"]["grill"] += 1
+    if stage == "interrogate":
+        story["iterations"]["interrogate"] += 1
     elif stage == "revise":
         story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
     elif stage == "contracts" and ok:
@@ -229,8 +229,8 @@ def _assembly_stub(cfg, ghc, story):
 def _post_status(cfg, ghc, slug, story, open_prs):
     lines = [f"**Pipeline status — {story['story_id']}** (phase: `{story['phase']}`,"
              f" status: `{story['status']}`)", ""]
-    lines.append(f"- Planning PR: #{story.get('planning_pr')} — grill rounds: "
-                 f"{story['iterations']['grill']}/{cfg.limits['max_rounds_per_stage']}")
+    lines.append(f"- Planning PR: #{story.get('planning_pr')} — interrogate rounds: "
+                 f"{story['iterations']['interrogate']}/{cfg.limits['max_rounds_per_stage']}")
     for name, s in story["slices"].items():
         prog = [f"{r} {'✅' if s.get(f'{r}_merged') else ('#' + str(s[f'{r}_pr']) if s.get(f'{r}_pr') else '—')}"
                 for r in ("contract", "tests", "build")]
@@ -312,7 +312,7 @@ def main():
     sub.add_parser("status")
     p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
     p.add_argument("--story", required=True)
-    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "grill", "revise"])
+    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise"])
     p.add_argument("--slice")
     p.add_argument("--pr", type=int)
     p.add_argument("--role")
