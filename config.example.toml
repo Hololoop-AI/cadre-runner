@@ -35,3 +35,18 @@ name = "BrandonPerez-Dev/pipeline-sandbox"   # owner/repo on GitHub
 variant = "change-spec"                      # "change-spec" | "spec-as-source"
 default_branch = "main"
 # checkout is optional; defaults to <data_dir>/checkouts/<repo-name>
+
+# Board-driven intake (optional): watch a tracker column, auto-start stories,
+# mirror status back to the card. Trigger is a configurable predicate — the
+# work/Jira version is the same shape with different conditions.
+# [intake]
+# provider = "linear"
+# repo = "owner/name"              # repo triggered stories run against
+# variant = "change-spec"          # optional; else the repo's default
+# [intake.linear]
+# api_key_env = "LINEAR_API_KEY"   # key lives in ~/.config/cadre/env
+# team = "Nexusdev"                # team name or key
+# trigger_state = "cadre"          # the column that means "go"
+# require_labels = []              # extra conditions, all must pass
+# exclude_labels = []              # e.g. ["spike"]
+# assignee = ""                    # "" = anyone

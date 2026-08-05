@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from runnerlib import claude_run, config as config_mod, dispatcher, poller
+from runnerlib import board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib.gh import NOT_MODIFIED, GitHub
 from runnerlib.registry import Registry, classify_branch, feature_branch, slugify, stage_branch
@@ -50,44 +50,57 @@ def cmd_install(cfg, args):
 
 
 def cmd_start(cfg, args):
-    repo_cfg = cfg.repo(args.repo)
-    checkout = cfg.checkout_dir(repo_cfg)
     story_text = Path(args.story_file).read_text() if args.story_file else args.story
     if not story_text:
         sys.exit("start: provide --story or --story-file")
     story_id = args.story_id or f"story-{time.strftime('%Y%m%d-%H%M')}"
-    slug = slugify(story_id)
-    title = args.title or story_text.strip().splitlines()[0][:80]
-    variant = args.variant or repo_cfg.get("variant", "change-spec")
-
     reg = Registry(cfg.data_dir / "registry.json")
-    if slug in reg.data["stories"]:
-        sys.exit(f"start: story {slug!r} already registered (see `status`)")
+    if slugify(story_id) in reg.data["stories"]:
+        sys.exit(f"start: story {slugify(story_id)!r} already registered (see `status`)")
+    variant = args.variant or cfg.repo(args.repo).get("variant", "change-spec")
+    slug, story, planning = _intake_story(cfg, reg, args.repo, story_id,
+                                          args.title, story_text, variant)
+    if planning:
+        log(f"story {slug} registered — planning PR #{planning}, "
+            f"tracking issue #{story['tracking_issue']}")
+        log("review the planning PR on GitHub; summon with @claude; merge it to start contracts")
+    else:
+        log("WARNING: intake ran but no planning PR found — inspect the run log and the repo, "
+            "then re-run start (the intake prompt is written to resume partial work)")
 
-    claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"])
+
+def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant):
+    """S0 for one story: checkout, intake claude run, register. Shared by the
+    CLI (`start`) and board-triggered intake. Raises RuntimeError on failure."""
+    repo_cfg = cfg.repo(repo_name)
+    checkout = cfg.checkout_dir(repo_cfg)
+    slug = slugify(story_id)
+    title = title or story_text.strip().splitlines()[0][:80]
+
+    claude_run.ensure_checkout(repo_name, checkout, repo_cfg["default_branch"])
     claude_run.install_skills(checkout, cfg.skills_source)
     claude_run.prepare(checkout, repo_cfg["default_branch"])
 
-    prompt = claude_run.render("intake", _vars(args.repo, repo_cfg, story_id, slug, title,
+    prompt = claude_run.render("intake", _vars(repo_name, repo_cfg, story_id, slug, title,
                                               variant, tracking_issue="TBD")
                                | {"story_text": story_text})
     log(f"intake: running claude ({cfg.model_for('intake')}) in {checkout} — this can take a while")
     ok, result, usage = _run(cfg, "intake", prompt, checkout, slug)
     if not ok:
-        sys.exit(f"intake run failed — see log in {cfg.data_dir / 'logs' / slug}")
+        raise RuntimeError(f"intake run failed — see log in {cfg.data_dir / 'logs' / slug}")
     log(f"intake session done: {result[:300]}")
 
     # discover what intake created (PR list is the source of truth)
     ghc = GitHub(cfg.data_dir / "etags.json")
-    pulls = ghc.pulls(args.repo, base=feature_branch(slug))
+    pulls = ghc.pulls(repo_name, base=feature_branch(slug))
     pulls = [] if pulls is NOT_MODIFIED else pulls
     planning = next((p for p in pulls if p["head"]["ref"] == stage_branch(slug, "planning")), None)
-    issues = ghc.get(f"/repos/{args.repo}/issues",
+    issues = ghc.get(f"/repos/{repo_name}/issues",
                      {"state": "open", "creator": cfg.limits["allowed_actors"][0], "per_page": 50})
     tracking = next((i["number"] for i in issues
                      if f"[pipeline] {story_id}" in i["title"] and "pull_request" not in i), None)
 
-    reg.add_story(slug, args.repo, story_id, title, variant)
+    reg.add_story(slug, repo_name, story_id, title, variant)
     story = reg.get(slug)
     story["tracking_issue"] = tracking
     story["planning_pr"] = planning["number"] if planning else None
@@ -102,13 +115,7 @@ def cmd_start(cfg, args):
         if role is not None
     }
     reg.save()
-
-    if planning:
-        log(f"story {slug} registered — planning PR #{planning['number']}, tracking issue #{tracking}")
-        log("review the planning PR on GitHub; summon with @claude; merge it to start contracts")
-    else:
-        log("WARNING: intake ran but no planning PR found — inspect the run log and the repo, "
-            "then re-run start (the intake prompt is written to resume partial work)")
+    return slug, story, (planning["number"] if planning else None)
 
 
 # --------------------------------------------------------------------------- daemon
@@ -116,16 +123,24 @@ def cmd_start(cfg, args):
 
 def cmd_run(cfg, args, single_pass=False):
     ghc = GitHub(cfg.data_dir / "etags.json")
-    log(f"runner up — poll every {cfg.runner['poll_interval']}s")
+    board = board_mod.make_board(cfg.intake)
+    log(f"runner up — poll every {cfg.runner['poll_interval']}s"
+        + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     while True:
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
+        if board and board.enabled:
+            try:
+                _board_intake(cfg, reg, board)
+            except Exception as e:  # tracker trouble must not stall the pipeline
+                log(f"ERROR board intake: {e}")
         for slug, story in list(reg.stories().items()):
             try:
                 _poll_story(cfg, reg, ghc, slug, story)
             except Exception as e:  # keep the daemon alive; surface in logs
                 log(f"ERROR polling {slug}: {e}")
+            board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
             reg.save()
         if single_pass:
             return
@@ -134,6 +149,35 @@ def cmd_run(cfg, args, single_pass=False):
         except KeyboardInterrupt:
             log("stopped")
             return
+
+
+def _board_intake(cfg, reg, board):
+    """Start a story for each new card in the trigger column."""
+    known = board_mod.known_issue_ids(reg)
+    for issue in board.candidates():
+        if issue["id"] in known or slugify(issue["identifier"]) in reg.data["stories"]:
+            continue
+        story_text = issue["title"] + ("\n\n" + issue["description"] if issue.get("description") else "")
+        log(f"board: new card {issue['identifier']} — {issue['title']!r}; running intake")
+        try:
+            slug, story, planning = _intake_story(
+                cfg, reg, cfg.intake["repo"], issue["identifier"], issue["title"],
+                story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"))
+        except Exception as e:
+            log(f"board: intake FAILED for {issue['identifier']}: {e}")
+            board.comment(issue["id"], f"⚠️ Cadre intake failed: {e} — fix and move the card "
+                                       "out of the trigger column and back in to retry.")
+            continue
+        story["board"] = {"provider": "linear", "issue_id": issue["id"],
+                          "identifier": issue["identifier"], "url": issue["url"]}
+        board.move(issue["id"], "In Progress")
+        story["board"]["last_state"] = "In Progress"
+        if planning:
+            board.attach(issue["id"], f"https://github.com/{story['repo']}/pull/{planning}",
+                         f"Planning PR #{planning}")
+        board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
+        reg.save()
+        log(f"board: {issue['identifier']} intaken — planning PR #{planning}")
 
 
 def _poll_story(cfg, reg, ghc, slug, story):
@@ -269,6 +313,27 @@ def cmd_trigger(cfg, args):
     reg.save()
 
 
+def cmd_board_check(cfg, args):
+    """Validate the board connection live: config, key, team, trigger column."""
+    board = board_mod.make_board(cfg.intake)
+    if board is None:
+        sys.exit("board-check: no [intake] provider configured")
+    if not board.enabled:
+        sys.exit(f"board-check: API key env "
+                 f"{cfg.intake.get('linear', {}).get('api_key_env', 'LINEAR_API_KEY')} is not set")
+    states = board.states()
+    print(f"team {board.team!r}: connected — states: {', '.join(sorted(states))}")
+    trig = board.trigger_state.lower()
+    if trig not in states:
+        sys.exit(f"trigger column {board.trigger_state!r} MISSING — create it on the team board")
+    cands = board.candidates()
+    known = board_mod.known_issue_ids(Registry(cfg.data_dir / "registry.json"))
+    print(f"trigger column {board.trigger_state!r}: {len(cands)} card(s)"
+          + (f" — {', '.join(c['identifier'] for c in cands)}" if cands else ""))
+    for c in cands:
+        print(f"  {c['identifier']}: {'already registered' if c['id'] in known else 'would intake'}")
+
+
 def cmd_status(cfg, args):
     reg = Registry(cfg.data_dir / "registry.json")
     if not reg.data["stories"]:
@@ -310,6 +375,7 @@ def main():
     sub.add_parser("run")
     sub.add_parser("once")
     sub.add_parser("status")
+    sub.add_parser("board-check", help="validate board-intake config against the live tracker")
     p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
     p.add_argument("--story", required=True)
     p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise"])
@@ -320,6 +386,7 @@ def main():
     args = ap.parse_args()
     cfg = config_mod.load(args.config)
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
+     "board-check": cmd_board_check,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

@@ -36,6 +36,9 @@ class Config:
         self.limits = merged["limits"]
         self.stage_models = raw.get("claude", {}).get("stage_models", {})
         self.repos = raw.get("repos", [])
+        self.intake = raw.get("intake", {})
+        if self.intake.get("provider") and not self.intake.get("repo"):
+            raise SystemExit("config: [intake] needs `repo` (the repo triggered stories run against)")
         if not self.limits["allowed_actors"]:
             raise SystemExit("config: limits.allowed_actors must list at least one GitHub login")
 

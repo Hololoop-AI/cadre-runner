@@ -7,6 +7,12 @@ The "work version" of the pipeline in `../design.md`: a polling daemon that driv
 ## Lifecycle
 
 ```
+> **Board-driven intake:** with an `[intake]` block configured, `pipeline start`'s
+> job is also done by the tracker — move a card into the trigger column (v0:
+> Linear, column `cadre`) and the daemon runs intake, moves the card to
+> In Progress, and keeps one status comment on it updated per phase. Validate
+> the connection with `pipeline board-check`.
+
 pipeline start ─▶ [Planning PR + self-interrogation] ──you merge──▶ [Contract PR × slice] ──you merge──▶
   [Tests PR (red, locked on merge)] ──you merge──▶ [Build PR (TDD)] ──you merge──▶ … all slices …
   ──▶ assembly stub comment (S5 not yet implemented) ──▶ you open feature→main
