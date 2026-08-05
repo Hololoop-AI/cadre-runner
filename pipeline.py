@@ -159,19 +159,32 @@ def _board_intake(cfg, reg, board):
             continue
         story_text = issue["title"] + ("\n\n" + issue["description"] if issue.get("description") else "")
         log(f"board: new card {issue['identifier']} — {issue['title']!r}; running intake")
+        # Acknowledge on the card BEFORE the (many-minute) intake run — silence
+        # reads as failure. Moving the card out of the trigger column here also
+        # prevents a failed intake from re-triggering every poll pass.
+        ack_comment = None
+        try:
+            board.move(issue["id"], "In Progress")
+            ack_comment = board.comment(
+                issue["id"], "⏳ Cadre picked this up — intake is running "
+                             "(10–30 min). The planning PR lands here when it's done.")
+        except Exception as e:
+            log(f"board: pickup ack failed for {issue['identifier']}: {e}")
         try:
             slug, story, planning = _intake_story(
                 cfg, reg, cfg.intake["repo"], issue["identifier"], issue["title"],
                 story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"))
         except Exception as e:
             log(f"board: intake FAILED for {issue['identifier']}: {e}")
-            board.comment(issue["id"], f"⚠️ Cadre intake failed: {e} — fix and move the card "
-                                       "out of the trigger column and back in to retry.")
+            body = f"⚠️ Cadre intake failed: {e} — fix the cause, then move the card back to the trigger column to retry."
+            if ack_comment:
+                board.edit_comment(ack_comment, body)
+            else:
+                board.comment(issue["id"], body)
             continue
         story["board"] = {"provider": "linear", "issue_id": issue["id"],
-                          "identifier": issue["identifier"], "url": issue["url"]}
-        board.move(issue["id"], "In Progress")
-        story["board"]["last_state"] = "In Progress"
+                          "identifier": issue["identifier"], "url": issue["url"],
+                          "status_comment_id": ack_comment, "last_state": "In Progress"}
         if planning:
             board.attach(issue["id"], f"https://github.com/{story['repo']}/pull/{planning}",
                          f"Planning PR #{planning}")
