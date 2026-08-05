@@ -83,6 +83,7 @@ class LinearBoard:
         """Issues currently in the trigger column that pass every condition."""
         states = self.states()
         if self.trigger_state.lower() not in states:
+            self._states = None  # don't cache-poison: the column may be created later
             raise RuntimeError(
                 f"Linear: state {self.trigger_state!r} not on team {self.team!r} "
                 f"(has: {', '.join(sorted(states))}) — create the column first")
