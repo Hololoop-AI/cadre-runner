@@ -12,6 +12,6 @@ Runtime bindings for the skill:
 - Feature branch: `$feature_branch` (off `origin/$default_branch`)
 - Planning branch: `$planning_branch` — exactly this name; the daemon routes events by it
 - Artifact home (change-spec variant): `changes/$story_slug/change-spec.md`
-- Tracking issue title: `[pipeline] $story_id: $story_title`
+- Story link: $story_url
 
 If a previous intake attempt left partial work (branch/issue/PR already exists), resume and repair it — do not duplicate.

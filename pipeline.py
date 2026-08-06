@@ -61,15 +61,15 @@ def cmd_start(cfg, args):
     slug, story, planning = _intake_story(cfg, reg, args.repo, story_id,
                                           args.title, story_text, variant)
     if planning:
-        log(f"story {slug} registered — planning PR #{planning}, "
-            f"tracking issue #{story['tracking_issue']}")
+        log(f"story {slug} registered — planning PR #{planning}")
         log("review the planning PR on GitHub; summon with @claude; merge it to start contracts")
     else:
         log("WARNING: intake ran but no planning PR found — inspect the run log and the repo, "
             "then re-run start (the intake prompt is written to resume partial work)")
 
 
-def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant):
+def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
+                  story_url=""):
     """S0 for one story: checkout, intake claude run, register. Shared by the
     CLI (`start`) and board-triggered intake. Raises RuntimeError on failure."""
     repo_cfg = cfg.repo(repo_name)
@@ -82,7 +82,7 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant):
     claude_run.prepare(checkout, repo_cfg["default_branch"])
 
     prompt = claude_run.render("intake", _vars(repo_name, repo_cfg, story_id, slug, title,
-                                              variant, tracking_issue="TBD")
+                                              variant, story_url=story_url)
                                | {"story_text": story_text})
     log(f"intake: running claude ({cfg.model_for('intake')}) in {checkout} — this can take a while")
     ok, result, usage = _run(cfg, "intake", prompt, checkout, slug)
@@ -95,14 +95,9 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant):
     pulls = ghc.pulls(repo_name, base=feature_branch(slug))
     pulls = [] if pulls is NOT_MODIFIED else pulls
     planning = next((p for p in pulls if p["head"]["ref"] == stage_branch(slug, "planning")), None)
-    issues = ghc.get(f"/repos/{repo_name}/issues",
-                     {"state": "open", "creator": cfg.limits["allowed_actors"][0], "per_page": 50})
-    tracking = next((i["number"] for i in issues
-                     if f"[pipeline] {story_id}" in i["title"] and "pull_request" not in i), None)
 
     reg.add_story(slug, repo_name, story_id, title, variant)
     story = reg.get(slug)
-    story["tracking_issue"] = tracking
     story["planning_pr"] = planning["number"] if planning else None
     # seed the PR cache so a first-poll 304 on the pulls ETag can't hide the planning PR
     story["prs_cache"] = {
@@ -173,7 +168,8 @@ def _board_intake(cfg, reg, board):
         try:
             slug, story, planning = _intake_story(
                 cfg, reg, cfg.intake["repo"], issue["identifier"], issue["title"],
-                story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"))
+                story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"),
+                story_url=issue["url"])
         except Exception as e:
             log(f"board: intake FAILED for {issue['identifier']}: {e}")
             body = f"⚠️ Cadre intake failed: {e} — fix the cause, then move the card back to the trigger column to retry."
@@ -237,7 +233,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     claude_run.prepare(checkout, base)
 
     v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
-              story["variant"], story["tracking_issue"])
+              story["variant"], story_url=(story.get("board") or {}).get("url", ""))
     v |= {
         "planning_pr": story.get("planning_pr") or pr or "",
         "pr": pr or "", "slice": slice_name or "", "role": action.get("role", ""),
@@ -360,14 +356,15 @@ def cmd_status(cfg, args):
             print(f"   - {name}: merged={done or '[]'}")
 
 
-def _vars(repo, repo_cfg, story_id, slug, title, variant, tracking_issue):
+def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url=""):
     return {
         "repo": repo, "story_id": story_id, "story_slug": slug, "story_title": title,
         "variant": variant, "variant_desc": VARIANT_DESC[variant],
         "feature_branch": feature_branch(slug),
         "planning_branch": stage_branch(slug, "planning"),
         "default_branch": repo_cfg["default_branch"],
-        "tracking_issue": tracking_issue, "agent_marker": AGENT_MARKER,
+        "story_url": story_url or "(no board link — CLI-started story)",
+        "agent_marker": AGENT_MARKER,
     }
 
 

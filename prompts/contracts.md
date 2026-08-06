@@ -11,6 +11,6 @@ The driver merged the Planning PR: the scope is locked. Author plain-English int
    - push; open a Contract PR (base `$feature_branch`) titled "[contracts] <slice>"
    - body: what the slice does, the contract's intent in two sentences, and: "Merging locks this contract and starts test-writing for this slice — other slices' reviews can stay open."
 4. Update `.pipeline/state.json` on `$feature_branch`: `"stage": "slices"`, each slice's contract PR number. Commit, push.
-5. Comment on tracking issue #$tracking_issue: contract PRs opened (links), suggested review order.
+5. Comment on the merged Planning PR (#$planning_pr): contract PRs opened (links), suggested review order.
 
 Contracts must be reviewable by a human in plain English — a reader should be able to say "yes, that proves the slice works" without reading code. Never merge anything.

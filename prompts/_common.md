@@ -5,7 +5,7 @@ You are one stateless run of an automated engineering pipeline (local runner). Y
 **Story:** $story_id — $story_title
 **Repo:** $repo (current directory is the runner's checkout; remote `origin`)
 **Variant:** $variant — $variant_desc
-**Feature branch:** `$feature_branch` · **Default branch:** `$default_branch` · **Tracking issue:** #$tracking_issue
+**Feature branch:** `$feature_branch` · **Default branch:** `$default_branch` · **Story link:** $story_url
 
 ## Ground rules (all stages)
 
