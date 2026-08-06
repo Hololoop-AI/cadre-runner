@@ -6,27 +6,12 @@ Story input:
 $story_text
 ---
 
+Invoke the **auto-spec** skill against this story. It owns the whole stage — mechanics, spec authoring, self-adversarial critique, planning PR, surviving questions.
+
+Runtime bindings for the skill:
+- Feature branch: `$feature_branch` (off `origin/$default_branch`)
+- Planning branch: `$planning_branch` — exactly this name; the daemon routes events by it
+- Artifact home (change-spec variant): `changes/$story_slug/change-spec.md`
+- Tracking issue title: `[pipeline] $story_id: $story_title`
+
 If a previous intake attempt left partial work (branch/issue/PR already exists), resume and repair it — do not duplicate.
-
-Do, in order:
-
-1. **Feature branch.** `git fetch origin`, create `$feature_branch` off `origin/$default_branch`. Create `.pipeline/state.json` (schema in ground rules; `"stage": "interrogate"`, slices empty for now). Commit, `git push -u origin $feature_branch`.
-
-2. **Tracking issue.** `gh issue create --title "[pipeline] $story_id: $story_title"` — body: the story text, plus a stage checklist (planning/interrogate → contracts → per-slice tests+build → assembly → final review) and one line explaining that this issue is the story's control surface (`/status`, `/escalate`).
-
-3. **Planning artifacts.** Create `$planning_branch` off `$feature_branch` — use exactly this branch name; the daemon routes events by it. Load context first — read the codebase: stack, conventions, structure, existing tests (invoke the investigating skill for anything non-obvious). Then derive the scope using the slicing skill's methodology in autonomous mode: no user checkpoints — record reasoning, alternatives, and non-goals in the artifact instead.
-
-   **Write for a fast read. The driver reviews this and their reading time is the bottleneck — a scope that could be settled in a few prompts must not become a 300-line spec.** Lead with the decision, cut restatement and ceremony, and only write down what needs durable capture (decisions, contracts, non-obvious trade-offs) — not a narration of everything.
-   - Variant **change-spec**: write `changes/$story_slug/change-spec.md`. **Be terse.** Write for an expert who reads fast and whose reading time is the bottleneck — dense, not padded. Every sentence earns its place: cut restatement, hedging, throat-clearing, and ceremony; prefer one precise sentence to a paragraph, a line or table to a prose dump. Orient first — open with what this change is and why — then let structure follow the change (no fixed skeleton); tight enough to grasp the whole thing in a couple of minutes. Put conclusions in the spec, not the analysis that produced them; self-interrogation findings go as PR review comments (step 5), not write-backs in the spec.
-   - Variant **spec-as-source**: land scope as `spec/*.md` stubs + `context/*.md` decision entries per the engineering skill's model — same terseness bar.
-   Commit and push.
-
-4. **Planning PR.** Open with base `$feature_branch`, head `$planning_branch`, title "[planning] $story_id: $story_title". Body: story summary, slice list, and a **"How to drive this PR"** section: leave line comments or a review on the artifact; summon the agent with `@claude` in a comment or review body (write the token in backticks here — PR bodies are not scanned for summons, but comments are, and ground rule 5 still applies to everything else you post); merging this PR approves the scope and starts contract authoring.
-
-5. **Self-interrogation.** Invoke the interrogate skill against your own planning artifact — all lenses: structure/tensions, terminology vs the codebase's existing language, prior-decision conflicts, necessity/scope (observed demand, one-branch version, concept budget, wiring completeness), plus one refutation attempt. Post the findings as a **PR review on the Planning PR**: each finding is a line comment on the relevant artifact line (use `gh api repos/$repo/pulls/<n>/reviews -f event=COMMENT` with a comments array); resolve what you can in the artifact first — post only findings that survived or genuinely need the driver. Review body: "Self-interrogation: N findings — see threads."
-
-6. **State + handoff.** Update `.pipeline/state.json` on `$feature_branch` (planning PR number, tracking issue, slice names with `"stage": "pending"`), commit, push. Comment on the tracking issue: intake complete, link the Planning PR, next action = review it.
-
----
-
-Before you finish: the planning artifact is the first thing the driver reads, under a hard reading budget. Match its length to the change — no filler sections, redundant summaries, or boilerplate — and make sure it opens by orienting the reader (what this change is and why) before any detail. A reader should grasp the whole change in a couple of minutes.

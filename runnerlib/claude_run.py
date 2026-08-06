@@ -12,6 +12,7 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # repo's .claude/skills (interrogate and auto-* exist only in the skills repo, not
 # in ~/.claude/skills, so without this step sessions can't load them).
 PIPELINE_SKILLS = [
+    "auto-spec", "auto-interrogate",
     "engineering", "slicing", "interrogate", "investigating",
     "test-planning", "auto-test-planning",
     "test-writer", "auto-test-writer",
