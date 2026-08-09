@@ -43,9 +43,10 @@ def install_page(cfg) -> None:
         pass
 
 
-def write_status(cfg, reg, run: dict | None = None) -> None:
-    """Atomic snapshot write. `run` describes an in-flight stage:
-    {"stage", "story", "slice", "pr", "started" (epoch)} — None when idle."""
+def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) -> None:
+    """Atomic snapshot write. `run` describes the oldest in-flight stage (page
+    back-compat); `runs` is the full list of concurrent in-flight stages, each
+    {"stage", "story", "slice", "pr", "started" (epoch)}."""
     try:
         d = status_dir(cfg)
         d.mkdir(parents=True, exist_ok=True)
@@ -54,6 +55,7 @@ def write_status(cfg, reg, run: dict | None = None) -> None:
             "iso": time.strftime("%Y-%m-%d %H:%M:%S"),
             "poll_interval": cfg.runner["poll_interval"],
             "run": run,
+            "runs": runs or [],
             "stories": _stories(reg),
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }

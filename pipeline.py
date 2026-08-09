@@ -11,6 +11,9 @@ Commands:
 """
 
 import argparse
+import json
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
+from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib.gh import NOT_MODIFIED, GitHub
@@ -71,34 +75,61 @@ def cmd_start(cfg, args):
 
 def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
                   story_url=""):
-    """S0 for one story: checkout, intake claude run, register. Shared by the
-    CLI (`start`) and board-triggered intake. Raises RuntimeError on failure."""
+    """S0 for one story, synchronous (CLI path): register, spawn, wait, finish.
+    The board path uses _begin_intake alone and finishes at reap — the daemon
+    never blocks on an intake. Raises RuntimeError on failure."""
+    slug, story = _begin_intake(cfg, reg, repo_name, story_id, title, story_text,
+                                variant, story_url=story_url)
+    ghc = GitHub(cfg.data_dir / "etags.json")
+    while any(not runs_mod.finished(r) for r in story["active_runs"].values()):
+        time.sleep(10)
+    _reap_runs(cfg, reg, ghc, slug, story)
+    reg.save()
+    if story["status"] == "intake-failed":
+        raise RuntimeError(f"intake run failed — see log in {cfg.data_dir / 'logs' / slug}")
+    return slug, story, story.get("planning_pr")
+
+
+def _begin_intake(cfg, reg, repo_name, story_id, title, story_text, variant, story_url=""):
+    """Register the story stub and spawn the intake run detached. Intake
+    bypasses the concurrency cap — it's rare, and a queued intake with its
+    board card already moved would never re-trigger."""
     repo_cfg = cfg.repo(repo_name)
-    checkout = cfg.checkout_dir(repo_cfg)
     slug = slugify(story_id)
     title = title or story_text.strip().splitlines()[0][:80]
-
-    claude_run.ensure_checkout(repo_name, checkout, repo_cfg["default_branch"], cfg.commit_identity)
-    claude_run.install_skills(checkout, cfg.skills_source)
-    claude_run.prepare(checkout, repo_cfg["default_branch"])
-
-    prompt = claude_run.render("intake", _vars(repo_name, repo_cfg, story_id, slug, title,
-                                              variant, story_url=story_url, workflows_dir=cfg.workflows_dir)
-                               | {"story_text": story_text})
-    log(f"intake: running claude ({cfg.model_for('intake')}) in {checkout} — this can take a while")
-    ok, result, usage = _run(cfg, "intake", prompt, checkout, slug)
-    if not ok:
-        raise RuntimeError(f"intake run failed — see log in {cfg.data_dir / 'logs' / slug}")
-    log(f"intake session done: {result[:300]}")
-
-    # discover what intake created (PR list is the source of truth)
-    ghc = GitHub(cfg.data_dir / "etags.json")
-    pulls = ghc.pulls(repo_name, base=feature_branch(slug))
-    pulls = [] if pulls is NOT_MODIFIED else pulls
-    planning = next((p for p in pulls if p["head"]["ref"] == stage_branch(slug, "planning")), None)
-
     reg.add_story(slug, repo_name, story_id, title, variant)
     story = reg.get(slug)
+    story["status"] = "intaking"
+    _run_stage(cfg, reg, GitHub(cfg.data_dir / "etags.json"), slug, story,
+               {"stage": "intake", "slice": None, "pr": None,
+                "extra_vars": {"story_text": story_text, "story_url": story_url}},
+               skip_cap=True)
+    reg.save()
+    return slug, story
+
+
+def _finish_intake(cfg, reg, ghc, slug, story, ok):
+    """Reap-side of intake: discover what the run created (PR list is the
+    source of truth), seed the cache, activate the story."""
+    if not ok:
+        story["status"] = "intake-failed"
+        log(f"{slug}: intake FAILED")
+        board = board_mod.make_board(cfg.intake)
+        if story.get("board") and board and board.enabled:
+            try:
+                body = ("⚠️ Cadre intake failed — fix the cause, then move the card "
+                        "back to the trigger column to retry.")
+                cid = story["board"].get("status_comment_id")
+                if cid:
+                    board.edit_comment(cid, body)
+                else:
+                    board.comment(story["board"]["issue_id"], body)
+            except Exception as e:
+                log(f"{slug}: board failure-notice failed: {e}")
+        return
+    pulls = ghc.pulls(story["repo"], base=feature_branch(slug))
+    pulls = [] if pulls is NOT_MODIFIED else pulls
+    planning = next((p for p in pulls if p["head"]["ref"] == stage_branch(slug, "planning")), None)
     story["planning_pr"] = planning["number"] if planning else None
     # seed the PR cache so a first-poll 304 on the pulls ETag can't hide the planning PR
     story["prs_cache"] = {
@@ -110,8 +141,17 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
         for role, slice_name in [classify_branch(p["head"]["ref"], slug)]
         if role is not None
     }
-    reg.save()
-    return slug, story, (planning["number"] if planning else None)
+    story["status"] = "active"
+    board = board_mod.make_board(cfg.intake)
+    if story.get("board") and board and board.enabled:
+        try:
+            if planning:
+                board.attach(story["board"]["issue_id"],
+                             f"https://github.com/{story['repo']}/pull/{planning['number']}",
+                             f"Planning PR #{planning['number']}")
+        except Exception as e:
+            log(f"{slug}: board attach failed: {e}")
+    log(f"{slug}: intake done — planning PR #{story['planning_pr']}")
 
 
 # --------------------------------------------------------------------------- daemon
@@ -121,8 +161,12 @@ def cmd_run(cfg, args, single_pass=False):
     ghc = GitHub(cfg.data_dir / "etags.json")
     board = board_mod.make_board(cfg.intake)
     log(f"runner up — poll every {cfg.runner['poll_interval']}s"
+        f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     status_mod.install_page(cfg)
+    # Detached run wrappers are our children until they exit; auto-reap them so
+    # the daemon never accumulates zombies (outcomes come from exit files).
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     while True:
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
@@ -132,14 +176,19 @@ def cmd_run(cfg, args, single_pass=False):
                 _board_intake(cfg, reg, board)
             except Exception as e:  # tracker trouble must not stall the pipeline
                 log(f"ERROR board intake: {e}")
-        for slug, story in list(reg.stories().items()):
+        for slug, story in list({**reg.stories("intaking"), **reg.stories()}.items()):
             try:
                 _poll_story(cfg, reg, ghc, slug, story)
             except Exception as e:  # keep the daemon alive; surface in logs
                 log(f"ERROR polling {slug}: {e}")
             board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
             reg.save()
-        status_mod.write_status(cfg, reg)  # pass-end heartbeat; clears any run marker
+        act = [{"stage": r["stage"], "story": s, "slice": r.get("slice"),
+                "pr": r.get("pr"), "started": r["started"]}
+               for s, _rid, r in runs_mod.all_active(reg)]
+        status_mod.write_status(cfg, reg,
+                                run=(min(act, key=lambda r: r["started"]) if act else None),
+                                runs=act)
         if single_pass:
             return
         try:
@@ -171,13 +220,13 @@ def _board_intake(cfg, reg, board):
         except Exception as e:
             log(f"board: pickup ack failed for {issue['identifier']}: {e}")
         try:
-            slug, story, planning = _intake_story(
+            slug, story = _begin_intake(
                 cfg, reg, cfg.intake["repo"], issue["identifier"], issue["title"],
                 story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"),
                 story_url=issue["url"])
         except Exception as e:
-            log(f"board: intake FAILED for {issue['identifier']}: {e}")
-            body = f"⚠️ Cadre intake failed: {e} — fix the cause, then move the card back to the trigger column to retry."
+            log(f"board: intake spawn FAILED for {issue['identifier']}: {e}")
+            body = f"⚠️ Cadre intake failed to start: {e} — fix the cause, then move the card back to the trigger column to retry."
             if ack_comment:
                 board.edit_comment(ack_comment, body)
             else:
@@ -186,15 +235,14 @@ def _board_intake(cfg, reg, board):
         story["board"] = {"provider": "linear", "issue_id": issue["id"],
                           "identifier": issue["identifier"], "url": issue["url"],
                           "status_comment_id": ack_comment, "last_state": "In Progress"}
-        if planning:
-            board.attach(issue["id"], f"https://github.com/{story['repo']}/pull/{planning}",
-                         f"Planning PR #{planning}")
-        board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
         reg.save()
-        log(f"board: {issue['identifier']} intaken — planning PR #{planning}")
+        log(f"board: {issue['identifier']} intake spawned — finishes at reap")
 
 
 def _poll_story(cfg, reg, ghc, slug, story):
+    _reap_runs(cfg, reg, ghc, slug, story)
+    if story["status"] == "intaking":
+        return  # nothing to poll until the intake run reaps
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _try_automerge(cfg, ghc, slug, story)
     # Events are seen-marked at collection, so a crash between collection and
@@ -208,6 +256,11 @@ def _poll_story(cfg, reg, ghc, slug, story):
     for action, event in poller.coalesce(pairs):
         try:
             _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
+        except runs_mod.RunsBusy as e:
+            # backpressure, not failure — requeue WITHOUT an attempt bump so a
+            # crowded machine can never dead-letter a legitimate event
+            story["retry_events"].append(event)
+            log(f"{slug}: busy ({e}) — event requeued")
         except Exception as e:
             attempts = event.get("_attempts", 0) + 1
             if attempts >= 3:
@@ -223,9 +276,13 @@ def _poll_story(cfg, reg, ghc, slug, story):
                 event["_attempts"] = attempts
                 story["retry_events"].append(event)
                 log(f"{slug}: event failed (attempt {attempts}/3), queued for retry: {e}")
-    if dispatcher.all_built(story, open_prs) and story["phase"] == "slices":
-        _run_stage(cfg, reg, ghc, slug, story,
-                   {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
+    if (dispatcher.all_built(story, open_prs) and story["phase"] == "slices"
+            and not runs_mod.key_active(story, "assembly", None, story.get("planning_pr"))):
+        try:
+            _run_stage(cfg, reg, ghc, slug, story,
+                       {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
+        except runs_mod.RunsBusy as e:
+            log(f"{slug}: assembly deferred ({e}) — retried next pass")
 
 
 def _try_automerge(cfg, ghc, slug, story):
@@ -291,17 +348,31 @@ def _execute(cfg, reg, ghc, slug, story, action, event, open_prs):
         _run_stage(cfg, reg, ghc, slug, story, action)
 
 
-def _run_stage(cfg, reg, ghc, slug, story, action):
+def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
+    """Spawn a stage session detached in its own worktree. Raises RunsBusy on
+    cap/branch contention (callers requeue); duplicate targets drop silently.
+    wait=True (CLI paths: start, trigger) blocks until the run reaps."""
     stage, slice_name, pr = action["stage"], action.get("slice"), action.get("pr")
+    if runs_mod.key_active(story, stage, slice_name, pr):
+        log(f"{slug}: {stage}"
+            + (f" (slice {slice_name})" if slice_name else "")
+            + (f" on PR #{pr}" if pr else "") + " already running — skipped")
+        return
+    if not skip_cap and len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
+        raise runs_mod.RunsBusy(f"{cfg.runner['max_concurrent_runs']} concurrent runs")
     repo_cfg = cfg.repo(story["repo"])
     checkout = cfg.checkout_dir(repo_cfg)
     claude_run.ensure_checkout(story["repo"], checkout, repo_cfg["default_branch"], cfg.commit_identity)
-    claude_run.install_skills(checkout, cfg.skills_source)
 
-    base = {"interrogate": stage_branch(slug, "planning")}.get(stage, story["feature_branch"])
-    if stage == "revise":
-        base = story["prs_cache"][str(pr)]["head"]
-    claude_run.prepare(checkout, base)
+    branch, start_ref = _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg)
+    if runs_mod.branch_held(reg, story["repo"], branch):
+        raise runs_mod.RunsBusy(f"branch {branch} held by an active run")
+
+    rid = (f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}"
+           + (f"-{slice_name}" if slice_name else "") + (f"-pr{pr}" if pr else ""))
+    wt = cfg.data_dir / "worktrees" / slug / rid
+    runs_mod.add_worktree(checkout, wt, branch, start_ref)
+    claude_run.install_skills(wt, cfg.skills_source)
 
     v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
               story["variant"], story_url=(story.get("board") or {}).get("url", ""),
@@ -316,36 +387,80 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
         "tests_branch": stage_branch(slug, "tests", slice_name) if slice_name else "",
         "build_branch": stage_branch(slug, "build", slice_name) if slice_name else "",
     }
+    v |= action.get("extra_vars", {})
     prompt = claude_run.render(stage, v)
-    log(f"{slug}: running stage {stage}"
+    run_dir = cfg.data_dir / "runs" / slug / rid
+    pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, cfg.model_for(stage),
+                         cfg.claude["effort"], cfg.claude["permission_mode"],
+                         cfg.claude["timeout_seconds"], run_dir)
+    story.setdefault("active_runs", {})[rid] = {
+        "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
+        "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
+        "worktree": str(wt), "run_dir": str(run_dir), "started": time.time(),
+    }
+    log(f"{slug}: spawned stage {stage}"
         + (f" (slice {slice_name})" if slice_name else "")
-        + (f" on PR #{pr}" if pr else ""))
-    status_mod.write_status(cfg, reg, run={"stage": stage, "story": story["story_id"],
-                                           "slice": slice_name, "pr": pr, "started": time.time()})
-    ok, result, usage = _run(cfg, stage, prompt, checkout, slug)
-    log(f"{slug}: stage {stage} {'done' if ok else 'FAILED'} — {result[:200]}")
+        + (f" on PR #{pr}" if pr else "") + f" — pid {pid}")
+    if wait:
+        while not runs_mod.finished(story["active_runs"][rid]):
+            time.sleep(10)
+        _reap_runs(cfg, reg, ghc, slug, story)
 
+
+def _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg):
+    """(branch, start_ref) for a stage run's worktree. Every run owns exactly
+    one branch — uniqueness is what makes concurrent runs safe."""
+    fb = story["feature_branch"]
+    if stage == "revise":
+        b = story["prs_cache"][str(pr)]["head"]
+        return b, f"origin/{b}"
     if stage == "interrogate":
-        story["iterations"]["interrogate"] += 1
-    elif stage == "revise":
-        story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
-    elif stage == "contracts" and ok:
-        story["phase"] = "slices"
-    elif stage == "assembly":
-        # ok -> awaiting the human merge of the final PR; fail -> parked for a
-        # manual re-trigger (pipeline.py trigger --stage assembly)
-        story["phase"] = "final-review" if ok else "assembly-pending"
-    if not ok:
-        _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
-                             f"Re-summon with @claude after checking. {AGENT_MARKER}")
+        b = stage_branch(slug, "planning")
+        return b, f"origin/{b}"
+    if stage == "intake":
+        return stage_branch(slug, "planning"), f"origin/{repo_cfg['default_branch']}"
+    if stage in ("tests", "build"):
+        b = stage_branch(slug, stage, slice_name)
+        # resume from the remote branch when a prior run pushed it, else base off feature
+        probe = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"origin/{b}"],
+                               cwd=checkout, capture_output=True)
+        return b, (f"origin/{b}" if probe.returncode == 0 else f"origin/{fb}")
+    return fb, f"origin/{fb}"  # contracts, assembly
 
 
-def _run(cfg, stage, prompt, checkout, slug):
-    log_path = cfg.data_dir / "logs" / slug / f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}.json"
-    return claude_run.run_claude(
-        prompt, checkout, model=cfg.model_for(stage), effort=cfg.claude["effort"],
-        permission_mode=cfg.claude["permission_mode"], timeout=cfg.claude["timeout_seconds"],
-        log_path=log_path, claude_bin=cfg.claude["bin"])
+def _reap_runs(cfg, reg, ghc, slug, story):
+    """Collect finished runs: write the log record, tear down the worktree,
+    apply the stage's registry effects. Runs in every pass before events, so
+    completions register before anything new dispatches."""
+    for rid, run in list((story.get("active_runs") or {}).items()):
+        if not runs_mod.finished(run):
+            continue
+        ok, result, usage, record = runs_mod.outcome(run)
+        log_path = cfg.data_dir / "logs" / slug / f"{rid}.json"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(record, indent=2))
+        del story["active_runs"][rid]
+        runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
+        stage, pr = run["stage"], run.get("pr")
+        log(f"{slug}: stage {stage}"
+            + (f" (slice {run.get('slice')})" if run.get("slice") else "")
+            + f" {'done' if ok else 'FAILED'} — {result[:200]}")
+        if stage == "intake":
+            _finish_intake(cfg, reg, ghc, slug, story, ok)
+            continue
+        if stage == "interrogate":
+            story["iterations"]["interrogate"] += 1
+        elif stage == "revise":
+            story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
+        elif stage == "contracts" and ok:
+            story["phase"] = "slices"
+        elif stage == "assembly":
+            # ok -> awaiting the human merge of the final PR; fail -> parked for
+            # a manual re-trigger (pipeline.py trigger --stage assembly)
+            story["phase"] = "final-review" if ok else "assembly-pending"
+        if not ok:
+            _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
+                                 f"Re-summon with @claude after checking. {AGENT_MARKER}")
 
 
 def _post_status(cfg, ghc, slug, story, open_prs):
@@ -387,7 +502,7 @@ def cmd_trigger(cfg, args):
               "role": args.role or ""}
     log(f"{slug}: manual trigger — stage {args.stage}"
         + (f" (slice {args.slice})" if args.slice else ""))
-    _run_stage(cfg, reg, ghc, slug, story, action)
+    _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=True, wait=True)
     reg.save()
 
 

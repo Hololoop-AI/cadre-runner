@@ -10,6 +10,7 @@ DEFAULTS = {
         "data_dir": "~/.local/state/pipeline-runner",
         "skills_source": "~/dev-config/ai-workflow-config/skills",
         "workflows_source": "",   # cadre-workflows/workflows dir; empty = spec-writer node not used
+        "max_concurrent_runs": 4,  # detached stage sessions; beyond it, events requeue (backpressure)
     },
     "claude": {
         "bin": "claude",
