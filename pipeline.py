@@ -372,7 +372,13 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
            + (f"-{slice_name}" if slice_name else "") + (f"-pr{pr}" if pr else ""))
     wt = cfg.data_dir / "worktrees" / slug / rid
     runs_mod.add_worktree(checkout, wt, branch, start_ref)
-    claude_run.install_skills(wt, cfg.skills_source)
+    try:
+        claude_run.install_skills(wt, cfg.skills_source)
+    except Exception:
+        # never leak a worktree on a failed spawn — the event retries with a
+        # fresh one, and nobody has shell access to sweep by hand
+        runs_mod.remove_worktree(checkout, wt)
+        raise
 
     v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
               story["variant"], story_url=(story.get("board") or {}).get("url", ""),
@@ -461,6 +467,21 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         if not ok:
             _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
                                  f"Re-summon with @claude after checking. {AGENT_MARKER}")
+    _sweep_worktrees(cfg, story, slug)
+
+
+def _sweep_worktrees(cfg, story, slug):
+    """Remove worktree dirs no active run owns — crash litter from failed
+    spawns. Runs every reap pass; the daemon is its own janitor because the
+    box won't always have a human with shell access."""
+    base = cfg.data_dir / "worktrees" / slug
+    if not base.is_dir():
+        return
+    live = {Path(r["worktree"]).name for r in (story.get("active_runs") or {}).values()}
+    for d in base.iterdir():
+        if d.is_dir() and d.name not in live:
+            runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)
+            log(f"{slug}: swept stale worktree {d.name}")
 
 
 def _post_status(cfg, ghc, slug, story, open_prs):
