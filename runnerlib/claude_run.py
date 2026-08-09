@@ -68,7 +68,12 @@ def install_skills(checkout: Path, skills_source: Path, exclude_from_git=True):
             "checkout. Check that skills_source points at a tree containing them."
         )
     if exclude_from_git:
-        exclude = checkout / ".git" / "info" / "exclude"
+        # .git is a FILE in a worktree (gitdir pointer) — resolve the shared
+        # common dir instead of assuming a directory layout.
+        common = sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                    cwd=checkout).stdout.strip()
+        exclude = Path(common) / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
         line = ".claude/"
         content = exclude.read_text() if exclude.exists() else ""
         if line not in content.splitlines():
