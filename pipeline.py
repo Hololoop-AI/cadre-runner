@@ -281,7 +281,8 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     claude_run.prepare(checkout, base)
 
     v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
-              story["variant"], story_url=(story.get("board", workflows_dir=cfg.workflows_dir) or {}).get("url", ""))
+              story["variant"], story_url=(story.get("board") or {}).get("url", ""),
+              workflows_dir=cfg.workflows_dir)
     v |= {
         "planning_pr": story.get("planning_pr") or pr or "",
         "pr": pr or "", "slice": slice_name or "", "role": action.get("role", ""),
