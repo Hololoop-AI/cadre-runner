@@ -9,6 +9,7 @@ DEFAULTS = {
         "poll_interval": 45,
         "data_dir": "~/.local/state/pipeline-runner",
         "skills_source": "~/dev-config/ai-workflow-config/skills",
+        "workflows_source": "",   # cadre-workflows/workflows dir; empty = spec-writer node not used
     },
     "claude": {
         "bin": "claude",
@@ -52,6 +53,11 @@ class Config:
     @property
     def data_dir(self) -> Path:
         return Path(os.path.expanduser(self.runner["data_dir"]))
+
+    @property
+    def workflows_dir(self) -> str:
+        ws = self.runner.get("workflows_source", "")
+        return os.path.expanduser(ws) if ws else ""
 
     @property
     def skills_source(self) -> Path:

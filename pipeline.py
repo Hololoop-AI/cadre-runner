@@ -83,7 +83,7 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
     claude_run.prepare(checkout, repo_cfg["default_branch"])
 
     prompt = claude_run.render("intake", _vars(repo_name, repo_cfg, story_id, slug, title,
-                                              variant, story_url=story_url)
+                                              variant, story_url=story_url, workflows_dir=cfg.workflows_dir)
                                | {"story_text": story_text})
     log(f"intake: running claude ({cfg.model_for('intake')}) in {checkout} — this can take a while")
     ok, result, usage = _run(cfg, "intake", prompt, checkout, slug)
@@ -281,7 +281,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     claude_run.prepare(checkout, base)
 
     v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
-              story["variant"], story_url=(story.get("board") or {}).get("url", ""))
+              story["variant"], story_url=(story.get("board", workflows_dir=cfg.workflows_dir) or {}).get("url", ""))
     v |= {
         "planning_pr": story.get("planning_pr") or pr or "",
         "pr": pr or "", "slice": slice_name or "", "role": action.get("role", ""),
@@ -401,7 +401,7 @@ def cmd_status(cfg, args):
             print(f"   - {name}: merged={done or '[]'}")
 
 
-def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url=""):
+def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url="", workflows_dir=""):
     return {
         "repo": repo, "story_id": story_id, "story_slug": slug, "story_title": title,
         "variant": variant, "variant_desc": VARIANT_DESC[variant],
@@ -409,6 +409,7 @@ def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url=""):
         "planning_branch": stage_branch(slug, "planning"),
         "default_branch": repo_cfg["default_branch"],
         "story_url": story_url or "(no board link — CLI-started story)",
+        "workflows_dir": workflows_dir,
         "agent_marker": AGENT_MARKER,
     }
 

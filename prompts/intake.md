@@ -13,5 +13,6 @@ Runtime bindings for the skill:
 - Planning branch: `$planning_branch` — exactly this name; the daemon routes events by it
 - Artifact home (change-spec variant): `changes/$story_slug/change-spec.md`
 - Story link: $story_url
+- Spec-writer workflow: `$workflows_dir` — when non-empty, auto-spec's workflow path applies (see its "Workflow-backed drafting" section)
 
 If a previous intake attempt left partial work (branch/issue/PR already exists), resume and repair it — do not duplicate.
