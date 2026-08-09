@@ -161,7 +161,8 @@ def status_text(story: dict, max_rounds: int) -> str:
     if status == "escalated":
         lines.append("⚠️ **Escalated** — the runner needs a human; see the PRs below.")
     head = {"interrogate": "Planning under review", "slices": "Building slices",
-            "assembly-pending": "All slices built — assembly/review",
+            "assembly-pending": "Assembly needs attention (parked)",
+            "final-review": "Final PR open — ready for human review",
             "done": "Done"}.get(phase, phase)
     repo = story["repo"]
     pr = story.get("planning_pr")
@@ -197,7 +198,7 @@ def mirror_status(board, story: dict, max_rounds: int, log=print):
             b["status_comment_id"] = board.comment(b["issue_id"], text)
         b["last_status"] = text
         phase_state = {"slices": "In Progress", "assembly-pending": "In Review",
-                       "done": "Done"}.get(story["phase"])
+                       "final-review": "In Review", "done": "Done"}.get(story["phase"])
         if phase_state and b.get("last_state") != phase_state:
             board.move(b["issue_id"], phase_state)
             b["last_state"] = phase_state

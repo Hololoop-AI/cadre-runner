@@ -200,9 +200,9 @@ def _poll_story(cfg, reg, ghc, slug, story):
     pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in events]
     for action, event in poller.coalesce(pairs):
         _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
-    if dispatcher.all_built(story, open_prs):
-        _assembly_stub(cfg, ghc, story)
-        story["phase"] = "assembly-pending"
+    if dispatcher.all_built(story, open_prs) and story["phase"] == "slices":
+        _run_stage(cfg, reg, ghc, slug, story,
+                   {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
 
 
 def _try_automerge(cfg, ghc, slug, story):
@@ -307,6 +307,10 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
         story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
     elif stage == "contracts" and ok:
         story["phase"] = "slices"
+    elif stage == "assembly":
+        # ok -> awaiting the human merge of the final PR; fail -> parked for a
+        # manual re-trigger (pipeline.py trigger --stage assembly)
+        story["phase"] = "final-review" if ok else "assembly-pending"
     if not ok:
         _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
                              f"Re-summon with @claude after checking. {AGENT_MARKER}")
@@ -318,15 +322,6 @@ def _run(cfg, stage, prompt, checkout, slug):
         prompt, checkout, model=cfg.model_for(stage), effort=cfg.claude["effort"],
         permission_mode=cfg.claude["permission_mode"], timeout=cfg.claude["timeout_seconds"],
         log_path=log_path, claude_bin=cfg.claude["bin"])
-
-
-def _assembly_stub(cfg, ghc, story):
-    _comment(ghc, story,
-             "✅ All slices built and merged into the feature branch.\n\n"
-             "Assembly (S5) isn't implemented in the local runner yet — run final CI, "
-             "review aids, and open the feature→main PR manually for now. "
-             f"{AGENT_MARKER}")
-    log(f"{story['story_id']}: all slices built — assembly stub posted")
 
 
 def _post_status(cfg, ghc, slug, story, open_prs):
@@ -438,7 +433,7 @@ def main():
     sub.add_parser("board-check", help="validate board-intake config against the live tracker")
     p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
     p.add_argument("--story", required=True)
-    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise"])
+    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise", "assembly"])
     p.add_argument("--slice")
     p.add_argument("--pr", type=int)
     p.add_argument("--role")
