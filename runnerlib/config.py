@@ -21,6 +21,11 @@ DEFAULTS = {
         "max_rounds_per_stage": 5,
         "allowed_actors": [],
     },
+    "automerge": {           # NEX-150 gate policy; contracts still honors Confidence:
+        "tests": True,
+        "build": True,
+        "contracts": True,
+    },
 }
 
 
@@ -38,6 +43,7 @@ class Config:
         self.repos = raw.get("repos", [])
         self.intake = raw.get("intake", {})
         self.commit_identity = raw.get("runner", {}).get("commit_identity", {})
+        self.automerge = merged["automerge"]
         if self.intake.get("provider") and not self.intake.get("repo"):
             raise SystemExit("config: [intake] needs `repo` (the repo triggered stories run against)")
         if not self.limits["allowed_actors"]:

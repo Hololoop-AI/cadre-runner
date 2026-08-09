@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from runnerlib import board as board_mod, claude_run, config as config_mod, dispatcher, poller
+from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import status as status_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib.gh import NOT_MODIFIED, GitHub
@@ -196,12 +196,55 @@ def _board_intake(cfg, reg, board):
 
 def _poll_story(cfg, reg, ghc, slug, story):
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
+    _try_automerge(cfg, ghc, slug, story)
     pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in events]
     for action, event in poller.coalesce(pairs):
         _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
     if dispatcher.all_built(story, open_prs):
         _assembly_stub(cfg, ghc, story)
         story["phase"] = "assembly-pending"
+
+
+def _try_automerge(cfg, ghc, slug, story):
+    """NEX-150: merge green stage PRs so the pipeline advances without a human,
+    except contract PRs below high confidence. Merge events dispatch the next
+    stage on the following pass — auto-merge IS the handoff."""
+    if story["status"] != "active":
+        return
+    for num_s, p in list(story.get("prs_cache", {}).items()):
+        if p["state"] != "open" or p["role"] not in ("contract", "tests", "build"):
+            continue
+        try:
+            detail = ghc.pr(story["repo"], int(num_s))
+            if detail.get("state") != "open" or detail.get("merged"):
+                continue
+            checks = ghc.check_runs(story["repo"], detail["head"]["sha"])
+            bodies = _pr_conversation_latest_is_human(ghc, story["repo"], int(num_s))
+            ok, reason = automerge.decide(p["role"], detail, checks, cfg.automerge, bodies)
+            if ok:
+                ghc.merge_pr(story["repo"], int(num_s))
+                log(f"{slug}: auto-merged {p['role']} PR #{num_s} ({reason})")
+            elif "driver gate" in reason or "human" in reason:
+                pass  # expected waits — don't spam the log
+        except Exception as e:
+            log(f"{slug}: auto-merge check failed for PR #{num_s}: {e}")
+
+
+def _pr_conversation_latest_is_human(ghc, repo, number):
+    """True when the newest conversation item on the PR is marker-free (a human
+    had the last word) — auto-merge must not close a PR mid-review."""
+    items = []
+    for c in ghc.get(f"/repos/{repo}/issues/{number}/comments", {"per_page": 100}) or []:
+        items.append((c["created_at"], c.get("body") or ""))
+    for c in ghc.get(f"/repos/{repo}/pulls/{number}/comments", {"per_page": 100}) or []:
+        items.append((c["created_at"], c.get("body") or ""))
+    for r in ghc.get(f"/repos/{repo}/pulls/{number}/reviews", {"per_page": 100}) or []:
+        if r.get("body"):
+            items.append((r["submitted_at"], r["body"]))
+    if not items:
+        return False
+    items.sort()
+    return dispatcher.AGENT_MARKER not in items[-1][1]
 
 
 def _execute(cfg, reg, ghc, slug, story, action, event, open_prs):

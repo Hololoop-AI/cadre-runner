@@ -82,6 +82,10 @@ class GitHub:
         data, _ = self._request("POST", f"{API}{path}", body, None)
         return data
 
+    def put(self, path: str, body: dict):
+        data, _ = self._request("PUT", f"{API}{path}", body, None)
+        return data
+
     # -- endpoints -----------------------------------------------------------
 
     def pulls(self, repo: str, base: str):
@@ -114,6 +118,17 @@ class GitHub:
 
     def comment(self, repo: str, issue: int, body: str):
         return self.post(f"/repos/{repo}/issues/{issue}/comments", {"body": body})
+
+    def pr(self, repo: str, number: int):
+        return self.get(f"/repos/{repo}/pulls/{number}")
+
+    def check_runs(self, repo: str, ref: str):
+        """Check runs for a branch head. Returns list of {name, status, conclusion}."""
+        data = self.get(f"/repos/{repo}/commits/{ref}/check-runs", {"per_page": 100})
+        return (data or {}).get("check_runs", [])
+
+    def merge_pr(self, repo: str, number: int, method: str = "merge"):
+        return self.put(f"/repos/{repo}/pulls/{number}/merge", {"merge_method": method})
 
 
 def _next_link(link_header: str) -> str | None:
