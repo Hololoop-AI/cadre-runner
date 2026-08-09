@@ -2,6 +2,7 @@
 
 The driver merged the Planning PR: the scope is locked. Author plain-English integration test contracts for **all** slices, then open **one Contract PR per slice** so each slice can be approved (merged) independently — a slice whose contract merges proceeds to test-writing while other reviews stay open.
 
+0. Workflow binding: `$workflows_dir` — when non-empty, auto-test-planning's workflow-backed authoring applies (its section -1).
 1. You are on a clean `$feature_branch`. Read the merged planning artifact(s) and the slice list.
 2. Invoke the **auto-test-planning** skill to author the contracts — per slice: setup, action, input, expected output, side effects, error cases; mock boundaries per the codebase's real infrastructure (controlled deps real, uncontrolled mocked at the adapter).
    - Variant **change-spec**: one file per slice — `changes/$story_slug/contracts/<slice>.md`.
