@@ -525,7 +525,10 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(record, indent=2))
         del story["active_runs"][rid]
-        runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
+        ok_rm, rm_detail = runs_mod.remove_worktree(
+            cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
+        if not ok_rm:
+            log(f"{slug}: worktree removal failed for {rid} — {rm_detail}")
         stage, pr = run["stage"], run.get("pr")
         log(f"{slug}: stage {stage}"
             + (f" (slice {run.get('slice')})" if run.get("slice") else "")
@@ -562,8 +565,11 @@ def _sweep_worktrees(cfg, story, slug):
     live = {Path(r["worktree"]).name for r in (story.get("active_runs") or {}).values()}
     for d in base.iterdir():
         if d.is_dir() and d.name not in live:
-            runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)
-            log(f"{slug}: swept stale worktree {d.name}")
+            ok, detail = runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)
+            if ok:
+                log(f"{slug}: swept stale worktree {d.name}")
+            else:
+                log(f"{slug}: SWEEP FAILED for {d.name} — {detail}")
 
 
 def _post_status(cfg, ghc, slug, story, open_prs):

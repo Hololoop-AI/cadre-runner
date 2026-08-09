@@ -58,12 +58,25 @@ def add_worktree(checkout: Path, wt_path: Path, branch: str, start_ref: str):
     sh(["git", "worktree", "add", "--force", "-B", branch, str(wt_path), start_ref], cwd=checkout)
 
 
-def remove_worktree(checkout: Path, wt_path: Path):
+def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
+    """(removed?, detail). Never raises — the caller decides how loudly a
+    surviving worktree gets reported (silent failure hid a leak for hours)."""
+    detail = ""
     try:
-        sh(["git", "worktree", "remove", "--force", str(wt_path)], cwd=checkout)
-    except Exception:
-        subprocess.run(["rm", "-rf", str(wt_path)], check=False)
+        p = subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)],
+                           cwd=checkout, capture_output=True, text=True)
+        detail = (p.stderr or "").strip()[:200]
+    except Exception as e:
+        detail = f"git worktree remove raised: {e}"
+    if wt_path.exists():
+        try:
+            p2 = subprocess.run(["rm", "-rf", str(wt_path)], capture_output=True, text=True)
+            if wt_path.exists():
+                return False, f"{detail} | rm -rf: {(p2.stderr or '').strip()[:200]}"
+        except Exception as e:
+            return False, f"{detail} | rm raised: {e}"
     subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
+    return True, detail
 
 
 # ------------------------------------------------------------------ processes
