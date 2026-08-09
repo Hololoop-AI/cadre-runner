@@ -171,6 +171,7 @@ def cmd_run(cfg, args, single_pass=False):
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
+        _consume_requests(cfg, reg, ghc)
         if board and board.enabled:
             try:
                 _board_intake(cfg, reg, board)
@@ -595,24 +596,51 @@ def _comment(ghc, story, body):
 
 
 def cmd_trigger(cfg, args):
-    """Manually fire a stage for a slice — the re-fire path for a build that
-    exited without producing a PR (e.g. dependency-blocked, then unblocked when
-    the dependency's own build merged). The daemon has no auto-retrigger for
-    that case yet; this is the manual stand-in."""
+    """Queue a manual stage run. The daemon consumes the request on its next
+    pass and spawns it itself — one registry writer, the daemon's env (a bare
+    ssh shell has no OAuth token), no race with live passes."""
     reg = Registry(cfg.data_dir / "registry.json")
-    ghc = GitHub(cfg.data_dir / "etags.json")
     slug = args.story
     if slug not in reg.data["stories"]:
         sys.exit(f"trigger: story {slug!r} not registered (see `status`)")
-    story = reg.get(slug)
-    # refresh prs_cache so revise/base lookups resolve
-    poller.collect_events(ghc, reg, slug, story)
-    action = {"stage": args.stage, "slice": args.slice, "pr": args.pr,
-              "role": args.role or ""}
-    log(f"{slug}: manual trigger — stage {args.stage}"
-        + (f" (slice {args.slice})" if args.slice else ""))
-    _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=True, wait=True)
-    reg.save()
+    rq = cfg.data_dir / "requests"
+    rq.mkdir(parents=True, exist_ok=True)
+    p = rq / f"{time.strftime('%Y%m%d-%H%M%S')}-{slug}-{args.stage}.json"
+    p.write_text(json.dumps({"story": slug, "stage": args.stage,
+                             "slice": args.slice, "pr": args.pr,
+                             "role": args.role or ""}))
+    log(f"queued {p.name} — the daemon spawns it within one poll pass")
+
+
+def _consume_requests(cfg, reg, ghc):
+    """Manual trigger requests, executed inside the daemon's own loop."""
+    rq = cfg.data_dir / "requests"
+    if not rq.is_dir():
+        return
+    for f in sorted(rq.glob("*.json")):
+        try:
+            req = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            f.unlink(missing_ok=True)
+            continue
+        slug = req.get("story")
+        if slug not in reg.data["stories"]:
+            log(f"request {f.name}: unknown story — dropped")
+            f.unlink(missing_ok=True)
+            continue
+        story = reg.get(slug)
+        try:
+            _run_stage(cfg, reg, ghc, slug, story,
+                       {"stage": req["stage"], "slice": req.get("slice"),
+                        "pr": req.get("pr"), "role": req.get("role", "")},
+                       skip_cap=True)
+            f.unlink(missing_ok=True)
+            reg.save()
+        except runs_mod.RunsBusy as e:
+            log(f"request {f.name}: deferred ({e})")  # file stays; retried next pass
+        except Exception as e:
+            log(f"request {f.name}: FAILED — {e}")
+            f.unlink(missing_ok=True)
 
 
 def cmd_board_check(cfg, args):
