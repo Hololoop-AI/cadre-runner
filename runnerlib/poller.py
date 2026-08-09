@@ -19,11 +19,16 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
 
     # --- 1. PR structure: one ETag'd list call covers every stage PR ----------
     pulls = ghc.pulls(repo, base=story["feature_branch"])
-    if pulls is NOT_MODIFIED:
+    # The FINAL story PR rides the feature branch itself (feat/... -> main), so
+    # the base-filtered call never sees it — without this, teammate @claude
+    # summons on the one PR humans actually review are silently unroutable.
+    finals = ghc.pulls(repo, head=f"{repo.split('/')[0]}:{story['feature_branch']}")
+    if pulls is NOT_MODIFIED and finals is NOT_MODIFIED:
         prs = story.get("prs_cache", {})
     else:
+        cached = story.get("prs_cache", {})
         prs = {}
-        for pr in pulls:
+        for pr in (pulls if pulls is not NOT_MODIFIED else []):
             role, slice_name = classify_branch(pr["head"]["ref"], slug)
             if role is None:
                 continue
@@ -31,6 +36,16 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
                 "role": role, "slice": slice_name, "state": pr["state"],
                 "merged": bool(pr.get("merged_at")), "head": pr["head"]["ref"],
             }
+        for pr in (finals if finals is not NOT_MODIFIED else []):
+            prs[str(pr["number"])] = {
+                "role": "final", "slice": None, "state": pr["state"],
+                "merged": bool(pr.get("merged_at")), "head": pr["head"]["ref"],
+            }
+        # a 304 on one call must not drop the other call's cached entries
+        if pulls is NOT_MODIFIED:
+            prs.update({k: v for k, v in cached.items() if v["role"] != "final"})
+        if finals is NOT_MODIFIED:
+            prs.update({k: v for k, v in cached.items() if v["role"] == "final"})
         story["prs_cache"] = prs
 
     open_count = sum(1 for p in prs.values() if p["state"] == "open" and p["role"] != "planning")

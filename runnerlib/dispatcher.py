@@ -43,6 +43,9 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
             if story["phase"] != "interrogate":
                 return _noop(f"planning merge in phase {story['phase']!r} — phase-lock")
             return {"type": "run_stage", "stage": "contracts", "slice": None, "pr": event["pr"]}
+        if role == "final":
+            # the human merged the story PR — the act that ships it
+            return {"type": "story_done", "pr": event["pr"]}
         if story["phase"] != "slices":
             return _noop(f"{role} merge in phase {story['phase']!r} — phase-lock")
         if role == "contract":
@@ -65,7 +68,7 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
                 return {"type": "escalate",
                         "reason": f"interrogate hit {rounds} rounds (cap {limits['max_rounds_per_stage']})"}
             return {"type": "run_stage", "stage": "interrogate", "slice": None, "pr": event["pr"]}
-        if role in ("contract", "tests", "build"):
+        if role in ("contract", "tests", "build", "final"):
             key = str(event["pr"])
             rounds = story["iterations"]["revise"].get(key, 0)
             if rounds >= limits["max_rounds_per_stage"]:

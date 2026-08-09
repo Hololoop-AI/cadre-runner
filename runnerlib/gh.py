@@ -88,13 +88,15 @@ class GitHub:
 
     # -- endpoints -----------------------------------------------------------
 
-    def pulls(self, repo: str, base: str):
-        """All PRs (open + closed) targeting `base`. One ETag'd call per story."""
-        return self.get(
-            f"/repos/{repo}/pulls",
-            {"base": base, "state": "all", "per_page": 100, "sort": "updated", "direction": "desc"},
-            etag=True,
-        )
+    def pulls(self, repo: str, base: str = None, head: str = None):
+        """All PRs (open + closed) targeting `base` or from `head`
+        ("owner:branch"). One ETag'd call per story per filter."""
+        params = {"state": "all", "per_page": 100, "sort": "updated", "direction": "desc"}
+        if base:
+            params["base"] = base
+        if head:
+            params["head"] = head
+        return self.get(f"/repos/{repo}/pulls", params, etag=True)
 
     def issue_comments_since(self, repo: str, since: str):
         """Repo-wide issue comments (includes PR conversation comments)."""

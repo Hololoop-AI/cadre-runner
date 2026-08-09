@@ -338,6 +338,12 @@ def _execute(cfg, reg, ghc, slug, story, action, event, open_prs):
     if kind == "post_status":
         _post_status(cfg, ghc, slug, story, open_prs)
         return
+    if kind == "story_done":
+        story["status"] = "done"
+        story["phase"] = "done"
+        _comment(ghc, story, f"✅ Story shipped — final PR #{action['pr']} merged. {AGENT_MARKER}")
+        log(f"{slug}: DONE — final PR #{action['pr']} merged")
+        return
     if kind == "escalate":
         story["status"] = "escalated"
         _comment(ghc, story, f"⚠️ Pipeline escalated: {action['reason']}. "
