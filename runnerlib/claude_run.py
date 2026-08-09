@@ -27,11 +27,17 @@ def sh(args, cwd=None, check=True, capture=True):
                           capture_output=capture)
 
 
-def ensure_checkout(repo: str, checkout: Path, default_branch: str):
+def ensure_checkout(repo: str, checkout: Path, default_branch: str, identity: dict | None = None):
     if not (checkout / ".git").is_dir():
         checkout.parent.mkdir(parents=True, exist_ok=True)
         sh(["gh", "repo", "clone", repo, str(checkout)])
         sh(["gh", "auth", "setup-git"], cwd=checkout)
+    if identity and identity.get("name"):
+        # Commit author must match the acting account (gh auth controls push,
+        # not authorship) — otherwise agent commits render as whoever's git
+        # config leaks into the checkout.
+        sh(["git", "config", "user.name", identity["name"]], cwd=checkout)
+        sh(["git", "config", "user.email", identity["email"]], cwd=checkout)
     sh(["git", "fetch", "origin", "--prune"], cwd=checkout)
 
 

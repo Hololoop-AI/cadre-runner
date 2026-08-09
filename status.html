@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadre — Runner Status</title>
+<style>
+:root {
+  --bg: #faf9f6; --fg: #1c1e21; --muted: #6b6f76; --card: #fff; --border: #e4e1da;
+  --ok: #15803d; --ok-soft: #15803d14; --run: #b45309; --run-soft: #b4530914;
+  --dead: #b91c1c; --dead-soft: #b91c1c14; --accent: #c2410c; --code-bg: #16181d; --code-fg: #d7dae0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131417; --fg: #e8e6e1; --muted: #9a9ea6; --card: #1b1d22; --border: #2a2d34;
+    --ok: #4ade80; --ok-soft: #4ade8018; --run: #fbbf24; --run-soft: #fbbf2418;
+    --dead: #f87171; --dead-soft: #f8717118; --accent: #fb923c; --code-bg: #0e0f12; --code-fg: #d7dae0;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 46rem; margin: 0 auto; padding: 1.2rem 1.2rem 3rem; }
+h1 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+h1 .dot { color: var(--accent); }
+.mono { font-family: ui-monospace, Menlo, monospace; }
+header { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 1rem; }
+header .updated { margin-left: auto; color: var(--muted); font-size: 0.78rem; }
+
+.banner { border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1.2rem;
+  border: 1px solid var(--border); display: flex; align-items: center; gap: 0.8rem; }
+.banner .light { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.banner.ok   { background: var(--ok-soft); }   .banner.ok .light   { background: var(--ok); }
+.banner.run  { background: var(--run-soft); }  .banner.run .light  { background: var(--run);
+  animation: pulse 1.6s ease-in-out infinite; }
+.banner.dead { background: var(--dead-soft); } .banner.dead .light { background: var(--dead); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.banner .main { font-weight: 650; }
+.banner .sub { color: var(--muted); font-size: 0.85rem; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.9rem 1.1rem; margin-bottom: 0.8rem; }
+.card h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 0 0 0.6rem; }
+.story { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.8rem; padding: 0.45rem 0; }
+.story + .story { border-top: 1px solid var(--border); }
+.story .id { font-weight: 650; }
+.story .title { color: var(--muted); font-size: 0.85rem; flex: 1 1 14rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { font-size: 0.72rem; padding: 0.1rem 0.55rem; border-radius: 99px;
+  border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.badge.active { border-color: var(--ok); color: var(--ok); }
+.badge.escalated { border-color: var(--dead); color: var(--dead); }
+.slices { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem;
+  font-size: 0.78rem; color: var(--muted); }
+.slices .sl b { color: var(--fg); font-weight: 600; }
+.slices .p { letter-spacing: 0.12em; }
+.slices .p .on { color: var(--ok); }
+pre.log { background: var(--code-bg); color: var(--code-fg); border-radius: 10px;
+  padding: 0.8rem 1rem; font-size: 0.72rem; line-height: 1.5; overflow-x: auto; margin: 0; }
+a { color: var(--accent); }
+.err { color: var(--dead); }
+footer { color: var(--muted); font-size: 0.75rem; margin-top: 1.2rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Cadre<span class="dot">.</span> runner</h1>
+    <span class="updated" id="updated">loading…</span>
+  </header>
+  <div id="banner" class="banner ok"><div class="light"></div><div>
+    <div class="main">Connecting…</div><div class="sub"></div></div>
+  </div>
+  <div class="card"><h2>Stories</h2><div id="stories">—</div></div>
+  <div class="card"><h2>Runner log</h2><pre class="log" id="log">—</pre></div>
+  <footer>Auto-refreshes every 5 s · served read-only from the HTPC · data:
+    <span class="mono">status.json</span></footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const ago = (sec) => {
+  if (sec < 90) return Math.round(sec) + "s";
+  if (sec < 5400) return Math.round(sec / 60) + " min";
+  return (sec / 3600).toFixed(1) + " h";
+};
+
+function banner(cls, main, sub) {
+  const b = $("banner");
+  b.className = "banner " + cls;
+  b.innerHTML = `<div class="light"></div><div><div class="main">${main}</div>` +
+                `<div class="sub">${sub}</div></div>`;
+}
+
+function render(s) {
+  const now = Date.now() / 1000;
+  const age = now - s.ts;
+  $("updated").textContent = `snapshot ${s.iso} · fetched ${new Date().toLocaleTimeString()}`;
+
+  // Freshness logic — the whole point of the page.
+  if (s.run) {
+    const runFor = now - s.run.started;
+    const what = `${esc(s.run.stage)} — ${esc(s.run.story)}` +
+      (s.run.slice ? ` / ${esc(s.run.slice)}` : "") +
+      (s.run.pr ? ` (PR #${esc(s.run.pr)})` : "");
+    if (runFor > 2.5 * 3600) {
+      banner("dead", "⚠ Run overdue", `${what} — started ${ago(runFor)} ago; past the 2 h timeout, likely dead`);
+    } else {
+      banner("run", `Running: ${what}`, `started ${ago(runFor)} ago · status updates pause while a stage runs`);
+    }
+  } else if (age < 3 * (s.poll_interval || 45)) {
+    banner("ok", "Idle — polling", `last pass ${ago(age)} ago · every ${s.poll_interval}s`);
+  } else {
+    banner("dead", "⚠ Daemon silent", `no pass for ${ago(age)} — daemon is down or wedged`);
+  }
+
+  $("stories").innerHTML = (s.stories || []).map(st => {
+    const slices = Object.entries(st.slices || {});
+    const dots = slices.map(([name, sl]) => {
+      const p = ["contract", "tests", "build"].map(r =>
+        `<span class="${sl[r] ? "on" : ""}">${sl[r] ? "●" : "○"}</span>`).join("");
+      return `<span class="sl"><b>${esc(name)}</b> <span class="p">${p}</span></span>`;
+    }).join("");
+    const link = st.planning_pr
+      ? `<a href="https://github.com/${esc(st.repo)}/pull/${st.planning_pr}">#${st.planning_pr}</a>` : "";
+    return `<div class="story">
+      <span class="id">${esc(st.story_id)}</span>
+      <span class="badge ${esc(st.status)}">${esc(st.status)} · ${esc(st.phase)}</span>
+      ${link}
+      <span class="title">${esc(st.title)}</span>
+      ${slices.length ? `<span class="slices">${dots}</span>` : ""}
+    </div>`;
+  }).join("") || "<span class='badge'>no stories registered</span>";
+
+  $("log").textContent = (s.log_tail || []).join("\n") || "—";
+}
+
+async function tick() {
+  try {
+    const r = await fetch("status.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+  } catch (e) {
+    banner("dead", "⚠ Can't reach status.json", esc(e.message) +
+      " — status service up but daemon has never written a snapshot, or file missing");
+  }
+}
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

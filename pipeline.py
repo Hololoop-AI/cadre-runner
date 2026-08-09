@@ -40,7 +40,7 @@ def log(msg):
 def cmd_install(cfg, args):
     repo_cfg = cfg.repo(args.repo)
     checkout = cfg.checkout_dir(repo_cfg)
-    claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"])
+    claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"], cfg.commit_identity)
     linked, missing = claude_run.install_skills(checkout, cfg.skills_source)
     log(f"checkout ready: {checkout}")
     log(f"skills linked: {len(linked)} new; missing from source: {missing or 'none'}")
@@ -77,7 +77,7 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
     slug = slugify(story_id)
     title = title or story_text.strip().splitlines()[0][:80]
 
-    claude_run.ensure_checkout(repo_name, checkout, repo_cfg["default_branch"])
+    claude_run.ensure_checkout(repo_name, checkout, repo_cfg["default_branch"], cfg.commit_identity)
     claude_run.install_skills(checkout, cfg.skills_source)
     claude_run.prepare(checkout, repo_cfg["default_branch"])
 
@@ -224,7 +224,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     stage, slice_name, pr = action["stage"], action.get("slice"), action.get("pr")
     repo_cfg = cfg.repo(story["repo"])
     checkout = cfg.checkout_dir(repo_cfg)
-    claude_run.ensure_checkout(story["repo"], checkout, repo_cfg["default_branch"])
+    claude_run.ensure_checkout(story["repo"], checkout, repo_cfg["default_branch"], cfg.commit_identity)
     claude_run.install_skills(checkout, cfg.skills_source)
 
     base = {"interrogate": stage_branch(slug, "planning")}.get(stage, story["feature_branch"])
