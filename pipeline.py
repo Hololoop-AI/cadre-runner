@@ -197,9 +197,32 @@ def _board_intake(cfg, reg, board):
 def _poll_story(cfg, reg, ghc, slug, story):
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _try_automerge(cfg, ghc, slug, story)
-    pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in events]
+    # Events are seen-marked at collection, so a crash between collection and
+    # execution would lose them forever (the since-window never re-collects).
+    # Failed events persist in a retry queue instead: re-dispatched next pass,
+    # dead-lettered loudly after 3 attempts. The system must work to build the
+    # system.
+    retries = story.get("retry_events", [])
+    story["retry_events"] = []
+    pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in retries + events]
     for action, event in poller.coalesce(pairs):
-        _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
+        try:
+            _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
+        except Exception as e:
+            attempts = event.get("_attempts", 0) + 1
+            if attempts >= 3:
+                clean = {k: v for k, v in event.items() if k != "_attempts"}
+                story.setdefault("dead_letter", []).append({"event": clean, "error": str(e)[:300]})
+                log(f"{slug}: EVENT DEAD-LETTERED after {attempts} attempts: "
+                    f"{event.get('kind')} on #{event.get('pr')} — {e}")
+                _comment(ghc, story,
+                         f"⚠️ A pipeline event failed {attempts}× and was parked: "
+                         f"`{event.get('kind')}` on #{event.get('pr')} — `{e}`. "
+                         f"After fixing the cause, re-fire with `pipeline.py trigger`. {AGENT_MARKER}")
+            else:
+                event["_attempts"] = attempts
+                story["retry_events"].append(event)
+                log(f"{slug}: event failed (attempt {attempts}/3), queued for retry: {e}")
     if dispatcher.all_built(story, open_prs) and story["phase"] == "slices":
         _run_stage(cfg, reg, ghc, slug, story,
                    {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
