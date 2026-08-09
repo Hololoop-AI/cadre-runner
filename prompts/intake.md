@@ -15,4 +15,14 @@ Runtime bindings for the skill:
 - Story link: $story_url
 - Spec-writer workflow: `$workflows_dir` — when non-empty, auto-spec's workflow path applies (see its "Workflow-backed drafting" section)
 
+The planning PR body MUST end with the slice manifest — the machine-readable plan the daemon dispatches from (state lives on PR surfaces, never in committed files):
+
+````
+```cadre-manifest
+{"slices": [{"name": "<slice>", "nodes": ["contract", "tests", "build"], "depends_on": [], "wave": 1, "files": ["<loose footprint>"]}]}
+```
+````
+
+One entry per slice, matching the artifact's slice list exactly. `nodes` is the slice's resolved flow as stage names — a slice whose flow skips contracts or tests simply omits those nodes, and the daemon exempts them (an author-only slice is `"nodes": ["build"]`). The manifest is frozen by the approval merge; interrogate/revise rounds that change the slice list MUST update it in the same round.
+
 If a previous intake attempt left partial work (branch/issue/PR already exists), resume and repair it — do not duplicate.

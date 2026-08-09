@@ -81,6 +81,39 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
     return _noop(f"unknown event kind {kind!r}")
 
 
+def ready_actions(story: dict) -> list[dict]:
+    """Flow-aware ready-set dispatch, for stories with a planning-PR manifest.
+
+    Each pass computes what every slice needs next and emits spawn actions for
+    anything unblocked. Merge events stay the fast path; this is the
+    GUARANTEE: missed events, flow-exempt stages (a slice whose flow has no
+    contract/tests), and dependency unblocks all heal here. Slices without a
+    manifest entry, and stories without a manifest, are untouched (legacy
+    event-chained behavior)."""
+    plan = story.get("plan_slices")
+    if not plan or story["phase"] != "slices":
+        return []
+    recs, out = story["slices"], []
+    built = {n for n, r in recs.items() if r.get("build_merged")}
+    for meta in plan:
+        rec = recs.get(meta["name"])
+        if not rec or rec.get("build_merged"):
+            continue
+        if any(d not in built for d in meta.get("depends_on") or []):
+            continue  # blocked on a sibling — heals when it builds
+        for node in meta.get("nodes") or ["contract", "tests", "build"]:
+            if node not in ("contract", "tests", "build") or rec.get(f"{node}_merged"):
+                continue
+            # first undone node. Contracts are authored story-wide at planning
+            # merge, so a missing contract PR is not per-slice re-fireable;
+            # tests/build spawn here when their PR doesn't exist yet.
+            if node in ("tests", "build") and not rec.get(f"{node}_pr"):
+                out.append({"type": "run_stage", "stage": node, "slice": meta["name"],
+                            "pr": rec.get("contract_pr") or story.get("planning_pr")})
+            break
+    return out
+
+
 def all_built(story: dict, open_pipeline_prs: int) -> bool:
     """Assembly trigger: every known slice's build PR merged, nothing pipeline-owned open."""
     slices = story["slices"]

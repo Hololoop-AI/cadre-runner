@@ -244,6 +244,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     if story["status"] == "intaking":
         return  # nothing to poll until the intake run reaps
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
+    _seed_manifest(reg, ghc, slug, story)
     _try_automerge(cfg, reg, ghc, slug, story)
     # Events are seen-marked at collection, so a crash between collection and
     # execution would lose them forever (the since-window never re-collects).
@@ -276,6 +277,18 @@ def _poll_story(cfg, reg, ghc, slug, story):
                 event["_attempts"] = attempts
                 story["retry_events"].append(event)
                 log(f"{slug}: event failed (attempt {attempts}/3), queued for retry: {e}")
+    # Flow-aware ready-set: the guarantee behind the event fast path — exempt
+    # stages, dependency unblocks, and missed events all dispatch from here.
+    for action in dispatcher.ready_actions(story):
+        rec = story["slices"][action["slice"]]
+        spawns = rec.setdefault("ready_spawns", {})
+        if spawns.get(action["stage"], 0) >= 2:
+            continue  # two silent failures = wait for a human summon, don't loop
+        try:
+            _run_stage(cfg, reg, ghc, slug, story, action)
+            spawns[action["stage"]] = spawns.get(action["stage"], 0) + 1
+        except runs_mod.RunsBusy:
+            pass  # recomputed fresh next pass — no queue needed
     if (dispatcher.all_built(story, open_prs) and story["phase"] == "slices"
             and not runs_mod.key_active(story, "assembly", None, story.get("planning_pr"))):
         try:
@@ -283,6 +296,36 @@ def _poll_story(cfg, reg, ghc, slug, story):
                        {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
         except runs_mod.RunsBusy as e:
             log(f"{slug}: assembly deferred ({e}) — retried next pass")
+
+
+def _seed_manifest(reg, ghc, slug, story):
+    """Fetch the planning PR's manifest once and seed slice records with flow
+    exemptions (a slice whose flow lacks contract/tests has those stages
+    pre-marked merged). Stories without a manifest stay legacy after a few
+    checks — nothing changes for them."""
+    if story.get("plan_slices") is not None or story.get("manifest_absent"):
+        return
+    if not story.get("planning_pr") or story["phase"] not in ("interrogate", "slices"):
+        return
+    try:
+        detail = ghc.pr(story["repo"], story["planning_pr"])
+    except Exception:
+        return
+    slices = poller.parse_manifest(detail.get("body"))
+    if not slices:
+        checks = story.get("manifest_checks", 0) + 1
+        story["manifest_checks"] = checks
+        if story["phase"] == "slices" and checks >= 3:
+            story["manifest_absent"] = True  # legacy story — stop looking
+        return
+    for s in slices:
+        rec = reg.slice_rec(story, s["name"])
+        nodes = s.get("nodes") or ["contract", "tests", "build"]
+        for role in ("contract", "tests", "build"):
+            if role not in nodes:
+                rec[f"{role}_merged"] = True  # exempt by flow, not actually run
+    story["plan_slices"] = slices
+    log(f"{slug}: manifest seeded — {len(slices)} slice(s), flow-aware dispatch active")
 
 
 def _try_automerge(cfg, reg, ghc, slug, story):

@@ -102,3 +102,46 @@ def run():
 
 if __name__ == "__main__":
     run()
+
+# -- ready_actions: flow-aware ready-set dispatch (manifest stories) ----------
+from runnerlib.dispatcher import ready_actions
+from runnerlib.poller import parse_manifest
+
+def _story(plan, slices, phase="slices"):
+    return {"plan_slices": plan, "slices": slices, "phase": phase, "planning_pr": 1}
+
+_plan = [
+    {"name": "a", "nodes": ["contract", "tests", "build"], "depends_on": []},
+    {"name": "b", "nodes": ["build"], "depends_on": ["a"]},
+]
+# a's contract open, unmerged: nothing spawnable (contracts are story-wide; b blocked on a)
+s = _story(_plan, {
+    "a": {"contract_pr": 5, "contract_merged": False, "tests_pr": None, "tests_merged": False,
+          "build_pr": None, "build_merged": False},
+    "b": {"contract_pr": None, "contract_merged": True, "tests_pr": None, "tests_merged": True,
+          "build_pr": None, "build_merged": False},
+})
+assert ready_actions(s) == []
+# a's contract merged, no tests PR yet -> spawn tests for a; b still blocked
+s["slices"]["a"]["contract_merged"] = True
+acts = ready_actions(s)
+assert [(x["stage"], x["slice"]) for x in acts] == [("tests", "a")]
+# a fully built -> b (author-only flow) unblocks straight to build
+s["slices"]["a"].update(tests_merged=True, build_merged=True)
+acts = ready_actions(s)
+assert [(x["stage"], x["slice"]) for x in acts] == [("build", "b")]
+# b's build PR open -> nothing to spawn
+s["slices"]["b"]["build_pr"] = 9
+assert ready_actions(s) == []
+# legacy story (no manifest) -> never touched
+assert ready_actions({"plan_slices": None, "slices": {}, "phase": "slices"}) == []
+# wrong phase -> nothing
+assert ready_actions(_story(_plan, s["slices"], phase="interrogate")) == []
+
+# -- parse_manifest -----------------------------------------------------------
+body = "planning text\n```cadre-manifest\n{\"slices\": [{\"name\": \"x\", \"nodes\": [\"build\"]}]}\n```\n<!-- pipeline-run -->"
+assert parse_manifest(body)[0]["name"] == "x"
+assert parse_manifest("no block here") is None
+assert parse_manifest("```cadre-manifest\nnot json\n```") is None
+assert parse_manifest(None) is None
+print("ready-set + manifest tests: all passed")

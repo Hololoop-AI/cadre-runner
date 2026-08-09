@@ -1,6 +1,7 @@
 """Event collection: turn GitHub polling results into normalized dispatcher
 events. Network in, plain dicts out — no model calls here."""
 
+import json
 import re
 import time
 
@@ -10,6 +11,24 @@ from .registry import classify_branch
 
 SUMMON_RE = re.compile(r"@claude\b", re.IGNORECASE)
 COMMAND_RE = re.compile(r"^/(status|escalate)\b")
+MANIFEST_RE = re.compile(r"```cadre-manifest\s*\n(.*?)```", re.DOTALL)
+
+
+def parse_manifest(body: str | None):
+    """Slice manifest from a planning PR body — the approved plan as machine-
+    readable state on the PR surface (nothing committed to the repo). Returns
+    [{"name", "nodes", "depends_on", ...}] or None."""
+    m = MANIFEST_RE.search(body or "")
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+    slices = data.get("slices")
+    if not isinstance(slices, list):
+        return None
+    return [s for s in slices if isinstance(s, dict) and s.get("name")] or None
 
 
 def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
