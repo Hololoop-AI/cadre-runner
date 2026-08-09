@@ -7,6 +7,6 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
 3. **Cross-slice code review** — invoke the **code-review** skill (scope-discipline lenses) against the combined diff and each slice's contract. Its verdict and any findings go into the final PR body's review section — do not edit code here.
 4. **Review aids** — invoke the **pr-walkthrough** skill against the combined change (head `$feature_branch`, base `$default_branch`). Commit under `study/$story_slug/` on `$feature_branch`: the walkthrough HTML, quiz HTML, deck.json, and `walkthrough.md` (same content, GitHub-flavored, as the in-GitHub-readable rendition). Push.
 5. **Final PR** — open `$feature_branch` → `$default_branch`, title "[story] $story_id: $story_title". Body per artifact-voice — orient first (what this story is and why, from the planning artifact), then: slice list with one-liners, a link to `study/$story_slug/walkthrough.md` (renders in GitHub) and to the interactive quiz/walkthrough HTML (rendered-page link mechanism TBD — see NEX-151-adjacent research), a pointer to deck.json for the study hub, the code-review verdict, the full-suite result. Merging this PR ships the story; it is the one PR written for human readers.
-6. Update `.pipeline/state.json` (`"stage": "final-review"`, final PR number), commit, push. Comment on tracking issue #$tracking_issue: assembly done, link the final PR.
+6. Comment on tracking issue #$tracking_issue: assembly done, link the final PR.
 
 Never merge the final PR — that is the human act that ships the story.

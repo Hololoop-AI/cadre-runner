@@ -11,7 +11,6 @@ The driver merged the Planning PR: the scope is locked. Author plain-English int
    - branch `pipe/$story_slug/contract-<slice>` off `$feature_branch`, containing **only that slice's contract file(s)** — use exactly this branch name; the daemon routes by it
    - push; open a Contract PR (base `$feature_branch`) titled "[$story_slug][contracts][<o>/<N>] <slice>" — `<o>/<N>` is the slice's review order from the planning artifact's slice list (`review_order` of `N` slices); omit the `[<o>/<N>]` token only if the plan carries no ordering. Titles carry the story slug because multiple stories run at once.
    - body: what the slice does, the contract's intent in two sentences, a line `Confidence: high|medium|low — <one-line why>` (high = the contract follows directly from the spec and codebase with no judgment calls a reviewer could reasonably dispute; medium/low = name the specific uncertainty — these WAIT for driver review while high-confidence contracts auto-merge), and: "Merging locks this contract and starts test-writing for this slice."
-4. Update `.pipeline/state.json` on `$feature_branch`: `"stage": "slices"`, each slice's contract PR number. Commit, push.
-5. Comment on the merged Planning PR (#$planning_pr): contract PRs opened (links), suggested review order.
+4. Comment on the merged Planning PR (#$planning_pr): contract PRs opened (links), suggested review order.
 
 Contracts must be reviewable by a human in plain English — a reader should be able to say "yes, that proves the slice works" without reading code. Never merge anything.
