@@ -1,9 +1,12 @@
 """Auto-merge policy (NEX-150): after planning approval, the human is only
 interrupted when the system is unsure.
 
-- tests PRs: auto-merge when CI is green. The lock stays meaningful — tests
-  are authored by a separate session and the dispatcher forbids builds from
-  touching them; the human merge was never the mechanism.
+- tests PRs: auto-merge when CI is green — unless the body carries a
+  `Confidence:` line below high (the test-writer node earns confidence from
+  independent verification + a coverage breaker; low/medium means the driver
+  must look before the tests lock). No line = legacy/fallback path, green
+  suffices; the lock stays meaningful either way — tests are authored by a
+  separate session and the dispatcher forbids builds from touching them.
 - build PRs: auto-merge when CI is green (the build prompt already runs
   refactor + code-review and posts the self-review before opening the PR).
 - contract PRs: the one human gate — auto-merge ONLY when the PR body carries
@@ -48,13 +51,16 @@ def decide(role: str, pr_detail: dict, checks: list, policy: dict,
     if failed:
         return False, f"check failed ({failed[0].get('name')}: {failed[0].get('conclusion')})"
 
+    m = CONFIDENCE_RE.search(pr_detail.get("body") or "")
     if role == "contract":
-        m = CONFIDENCE_RE.search(pr_detail.get("body") or "")
         if not m:
             return False, "no Confidence: line in body — driver gate"
         if m.group(1).lower() != "high":
             return False, f"confidence {m.group(1).lower()} — driver gate"
         return True, "green + confidence high"
+
+    if role == "tests" and m and m.group(1).lower() != "high":
+        return False, f"confidence {m.group(1).lower()} — driver gate before lock"
 
     return True, "green"
 

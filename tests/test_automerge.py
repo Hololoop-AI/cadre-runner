@@ -23,6 +23,10 @@ assert not decide("contract", pr("stuff"), GREEN, POLICY, False)[0]       # no c
 assert decide("contract", pr("Confidence: high — direct from spec"), GREEN, POLICY, False)[0]
 assert not decide("contract", pr("Confidence: medium — mock boundary unclear"), GREEN, POLICY, False)[0]
 assert not decide("tests", pr(), GREEN, {"tests": False, "build": True, "contracts": True}, False)[0]
+assert decide("tests", pr("Confidence: high — clean first pass"), GREEN, POLICY, False)[0]
+assert not decide("tests", pr("Confidence: low — driver call on error case"), GREEN, POLICY, False)[0]
+assert not decide("tests", pr("Confidence: medium — fixes re-verified"), GREEN, POLICY, False)[0]
+assert decide("build", pr("Confidence: low"), GREEN, POLICY, False)[0]    # confidence gate is contracts+tests only
 skipped = [{"name": "lint", "status": "completed", "conclusion": "skipped"}] + GREEN
 assert decide("tests", pr(), skipped, POLICY, False)[0]
 print("automerge policy tests: all passed")
