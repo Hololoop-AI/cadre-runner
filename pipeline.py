@@ -244,7 +244,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     if story["status"] == "intaking":
         return  # nothing to poll until the intake run reaps
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
-    _try_automerge(cfg, ghc, slug, story)
+    _try_automerge(cfg, reg, ghc, slug, story)
     # Events are seen-marked at collection, so a crash between collection and
     # execution would lose them forever (the since-window never re-collects).
     # Failed events persist in a retry queue instead: re-dispatched next pass,
@@ -285,19 +285,25 @@ def _poll_story(cfg, reg, ghc, slug, story):
             log(f"{slug}: assembly deferred ({e}) — retried next pass")
 
 
-def _try_automerge(cfg, ghc, slug, story):
+def _try_automerge(cfg, reg, ghc, slug, story):
     """NEX-150: merge green stage PRs so the pipeline advances without a human,
     except contract PRs below high confidence. Merge events dispatch the next
-    stage on the following pass — auto-merge IS the handoff."""
+    stage on the following pass — auto-merge IS the handoff. Conflicted PRs
+    spawn a reconcile run instead of waiting for a human untangle."""
     if story["status"] != "active":
         return
     for num_s, p in list(story.get("prs_cache", {}).items()):
-        if p["state"] != "open" or p["role"] not in ("contract", "tests", "build"):
+        if p["state"] != "open" or p["role"] not in ("contract", "tests", "build", "final"):
             continue
         try:
             detail = ghc.pr(story["repo"], int(num_s))
             if detail.get("state") != "open" or detail.get("merged"):
                 continue
+            if detail.get("mergeable") is False:
+                _maybe_reconcile(cfg, reg, ghc, slug, story, int(num_s), p)
+                continue
+            if p["role"] == "final":
+                continue  # never auto-merged; only watched for conflicts
             checks = ghc.check_runs(story["repo"], detail["head"]["sha"])
             bodies = _pr_conversation_latest_is_human(ghc, story["repo"], int(num_s))
             ok, reason = automerge.decide(p["role"], detail, checks, cfg.automerge, bodies)
@@ -306,8 +312,32 @@ def _try_automerge(cfg, ghc, slug, story):
                 log(f"{slug}: auto-merged {p['role']} PR #{num_s} ({reason})")
             elif "driver gate" in reason or "human" in reason:
                 pass  # expected waits — don't spam the log
+        except runs_mod.RunsBusy as e:
+            log(f"{slug}: reconcile deferred for PR #{num_s} ({e})")
         except Exception as e:
             log(f"{slug}: auto-merge check failed for PR #{num_s}: {e}")
+
+
+def _maybe_reconcile(cfg, reg, ghc, slug, story, pr, p):
+    """A conflicted pipeline PR gets a reconcile run — rounds-capped so a
+    conflict that keeps coming back escalates to the driver instead of looping."""
+    rounds = story["iterations"].setdefault("reconcile", {})
+    key = str(pr)
+    cap = cfg.limits["max_rounds_per_stage"]
+    if rounds.get(key, 0) == cap:
+        rounds[key] = cap + 1
+        _comment(ghc, story,
+                 f"⚠️ PR #{pr} still has merge conflicts after {cap} reconcile rounds — "
+                 f"needs a human untangle. {AGENT_MARKER}")
+        log(f"{slug}: reconcile ESCALATED for PR #{pr} after {cap} rounds")
+        return
+    if rounds.get(key, 0) > cap or runs_mod.key_active(story, "reconcile", p.get("slice"), pr):
+        return
+    base = (cfg.repo(story["repo"])["default_branch"] if p["role"] == "final"
+            else story["feature_branch"])
+    _run_stage(cfg, reg, ghc, slug, story,
+               {"stage": "reconcile", "slice": p.get("slice"), "pr": pr, "role": p["role"],
+                "extra_vars": {"reconcile_base": base}})
 
 
 def _pr_conversation_latest_is_human(ghc, repo, number):
@@ -423,7 +453,7 @@ def _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg):
     """(branch, start_ref) for a stage run's worktree. Every run owns exactly
     one branch — uniqueness is what makes concurrent runs safe."""
     fb = story["feature_branch"]
-    if stage == "revise":
+    if stage in ("revise", "reconcile"):
         b = story["prs_cache"][str(pr)]["head"]
         return b, f"origin/{b}"
     if stage == "interrogate":
@@ -464,6 +494,9 @@ def _reap_runs(cfg, reg, ghc, slug, story):
             story["iterations"]["interrogate"] += 1
         elif stage == "revise":
             story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
+        elif stage == "reconcile":
+            rec = story["iterations"].setdefault("reconcile", {})
+            rec[str(pr)] = rec.get(str(pr), 0) + 1
         elif stage == "contracts" and ok:
             story["phase"] = "slices"
         elif stage == "assembly":
