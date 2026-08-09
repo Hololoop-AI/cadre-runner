@@ -7,8 +7,10 @@ interrupted when the system is unsure.
   must look before the tests lock). No line = legacy/fallback path, green
   suffices; the lock stays meaningful either way — tests are authored by a
   separate session and the dispatcher forbids builds from touching them.
-- build PRs: auto-merge when CI is green (the build prompt already runs
-  refactor + code-review and posts the self-review before opening the PR).
+- build PRs: same confidence rule as tests — the `Confidence:` line comes
+  from fresh reviewer agents (code-review verdict / the build node's check
+  panel), never the builder's self-assessment; low/medium waits for the
+  driver. No line = legacy path, green suffices.
 - contract PRs: the one human gate — auto-merge ONLY when the PR body carries
   `Confidence: high`; low/medium wait for the driver, with the uncertainty
   named in the body.
@@ -59,8 +61,8 @@ def decide(role: str, pr_detail: dict, checks: list, policy: dict,
             return False, f"confidence {m.group(1).lower()} — driver gate"
         return True, "green + confidence high"
 
-    if role == "tests" and m and m.group(1).lower() != "high":
-        return False, f"confidence {m.group(1).lower()} — driver gate before lock"
+    if role in ("tests", "build") and m and m.group(1).lower() != "high":
+        return False, f"confidence {m.group(1).lower()} — driver gate"
 
     return True, "green"
 

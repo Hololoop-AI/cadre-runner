@@ -26,7 +26,9 @@ assert not decide("tests", pr(), GREEN, {"tests": False, "build": True, "contrac
 assert decide("tests", pr("Confidence: high — clean first pass"), GREEN, POLICY, False)[0]
 assert not decide("tests", pr("Confidence: low — driver call on error case"), GREEN, POLICY, False)[0]
 assert not decide("tests", pr("Confidence: medium — fixes re-verified"), GREEN, POLICY, False)[0]
-assert decide("build", pr("Confidence: low"), GREEN, POLICY, False)[0]    # confidence gate is contracts+tests only
+assert not decide("build", pr("Confidence: low — reviewer flagged wiring gap"), GREEN, POLICY, False)[0]
+assert decide("build", pr("Confidence: high — review clean"), GREEN, POLICY, False)[0]
+assert decide("build", pr("no line here"), GREEN, POLICY, False)[0]       # legacy path: green suffices
 skipped = [{"name": "lint", "status": "completed", "conclusion": "skipped"}] + GREEN
 assert decide("tests", pr(), skipped, POLICY, False)[0]
 print("automerge policy tests: all passed")
