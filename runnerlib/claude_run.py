@@ -18,6 +18,7 @@ PIPELINE_SKILLS = [
     "test-writer", "auto-test-writer",
     "build", "auto-build", "tdd", "refactor", "code-review",
     "coding-standards", "git-ops", "commit-and-pr",
+    "python-quality", "rust-quality",
     "verification", "systematic-debugging",
 ]
 
