@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import board as board_mod, claude_run, config as config_mod, dispatcher, poller
+from runnerlib import status as status_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib.gh import NOT_MODIFIED, GitHub
 from runnerlib.registry import Registry, classify_branch, feature_branch, slugify, stage_branch
@@ -121,6 +122,7 @@ def cmd_run(cfg, args, single_pass=False):
     board = board_mod.make_board(cfg.intake)
     log(f"runner up — poll every {cfg.runner['poll_interval']}s"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
+    status_mod.install_page(cfg)
     while True:
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
@@ -137,6 +139,7 @@ def cmd_run(cfg, args, single_pass=False):
                 log(f"ERROR polling {slug}: {e}")
             board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
             reg.save()
+        status_mod.write_status(cfg, reg)  # pass-end heartbeat; clears any run marker
         if single_pass:
             return
         try:
@@ -154,6 +157,8 @@ def _board_intake(cfg, reg, board):
             continue
         story_text = issue["title"] + ("\n\n" + issue["description"] if issue.get("description") else "")
         log(f"board: new card {issue['identifier']} — {issue['title']!r}; running intake")
+        status_mod.write_status(cfg, reg, run={"stage": "intake", "story": issue["identifier"],
+                                               "slice": None, "pr": None, "started": time.time()})
         # Acknowledge on the card BEFORE the (many-minute) intake run — silence
         # reads as failure. Moving the card out of the trigger column here also
         # prevents a failed intake from re-triggering every poll pass.
@@ -248,6 +253,8 @@ def _run_stage(cfg, reg, ghc, slug, story, action):
     log(f"{slug}: running stage {stage}"
         + (f" (slice {slice_name})" if slice_name else "")
         + (f" on PR #{pr}" if pr else ""))
+    status_mod.write_status(cfg, reg, run={"stage": stage, "story": story["story_id"],
+                                           "slice": slice_name, "pr": pr, "started": time.time()})
     ok, result, usage = _run(cfg, stage, prompt, checkout, slug)
     log(f"{slug}: stage {stage} {'done' if ok else 'FAILED'} — {result[:200]}")
 
