@@ -64,6 +64,12 @@ class Config:
     def skills_source(self) -> Path:
         return Path(os.path.expanduser(self.runner["skills_source"]))
 
+    @property
+    def workflow_skills_dir(self) -> str:
+        """cadre-workflows' skills/ dir (sibling of workflows/) — registry
+        skills linked into checkouts alongside the pipeline's own."""
+        return str(Path(self.workflows_dir).parent / "skills") if self.workflows_dir else ""
+
     def repo(self, name: str) -> dict:
         for r in self.repos:
             if r["name"] == name:

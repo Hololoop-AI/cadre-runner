@@ -42,25 +42,41 @@ def ensure_checkout(repo: str, checkout: Path, default_branch: str, identity: di
     sh(["git", "fetch", "origin", "--prune"], cwd=checkout)
 
 
-def install_skills(checkout: Path, skills_source: Path, exclude_from_git=True):
+def install_skills(checkout: Path, skills_source: Path, exclude_from_git=True,
+                   extra_sources: tuple = ()):
+    """Link PIPELINE_SKILLS from skills_source (required, hard-fails if absent)
+    plus every skill found in extra_sources (e.g. cadre-workflows/skills —
+    community/registry skills, linked opportunistically)."""
     dest = checkout / ".claude" / "skills"
     dest.mkdir(parents=True, exist_ok=True)
     linked, missing = [], []
-    for name in PIPELINE_SKILLS:
-        src = skills_source / name
-        if not src.is_dir():
-            missing.append(name)
-            continue
-        link = dest / name
+
+    def _link(src: Path):
+        link = dest / src.name
         # Re-link dangling symlinks: the source tree can move out from under
         # us (branch switch, worktree removal) and a stale link silently
         # deprives every stage session of that skill.
         if link.is_symlink() and not link.exists():
             link.unlink()
         elif link.is_symlink() or link.exists():
-            continue
+            return False
         link.symlink_to(src)
-        linked.append(name)
+        linked.append(src.name)
+        return True
+
+    for name in PIPELINE_SKILLS:
+        src = skills_source / name
+        if not src.is_dir():
+            missing.append(name)
+            continue
+        _link(src)
+    for extra in extra_sources:
+        extra = Path(extra)
+        if not extra.is_dir():
+            continue
+        for src in sorted(extra.iterdir()):
+            if src.is_dir() and (src / "SKILL.md").exists():
+                _link(src)
     if missing:
         raise SystemExit(
             f"skills missing from {skills_source}: {', '.join(missing)}\n"

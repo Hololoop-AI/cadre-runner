@@ -46,7 +46,8 @@ def cmd_install(cfg, args):
     repo_cfg = cfg.repo(args.repo)
     checkout = cfg.checkout_dir(repo_cfg)
     claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"], cfg.commit_identity)
-    linked, missing = claude_run.install_skills(checkout, cfg.skills_source)
+    linked, missing = claude_run.install_skills(checkout, cfg.skills_source,
+                                                extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else ())
     log(f"checkout ready: {checkout}")
     log(f"skills linked: {len(linked)} new; missing from source: {missing or 'none'}")
 
@@ -453,7 +454,8 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     wt = cfg.data_dir / "worktrees" / slug / rid
     runs_mod.add_worktree(checkout, wt, branch, start_ref)
     try:
-        claude_run.install_skills(wt, cfg.skills_source)
+        claude_run.install_skills(wt, cfg.skills_source,
+                                  extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else ())
     except Exception:
         # never leak a worktree on a failed spawn — the event retries with a
         # fresh one, and nobody has shell access to sweep by hand
