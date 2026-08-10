@@ -67,7 +67,10 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
             prs.update({k: v for k, v in cached.items() if v["role"] == "final"})
         story["prs_cache"] = prs
 
-    open_count = sum(1 for p in prs.values() if p["state"] == "open" and p["role"] != "planning")
+    # the final PR never gates anything: assembly is what updates it, so its
+    # openness must not block assembly (circular wait otherwise)
+    open_count = sum(1 for p in prs.values()
+                     if p["state"] == "open" and p["role"] not in ("planning", "final"))
 
     # merge events (oldest PR numbers first for deterministic ordering)
     for num_s, p in sorted(prs.items(), key=lambda kv: int(kv[0])):
