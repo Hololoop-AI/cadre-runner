@@ -85,4 +85,49 @@ assert head == "pipe/x/tests-s1", head
 runs.remove_worktree(repo, wt2)
 assert not wt2.exists()
 
+# -- usage limits are a pause, not a failure (session resume) -----------------
+from runnerlib.runs import is_rate_limited, retry_after
+
+LIMIT = "You've hit your session limit · resets 8pm (America/Chicago)"
+assert is_rate_limited(LIMIT)
+assert is_rate_limited("Error: usage limit reached, try again later")
+assert is_rate_limited("429 Too Many Requests")
+assert not is_rate_limited("ModuleNotFoundError: No module named 'runner'")
+assert not is_rate_limited("")           # a lost run must not read as rate-limited
+assert not is_rate_limited(None)
+
+_now = time.mktime((2026, 8, 13, 18, 50, 0, 0, 0, -1))
+_t = retry_after(LIMIT, _now)
+assert time.localtime(_t).tm_hour == 20 and time.localtime(_t).tm_mday == 13
+# a reset hour that already passed means tomorrow, never "immediately"
+_t2 = retry_after(LIMIT, time.mktime((2026, 8, 13, 22, 48, 0, 0, 0, -1)))
+assert time.localtime(_t2).tm_mday == 14
+# no stated hour: plain backoff, still never immediate
+assert retry_after("rate limit exceeded", _now) >= _now + 60
+
+# -- transient API failures are also a pause, on a short clock ----------------
+from runnerlib.runs import is_transient, _worktree_ready
+
+assert is_transient("API Error: 529 Overloaded. This is a server-side issue")
+assert is_transient("503 Service Unavailable")
+assert is_transient("Connection reset by peer")
+assert not is_transient("ModuleNotFoundError: No module named 'runner'")
+assert not is_transient("")
+# a usage limit is its own class, not a transient blip
+assert not is_transient("You've hit your session limit")
+
+# -- a worktree is only ready when git itself recognizes it -------------------
+with tempfile.TemporaryDirectory() as _td:
+    _p = Path(_td) / "wt"
+    _p.mkdir()
+    assert not _worktree_ready(_p)                      # nothing at all
+    (_p / ".git").write_text("gitdir: /nonexistent")
+    assert not _worktree_ready(_p)                      # dangling pointer
+# a real worktree passes even when the tree it checks out is empty
+assert _worktree_ready(wt2) is False                     # removed above
+wt3 = tmp / "wt3"
+runs.add_worktree(repo, wt3, "pipe/x/build-s1", "main")
+assert _worktree_ready(wt3)
+runs.remove_worktree(repo, wt3)
+
 print("runs smoke tests: all passed")

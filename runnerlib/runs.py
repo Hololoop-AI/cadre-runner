@@ -16,6 +16,7 @@ Concurrency safety rests on three guards, all enforced at spawn:
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -44,18 +45,50 @@ def key_active(story, stage, slice_name, pr):
 
 
 def branch_held(reg, repo, branch):
-    return any(r.get("repo") == repo and r.get("branch") == branch
-               for _s, _rid, r in all_active(reg))
+    """Paused runs count: their worktree still has the branch checked out, so
+    handing it to a new run would move the branch under a session that is
+    coming back to it."""
+    held = [r for _s, _rid, r in all_active(reg)]
+    for story in reg.data["stories"].values():
+        held += list((story.get("paused_runs") or {}).values())
+    return any(r.get("repo") == repo and r.get("branch") == branch for r in held)
 
 
 # ------------------------------------------------------------------ worktrees
 
 def add_worktree(checkout: Path, wt_path: Path, branch: str, start_ref: str):
     """Dedicated working tree on its own branch. -B resets the local branch to
-    start_ref; the branch guard above ensures no other worktree holds it."""
+    start_ref; the branch guard above ensures no other worktree holds it.
+
+    Verified before returning: sessions have repeatedly been handed a directory
+    with no checkout in it, and an agent that starts in an empty tree either
+    rebuilds it by hand or builds the wrong thing entirely. `git worktree add`
+    can report success and still leave nothing usable, so success is defined
+    here as "the tree is actually there"."""
     wt_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
     sh(["git", "worktree", "add", "--force", "-B", branch, str(wt_path), start_ref], cwd=checkout)
+    if not _worktree_ready(wt_path):
+        # One retry: prune again in case stale metadata blocked the checkout.
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)],
+                       cwd=checkout, check=False, capture_output=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
+        sh(["git", "worktree", "add", "--force", "-B", branch, str(wt_path), start_ref], cwd=checkout)
+        if not _worktree_ready(wt_path):
+            raise RuntimeError(
+                f"worktree {wt_path} is empty after two attempts (branch {branch} "
+                f"from {start_ref}) — refusing to start a session in it")
+
+
+def _worktree_ready(wt_path: Path) -> bool:
+    """Git's own view decides: a usable worktree has its gitdir pointer AND is
+    recognized as a work tree from inside. Counting files would reject a valid
+    checkout of an empty tree."""
+    if not (wt_path / ".git").exists():
+        return False
+    p = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                       cwd=wt_path, capture_output=True, text=True)
+    return p.returncode == 0 and p.stdout.strip() == "true"
 
 
 def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
@@ -82,14 +115,22 @@ def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
 # ------------------------------------------------------------------ processes
 
 def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
-          timeout, run_dir: Path) -> int:
+          timeout, run_dir: Path, session_id: str | None = None,
+          resume: bool = False) -> int:
     """Detached `claude -p` under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
-    the outcome. Returns the wrapper pid."""
+    the outcome. Returns the wrapper pid.
+
+    session_id is chosen by the caller rather than read back afterwards: a run
+    that dies (usage limit, reboot) never prints its id, and without it the
+    session's transcript — the actual work — is unreachable. resume=True
+    continues that session instead of starting a new one."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "prompt.txt").write_text(prompt)
     argv = [claude_bin, "-p", prompt, "--model", model, "--effort", effort,
             "--output-format", "json"]
+    if session_id:
+        argv += ["--resume", session_id] if resume else ["--session-id", session_id]
     if permission_mode == "bypass":
         argv.append("--dangerously-skip-permissions")
     else:
@@ -151,4 +192,50 @@ def outcome(run: dict):
             record["usage"] = usage
         except json.JSONDecodeError:
             record["raw_stdout"] = stdout[-8000:]
+    text = result_text or stdout
+    record["rate_limited"] = rc != 0 and is_rate_limited(text)
+    record["transient"] = rc != 0 and not record["rate_limited"] and is_transient(text)
     return rc == 0, result_text, usage, record
+
+
+# "You've hit your session limit · resets 8pm (America/Chicago)" — the account
+# ran out of inference, which is not the run failing. Treated as a pause so the
+# session can be resumed rather than re-run from nothing.
+_LIMIT_RE = re.compile(r"(session|usage|rate)\s+limit|limit\s*·\s*resets|too many requests",
+                       re.IGNORECASE)
+_RESET_RE = re.compile(r"resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
+
+
+def is_rate_limited(text: str) -> bool:
+    return bool(text) and bool(_LIMIT_RE.search(text))
+
+
+# A stage that died because the API was briefly unavailable has the same shape
+# as one that ran out of inference: the work is fine, the world wasn't ready.
+_TRANSIENT_RE = re.compile(
+    r"\b(429|500|502|503|504|529)\b|overloaded|service unavailable|"
+    r"internal server error|connection reset|timed? out reading|temporarily unavailable",
+    re.IGNORECASE)
+
+
+def is_transient(text: str) -> bool:
+    return bool(text) and bool(_TRANSIENT_RE.search(text))
+
+
+def retry_after(text: str, now: float | None = None) -> float:
+    """Epoch seconds to wait until, parsed from the limit message's reset hour
+    when it states one; otherwise a plain backoff. Always at least a minute out
+    so a resumed run cannot hot-loop against a limit that is still in force."""
+    now = time.time() if now is None else now
+    m = _RESET_RE.search(text or "")
+    if not m:
+        return now + 900
+    hour = int(m.group(1)) % 12
+    if m.group(3).lower() == "pm":
+        hour += 12
+    lt = time.localtime(now)
+    target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, int(m.group(2) or 0),
+                          0, 0, 0, -1))
+    if target <= now:
+        target += 86400  # the stated hour already passed today — it means tomorrow
+    return max(target, now + 60)

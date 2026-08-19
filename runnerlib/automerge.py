@@ -28,13 +28,31 @@ from .dispatcher import AGENT_MARKER
 CONFIDENCE_RE = re.compile(r"^\s*confidence:\s*(high|medium|low)\b", re.IGNORECASE | re.MULTILINE)
 
 
+def title_ok(role: str, title: str, slug: str) -> bool:
+    """One title grammar per PR role (NEX-166) — enforced here rather than in
+    prompts because prompt-only conventions drift. Stage PRs read
+    `[<slug>][<stage>][k/N] <slice>`; the `[k/N]` order token is optional
+    (plans without ordering)."""
+    title = title or ""
+    if role in ("contract", "tests", "build"):
+        stage = "contracts" if role == "contract" else role
+        return bool(re.match(rf"^\[{re.escape(slug)}\]\[{stage}\](\[\d+/\d+\])? \S", title))
+    if role == "planning":
+        return bool(re.match(r"^\[planning\] \S+: \S", title))
+    if role == "final":
+        return bool(re.match(r"^\[story\] \S+: \S", title))
+    return True
+
+
 def decide(role: str, pr_detail: dict, checks: list, policy: dict,
-           has_human_activity: bool) -> tuple[bool, str]:
+           has_human_activity: bool, slug: str = "") -> tuple[bool, str]:
     """(merge?, reason). Pure — network results in, verdict out."""
     if role not in ("contract", "tests", "build"):
         return False, f"role {role!r} is never auto-merged"
     if not policy.get(role if role != "contract" else "contracts", True):
         return False, f"auto-merge disabled for {role} in config"
+    if slug and not title_ok(role, pr_detail.get("title") or "", slug):
+        return False, "malformed title — driver gate"
     if pr_detail.get("draft"):
         return False, "draft PR"
     if any(l["name"].lower() == "hold" for l in pr_detail.get("labels", [])):

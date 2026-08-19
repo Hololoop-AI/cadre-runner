@@ -35,7 +35,8 @@ class GitHub:
         self.etag_path.parent.mkdir(parents=True, exist_ok=True)
         self.etag_path.write_text(json.dumps(self.etags))
 
-    def _request(self, method: str, url: str, body: dict | None, etag_key: str | None):
+    def _request(self, method: str, url: str, body: dict | None, etag_key: str | None,
+                 _retry_auth: bool = True):
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.github+json",
@@ -57,6 +58,12 @@ class GitHub:
         except urllib.error.HTTPError as e:
             if e.code == 304:
                 return NOT_MODIFIED, e.headers
+            if e.code == 401 and _retry_auth:
+                # gh's keyring token rotates out from under the long-lived
+                # daemon; re-read it once instead of replaying a dead
+                # credential until someone restarts the process.
+                self._token = None
+                return self._request(method, url, body, etag_key, _retry_auth=False)
             detail = e.read().decode(errors="replace")[:500]
             raise RuntimeError(f"GitHub {method} {url} -> {e.code}: {detail}") from e
 

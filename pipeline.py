@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -245,6 +246,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     _reap_runs(cfg, reg, ghc, slug, story)
     if story["status"] == "intaking":
         return  # nothing to poll until the intake run reaps
+    _resume_paused(cfg, reg, ghc, slug, story)
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _seed_manifest(reg, ghc, slug, story)
     _try_automerge(cfg, reg, ghc, slug, story)
@@ -351,10 +353,20 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                 continue  # never auto-merged; only watched for conflicts
             checks = ghc.check_runs(story["repo"], detail["head"]["sha"])
             bodies = _pr_conversation_latest_is_human(ghc, story["repo"], int(num_s))
-            ok, reason = automerge.decide(p["role"], detail, checks, cfg.automerge, bodies)
+            ok, reason = automerge.decide(p["role"], detail, checks, cfg.automerge, bodies,
+                                          slug=slug)
             if ok:
                 ghc.merge_pr(story["repo"], int(num_s))
                 log(f"{slug}: auto-merged {p['role']} PR #{num_s} ({reason})")
+            elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
+                # once per PR: a silent block here would be an invisible wedge
+                reg.mark_seen(story, "title_lint", int(num_s))
+                stage = "contracts" if p["role"] == "contract" else p["role"]
+                ghc.comment(story["repo"], int(num_s),
+                            f"⚠️ Title doesn't follow the pipeline grammar "
+                            f"`[{slug}][{stage}][k/N] <slice>` — auto-merge is blocked "
+                            f"until it's fixed (edit the title, or summon @claude). {AGENT_MARKER}")
+                log(f"{slug}: title lint blocked auto-merge on PR #{num_s}: {detail.get('title')!r}")
             elif "driver gate" in reason or "human" in reason:
                 pass  # expected waits — don't spam the log
         except runs_mod.RunsBusy as e:
@@ -478,13 +490,16 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     v |= action.get("extra_vars", {})
     prompt = claude_run.render(stage, v)
     run_dir = cfg.data_dir / "runs" / slug / rid
+    session_id = str(uuid.uuid4())
     pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, cfg.model_for(stage),
-                         cfg.claude["effort"], cfg.claude["permission_mode"],
-                         cfg.claude["timeout_seconds"], run_dir)
+                         cfg.effort_for(stage), cfg.claude["permission_mode"],
+                         cfg.claude["timeout_seconds"], run_dir, session_id=session_id)
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
+        "effort": cfg.effort_for(stage),
         "worktree": str(wt), "run_dir": str(run_dir), "started": time.time(),
+        "session_id": session_id, "action": action,
     }
     log(f"{slug}: spawned stage {stage}"
         + (f" (slice {slice_name})" if slice_name else "")
@@ -527,6 +542,37 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         log_path = cfg.data_dir / "logs" / slug / f"{rid}.json"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(record, indent=2))
+        if (record.get("rate_limited") or record.get("transient")) and run.get("session_id"):
+            # Out of inference, not a failed run. The session's transcript holds
+            # everything it did; keep the worktree it was working in and resume
+            # that same session once the limit lifts, instead of paying for the
+            # work twice.
+            # A brief outage is worth retrying in minutes; an exhausted account
+            # is not worth retrying until it refills.
+            until = (runs_mod.retry_after(result or "") if record.get("rate_limited")
+                     else time.time() + 180)
+            story.setdefault("paused_runs", {})[rid] = {
+                **run, "resume_after": until, "attempts": run.get("attempts", 0) + 1,
+            }
+            del story["active_runs"][rid]
+            status_mod.append_history(cfg, {
+                "ended": time.time(), "story": slug, "stage": run["stage"],
+                "slice": run.get("slice"), "pr": run.get("pr"), "ok": False,
+                "seconds": round(time.time() - run["started"], 1),
+                "model": run.get("model"), "paused": True,
+            })
+            why = "hit the usage limit" if record.get("rate_limited") else "hit a transient API error"
+            log(f"{slug}: stage {run['stage']} {why} after "
+                f"{round((time.time() - run['started']) / 60)} min — session kept, "
+                f"resuming after {time.strftime('%H:%M', time.localtime(until))}")
+            continue
+        status_mod.append_history(cfg, {
+            "ended": time.time(), "story": slug, "stage": run["stage"],
+            "slice": run.get("slice"), "pr": run.get("pr"), "ok": ok,
+            "seconds": round(time.time() - run["started"], 1),
+            "model": run.get("model"),
+            "cost_usd": (usage or {}).get("total_cost_usd"),
+        })
         del story["active_runs"][rid]
         ok_rm, rm_detail = runs_mod.remove_worktree(
             cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
@@ -558,6 +604,47 @@ def _reap_runs(cfg, reg, ghc, slug, story):
     _sweep_worktrees(cfg, story, slug)
 
 
+def _resume_paused(cfg, reg, ghc, slug, story):
+    """Re-enter sessions that stopped for want of inference. The worktree and
+    the session id both survived, so this continues the same conversation
+    rather than restarting the stage from nothing."""
+    for rid, run in list((story.get("paused_runs") or {}).items()):
+        if time.time() < run.get("resume_after", 0):
+            continue
+        if len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
+            return  # cap reached; the rest keep waiting
+        wt = Path(run["worktree"])
+        if not (wt / ".git").exists():
+            del story["paused_runs"][rid]
+            action = run.get("action") or {"type": "run_stage", "stage": run["stage"],
+                                           "slice": run.get("slice"), "pr": run.get("pr")}
+            log(f"{slug}: cannot resume {rid} — its worktree is gone; running the stage fresh")
+            try:
+                _run_stage(cfg, reg, ghc, slug, story, action)
+            except runs_mod.RunsBusy:
+                pass  # ready-set / next pass picks it up
+            continue
+        run_dir = Path(run["run_dir"])
+        for stale in ("exit", "out.json", "err.txt"):
+            (run_dir / stale).unlink(missing_ok=True)
+        pid = runs_mod.spawn(
+            cfg.claude["bin"],
+            "Your previous session in this worktree stopped partway through because the "
+            "account ran out of inference — nothing was wrong with your work. Re-read the "
+            "stage instructions you were given, check what you had already done on disk and "
+            "on GitHub, and carry on from there to finish the stage.",
+            wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
+            cfg.claude["permission_mode"],
+            cfg.claude["timeout_seconds"], run_dir,
+            session_id=run["session_id"], resume=True)
+        del story["paused_runs"][rid]
+        story.setdefault("active_runs", {})[rid] = {
+            **run, "pid": pid, "started": time.time(), "resumed": True,
+        }
+        log(f"{slug}: resumed stage {run['stage']} session {run['session_id'][:8]} — pid {pid}")
+
+
+
 def _sweep_worktrees(cfg, story, slug):
     """Remove worktree dirs no active run owns — crash litter from failed
     spawns. Runs every reap pass; the daemon is its own janitor because the
@@ -566,6 +653,7 @@ def _sweep_worktrees(cfg, story, slug):
     if not base.is_dir():
         return
     live = {Path(r["worktree"]).name for r in (story.get("active_runs") or {}).values()}
+    live |= {Path(r["worktree"]).name for r in (story.get("paused_runs") or {}).values()}
     for d in base.iterdir():
         if d.is_dir() and d.name not in live:
             ok, detail = runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)

@@ -15,6 +15,8 @@ Runtime bindings for the skill:
 - Story link: $story_url
 - Spec-writer workflow: `$workflows_dir` — when non-empty, auto-spec's workflow path applies (see its "Workflow-backed drafting" section)
 
+Title the planning PR exactly `[planning] $story_id: $story_title` — the runner lints PR titles and malformed ones block downstream automation.
+
 The planning PR body MUST end with the slice manifest — the machine-readable plan the daemon dispatches from (state lives on PR surfaces, never in committed files):
 
 ````

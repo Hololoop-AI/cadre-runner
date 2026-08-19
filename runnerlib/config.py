@@ -42,6 +42,10 @@ class Config:
         self.claude = merged["claude"]
         self.limits = merged["limits"]
         self.stage_models = raw.get("claude", {}).get("stage_models", {})
+        # Effort is half of the choice: a stronger model thinking briefly and a
+        # weaker one thinking hard land in similar places on cost, so the pair
+        # has to be expressible per stage, not just the model.
+        self.stage_effort = raw.get("claude", {}).get("stage_effort", {})
         self.repos = raw.get("repos", [])
         self.intake = raw.get("intake", {})
         self.commit_identity = raw.get("runner", {}).get("commit_identity", {})
@@ -83,6 +87,9 @@ class Config:
 
     def model_for(self, stage: str) -> str:
         return self.stage_models.get(stage, self.claude["default_model"])
+
+    def effort_for(self, stage: str) -> str:
+        return self.stage_effort.get(stage, self.claude["effort"])
 
 
 def load(path: str | None) -> Config:

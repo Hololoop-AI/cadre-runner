@@ -42,6 +42,14 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
         if role == "planning":
             if story["phase"] != "interrogate":
                 return _noop(f"planning merge in phase {story['phase']!r} — phase-lock")
+            # Only THIS story's current plan opens the gate. A re-planned story
+            # re-collects its old planning PR's merge as a fresh event (the
+            # seen-set is per story record), and that stale approval must not
+            # start contracts on a plan the driver has not read.
+            current = story.get("planning_pr")
+            if current and int(event["pr"]) != int(current):
+                return _noop(f"merge of superseded planning PR #{event['pr']} "
+                             f"(current plan is #{current})")
             return {"type": "run_stage", "stage": "contracts", "slice": None, "pr": event["pr"]}
         if role == "final":
             # the human merged the story PR — the act that ships it
@@ -60,6 +68,11 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
     # -- summons: conversation within the current stage -------------------------
     if kind == "summon":
         role = event["role"]
+        # A closed PR has nothing left to revise — its branch is often already
+        # gone. "Closing, superseded by X" is a normal thing for a human to
+        # write, and it must not buy a stage run.
+        if (story.get("prs_cache", {}).get(str(event.get("pr"))) or {}).get("state") == "closed":
+            return _noop(f"summon on closed PR #{event.get('pr')}")
         if role == "planning":
             if story["phase"] != "interrogate":
                 return _noop("summon on planning PR outside interrogate phase — phase-lock")
@@ -115,14 +128,26 @@ def ready_actions(story: dict) -> list[dict]:
 
 
 def all_built(story: dict, open_pipeline_prs: int) -> bool:
-    """Assembly trigger: every known slice's build PR merged, nothing pipeline-owned open."""
-    slices = story["slices"]
-    return (
-        story["phase"] == "slices"
-        and bool(slices)
-        and all(s.get("build_merged") for s in slices.values())
-        and open_pipeline_prs == 0
-    )
+    """Assembly trigger: every slice the PLAN declares has its build merged,
+    and nothing pipeline-owned is open.
+
+    Measured against the approved manifest, not the slice records the runner
+    happens to have discovered — a slice that has not opened a PR yet has no
+    record, and counting only records let assembly open a final PR for a story
+    with an unbuilt slice still in it. Slices whose flow has no build node are
+    complete without one; stories with no manifest keep the record-based rule."""
+    if story["phase"] != "slices" or open_pipeline_prs != 0:
+        return False
+    recs = story["slices"]
+    plan = story.get("plan_slices")
+    if not plan:
+        return bool(recs) and all(s.get("build_merged") for s in recs.values())
+    for meta in plan:
+        if "build" not in (meta.get("nodes") or ["contract", "tests", "build"]):
+            continue  # this flow ends before a build; nothing to wait for
+        if not (recs.get(meta["name"]) or {}).get("build_merged"):
+            return False
+    return True
 
 
 def _noop(reason: str) -> dict:

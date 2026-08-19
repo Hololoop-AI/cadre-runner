@@ -72,7 +72,10 @@ footer { color: var(--muted); font-size: 0.75rem; margin-top: 1.2rem; }
   <div id="banner" class="banner ok"><div class="light"></div><div>
     <div class="main">Connecting…</div><div class="sub"></div></div>
   </div>
+  <div class="card" id="runscard" style="display:none"><h2>Active runs</h2><div id="runs">—</div></div>
   <div class="card"><h2>Stories <span style="text-transform:none;letter-spacing:0;font-weight:400">· slice dots = contract / tests / build</span></h2><div id="stories">—</div></div>
+  <div class="card" id="recentcard" style="display:none"><h2>Finished runs <span style="text-transform:none;letter-spacing:0;font-weight:400">· newest first</span></h2><div id="recent">—</div></div>
+  <div class="card" id="statscard" style="display:none"><h2>Typical duration by stage</h2><div id="stats">—</div></div>
   <div class="card"><h2>Runner log</h2><pre class="log" id="log">—</pre></div>
   <footer>Auto-refreshes every 5 s · served read-only from the HTPC · data:
     <span class="mono">status.json</span></footer>
@@ -102,19 +105,35 @@ function render(s) {
   $("updated").textContent = `snapshot ${s.iso} · fetched ${new Date().toLocaleTimeString()}`;
 
   // Freshness logic — the whole point of the page.
-  if (s.run) {
-    const runFor = now - s.run.started;
-    const what = `${esc(s.run.stage)} — ${esc(s.run.story)}` +
-      (s.run.slice ? ` / ${esc(s.run.slice)}` : "") +
-      (s.run.pr ? ` (PR #${esc(s.run.pr)})` : "");
-    if (runFor > 2.5 * 3600) {
-      banner("dead", "⚠ Run overdue", `${what} — started ${ago(runFor)} ago; past the 2 h timeout, likely dead`);
+  const runs = (s.runs && s.runs.length) ? s.runs : (s.run ? [s.run] : []);
+  const runLine = (r) => `${esc(r.stage)} — ${esc(r.story)}` +
+    (r.slice ? ` / ${esc(r.slice)}` : "") + (r.pr ? ` (PR #${esc(r.pr)})` : "");
+  if (runs.length) {
+    const oldest = runs.reduce((a, b) => a.started < b.started ? a : b);
+    const overdue = runs.filter(r => now - r.started > 2.5 * 3600);
+    if (overdue.length) {
+      banner("dead", "⚠ Run overdue", `${runLine(overdue[0])} — started ${ago(now - overdue[0].started)} ago; past the 2 h timeout, likely dead`);
+    } else if (runs.length === 1) {
+      banner("run", `Running: ${runLine(runs[0])}`, `started ${ago(now - runs[0].started)} ago`);
     } else {
-      banner("run", `Running: ${what}`, `started ${ago(runFor)} ago · status updates pause while a stage runs`);
+      banner("run", `Running ${runs.length} stages`, `oldest ${ago(now - oldest.started)} ago · details below`);
     }
+    $("runscard").style.display = "";
+    $("runs").innerHTML = runs.slice().sort((a, b) => a.started - b.started).map(r => {
+      const runFor = now - r.started;
+      return `<div class="story">
+        <span class="id">${esc(r.story)}</span>
+        <span class="badge active">${esc(r.stage)}</span>
+        ${r.slice ? `<span class="badge">${esc(r.slice)}</span>` : ""}
+        ${r.pr ? `<span class="badge">PR #${esc(r.pr)}</span>` : ""}
+        <span class="title">running ${ago(runFor)}${runFor > 2.5 * 3600 ? " — <span class='err'>overdue</span>" : ""}</span>
+      </div>`;
+    }).join("");
   } else if (age < 3 * (s.poll_interval || 45)) {
+    $("runscard").style.display = "none";
     banner("ok", "Idle — polling", `last pass ${ago(age)} ago · every ${s.poll_interval}s`);
   } else {
+    $("runscard").style.display = "none";
     banner("dead", "⚠ Daemon silent", `no pass for ${ago(age)} — daemon is down or wedged`);
   }
 
@@ -135,6 +154,43 @@ function render(s) {
       ${slices.length ? `<span class="slices">${dots}</span>` : ""}
     </div>`;
   }).join("") || "<span class='badge'>no stories registered</span>";
+
+  const recent = s.recent || [];
+  if (recent.length) {
+    $("recentcard").style.display = "";
+    $("recent").innerHTML = recent.map(r => {
+      const when = new Date(r.ended * 1000).toLocaleTimeString();
+      const cost = (typeof r.cost_usd === "number") ? ` · $${r.cost_usd.toFixed(2)}` : "";
+      return `<div class="story">
+        <span class="id">${esc(r.story)}</span>
+        <span class="badge ${r.ok ? "active" : "escalated"}">${esc(r.stage)}${r.ok ? "" : " failed"}</span>
+        ${r.slice ? `<span class="badge">${esc(r.slice)}</span>` : ""}
+        ${r.pr ? `<span class="badge">PR #${esc(r.pr)}</span>` : ""}
+        <span class="title">${ago(r.seconds)}${cost} · ${esc(when)}${r.model ? " · " + esc(r.model) : ""}</span>
+      </div>`;
+    }).join("");
+
+    // Stage cost is the thing worth watching: a stage whose median creeps up is
+    // the pipeline getting slower than doing the work by hand.
+    const byStage = {};
+    recent.forEach(r => { (byStage[r.stage] = byStage[r.stage] || []).push(r.seconds); });
+    $("statscard").style.display = "";
+    $("stats").innerHTML = Object.entries(byStage)
+      .map(([stage, xs]) => {
+        const sorted = xs.slice().sort((a, b) => a - b);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        return { stage, n: xs.length, med, max: sorted[sorted.length - 1] };
+      })
+      .sort((a, b) => b.med - a.med)
+      .map(x => `<div class="story">
+        <span class="id">${esc(x.stage)}</span>
+        <span class="badge">${x.n} run${x.n > 1 ? "s" : ""}</span>
+        <span class="title">median ${ago(x.med)} · slowest ${ago(x.max)}</span>
+      </div>`).join("");
+  } else {
+    $("recentcard").style.display = "none";
+    $("statscard").style.display = "none";
+  }
 
   $("log").textContent = (s.log_tail || []).join("\n") || "—";
 }

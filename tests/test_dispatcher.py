@@ -97,6 +97,24 @@ def run():
     assert not all_built(s, open_pipeline_prs=0)
     assert not all_built(story(phase="slices"), 0)  # no slices known yet
 
+    # all_built measures the PLAN, not the records the runner has discovered.
+    # A planned slice that has not opened a PR yet has no record at all, and
+    # counting only records let assembly ship a story with a slice unbuilt.
+    plan3 = [{"name": "s1", "nodes": ["contract", "tests", "build"]},
+             {"name": "s2", "nodes": ["contract", "tests", "build"]},
+             {"name": "s3", "nodes": ["contract", "tests", "build"]}]
+    s = story(phase="slices", plan_slices=plan3,
+              slices={"s1": {"build_merged": True}, "s2": {"build_merged": True}})
+    assert not all_built(s, open_pipeline_prs=0)          # s3 planned, no record
+    s["slices"]["s3"] = {"build_merged": True}
+    assert all_built(s, open_pipeline_prs=0)
+    # a slice whose flow ends before a build is complete without one
+    s2 = story(phase="slices",
+               plan_slices=[{"name": "a", "nodes": ["contract", "tests", "build"]},
+                            {"name": "doc", "nodes": ["research"]}],
+               slices={"a": {"build_merged": True}})
+    assert all_built(s2, open_pipeline_prs=0)
+
     print("dispatcher smoke tests: all passed")
 
 
@@ -144,4 +162,30 @@ assert parse_manifest(body)[0]["name"] == "x"
 assert parse_manifest("no block here") is None
 assert parse_manifest("```cadre-manifest\nnot json\n```") is None
 assert parse_manifest(None) is None
+# -- summons only act on open PRs ---------------------------------------------
+# "Closing, superseded by X" is ordinary human behavior and must not spawn a
+# revise against a PR whose branch is usually already deleted.
+_sum = {"kind": "summon", "pr": 88, "role": "contract", "slice": "s1",
+        "id": 1, "body": "closing this", "actor": "driver", "source": "issue_comment"}
+_closed = story(phase="slices", prs_cache={"88": {"role": "contract", "slice": "s1", "state": "closed"}})
+assert dispatch(_closed, _sum, LIMITS)["type"] == "noop"
+_open = story(phase="slices", prs_cache={"88": {"role": "contract", "slice": "s1", "state": "open"}})
+_act = dispatch(_open, _sum, LIMITS)
+assert _act["type"] == "run_stage" and _act["stage"] == "revise", _act
+# no cache entry at all (unknown PR) still dispatches as before — the guard is
+# about PRs we know to be closed, not about missing knowledge
+assert dispatch(story(phase="slices"), _sum, LIMITS)["type"] == "run_stage"
+
+# -- only the CURRENT plan opens the contracts gate ----------------------------
+# Re-planning a story wipes its seen-event set, so the old planning PR's merge
+# replays as fresh. That stale approval must not start contracts on a plan the
+# driver has never read.
+_pm = {"kind": "pr_merged", "pr": 73, "role": "planning", "slice": None}
+_replan = story(phase="interrogate", planning_pr=117)
+assert dispatch(_replan, _pm, LIMITS)["type"] == "noop"
+_cur = dict(_pm, pr=117)
+assert dispatch(_replan, _cur, LIMITS)["stage"] == "contracts"
+# a story with no recorded plan yet still honors the merge (first intake)
+assert dispatch(story(phase="interrogate"), _pm, LIMITS)["stage"] == "contracts"
+
 print("ready-set + manifest tests: all passed")

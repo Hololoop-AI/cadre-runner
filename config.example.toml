@@ -25,6 +25,14 @@ tests = "sonnet"
 build = "sonnet"
 revise = "sonnet"
 
+# Effort per stage, overriding [claude].effort. Model and effort are one
+# choice, not two: a strong model at low effort and a weaker one at high effort
+# can cost about the same per task, so the interesting comparisons are pairs.
+# Unlisted stages take the global default.
+[claude.stage_effort]
+# build = "low"        # strong model, brief thinking — the locked tests steer it
+# interrogate = "max"  # where finding the flaw is the whole job
+
 [limits]
 max_rounds_per_stage = 5           # interrogate rounds / revise rounds per PR before escalation
 allowed_actors = ["BrandonPerez-Dev"]  # GitHub logins whose comments/merges are honored

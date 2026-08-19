@@ -79,7 +79,11 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
             reg.mark_seen(story, "merged", num)
             _record_merge(reg, story, p)
             events.append({"kind": "pr_merged", "pr": num, "role": p["role"], "slice": p["slice"]})
-        elif p["role"] in ("contract", "tests", "build"):
+        elif p["role"] in ("contract", "tests", "build") and p["state"] == "open":
+            # Only a live PR defines a slice's state. A closed-unmerged PR was
+            # abandoned (superseded plan, re-planned story) and must not
+            # resurrect its slice — the record would claim work that no longer
+            # exists on any branch.
             reg.slice_rec(story, p["slice"])[f"{p['role']}_pr"] = num
 
     # --- 2. conversation: repo-wide since-feeds + per-open-PR reviews ---------

@@ -25,6 +25,8 @@ from pathlib import Path
 
 LOG_TAIL_BYTES = 16_384
 LOG_TAIL_LINES = 15
+HISTORY_TAIL_BYTES = 32_768
+HISTORY_SHOWN = 25
 
 
 def status_dir(cfg) -> Path:
@@ -57,6 +59,7 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
             "run": run,
             "runs": runs or [],
             "stories": _stories(reg),
+            "recent": _history(cfg.data_dir / "history.jsonl"),
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".status-", suffix=".tmp")
@@ -65,6 +68,37 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
         os.replace(tmp, d / "status.json")
     except Exception:
         pass
+
+
+def append_history(cfg, entry: dict) -> None:
+    """One line per finished run — how long stages actually take is the thing
+    you cannot get from a snapshot. Append-only; never takes the daemon down."""
+    try:
+        path = cfg.data_dir / "history.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _history(path: Path) -> list[dict]:
+    """Newest-first tail of finished runs."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - HISTORY_TAIL_BYTES))
+            chunk = f.read().decode(errors="replace")
+        out = []
+        for line in chunk.splitlines()[-HISTORY_SHOWN:]:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # a partial first line from the byte-offset seek
+        return list(reversed(out))
+    except OSError:
+        return []
 
 
 def _stories(reg) -> list[dict]:
