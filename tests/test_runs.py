@@ -130,4 +130,29 @@ runs.add_worktree(repo, wt3, "pipe/x/build-s1", "main")
 assert _worktree_ready(wt3)
 runs.remove_worktree(repo, wt3)
 
+# -- exit codes survive because SIGCHLD is never ignored ----------------------
+# Under SIG_IGN, CPython reports rc=0 for every failing child (the NEX-160
+# root cause). Guard the property directly: failing commands must read as
+# failures in this process.
+import signal as _sig
+assert _sig.getsignal(_sig.SIGCHLD) != _sig.SIG_IGN, "something set SIGCHLD to SIG_IGN"
+assert subprocess.run(["false"]).returncode != 0
+# and the source must not reintroduce it
+_src = (Path(__file__).resolve().parent.parent / "pipeline.py").read_text()
+assert "SIG_IGN" not in _src, "pipeline.py mentions SIG_IGN again — reread the reaping design before restoring it"
+
+# -- explicit reaping: a dead wrapper is collected, not left a zombie ---------
+_child = subprocess.Popen(["sleep", "60"])
+_child.send_signal(9)
+import time as _t
+for _ in range(50):
+    if runs._reap(_child.pid):
+        break
+    _t.sleep(0.05)
+else:
+    raise AssertionError("kill-9'd child was never reapable")
+_child.returncode = -9  # tell Popen it was collected, silence GC warning
+# reaping an unknown/foreign pid is a quiet no-op
+assert runs._reap(1) is False
+
 print("runs smoke tests: all passed")

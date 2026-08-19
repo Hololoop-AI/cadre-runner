@@ -167,9 +167,12 @@ def cmd_run(cfg, args, single_pass=False):
         f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     status_mod.install_page(cfg)
-    # Detached run wrappers are our children until they exit; auto-reap them so
-    # the daemon never accumulates zombies (outcomes come from exit files).
-    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    # SIGCHLD stays at default ON PURPOSE. Ignoring it auto-reaps children,
+    # which makes CPython's waitpid hit ECHILD and report returncode 0 for
+    # EVERY subprocess — measured 20/20 failing commands reading as success.
+    # That was the root cause of "git worktree add succeeded but the tree is
+    # empty" (NEX-160): the add failed and nothing could see it. Wrapper
+    # zombies are reaped explicitly in runs.finished() instead.
     while True:
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)

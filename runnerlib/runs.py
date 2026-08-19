@@ -149,9 +149,25 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
     return proc.pid
 
 
+def _reap(pid: int) -> bool:
+    """Collect a wrapper's exit status if it has one waiting. Explicit reaping
+    is what lets the daemon keep SIGCHLD at default — an ignored SIGCHLD makes
+    CPython report rc=0 for every failing subprocess, which once turned a
+    failed `git worktree add` into a session spawned in an empty directory.
+    True only when this call reaped the pid."""
+    try:
+        p, _ = os.waitpid(pid, os.WNOHANG)
+        return p == pid
+    except ChildProcessError:
+        return False  # a prior daemon's child, or already collected
+
+
 def finished(run: dict) -> bool:
     if Path(run["run_dir"], "exit").exists():
+        _reap(run["pid"])  # exit file is the outcome; this just clears the zombie
         return True
+    if _reap(run["pid"]):
+        return True  # exited without writing an exit file — killed / lost
     try:
         os.kill(run["pid"], 0)
         return False
