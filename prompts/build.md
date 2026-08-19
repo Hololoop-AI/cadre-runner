@@ -12,3 +12,5 @@ The driver merged slice `$slice`'s Tests PR: those tests are **locked**. Impleme
 7. Post the spec-review findings (if any) as a self-review comment on the Build PR so the driver sees them inline.
 
 Never merge anything. If iteration stops converging (same test failing after 5 distinct approaches), stop and report as a comment on the slice's merged Tests PR rather than thrashing.
+
+If the workflow returned `notes_for_later` entries, add a **"Noted for later (out of scope)"** section at the end of the PR body listing them — real concerns about future stories, deliberately excluded from the Confidence line. Never let them lower it.

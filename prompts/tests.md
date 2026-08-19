@@ -13,3 +13,5 @@ The driver merged slice `$slice`'s Contract PR: the contract is locked. Translat
    - the line: "**Merging locks these tests.** Build implements against them and may not modify them."
 
 Tests define done — write them from the contract, not from any implementation ideas. Never merge anything.
+
+If the workflow returned `notes_for_later` entries, add a **"Noted for later (out of scope)"** section at the end of the PR body listing them — real concerns about future stories, deliberately excluded from the Confidence line. Never let them lower it.
