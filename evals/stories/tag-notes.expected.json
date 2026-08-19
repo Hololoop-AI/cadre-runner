@@ -1,0 +1,15 @@
+{
+  "story": "tag-notes",
+  "claims": {
+    "slice_count_max": 2,
+    "slice_count_reason": "one coherent feature; add-side and list-side are exercised by the same vertical paths — a 3+ slice split means seam fragmentation regressed",
+    "every_slice_has_validation_path": true,
+    "validation_path_min_chars": 20,
+    "allowed_flows": ["vertical-tdd"],
+    "every_slice_has_files": true,
+    "no_blocking_questions": true,
+    "no_blocking_reason": "the story states outcome, compat constraint, and non-goals; a blocking question here means question discipline regressed",
+    "forbidden_in_artifact": ["cadre-runner", "pipeline.py", "daemon"],
+    "forbidden_reason": "the fixture repo is the story's entire world — any mention of the pipeline's own machinery means the world-boundary rule regressed"
+  }
+}
