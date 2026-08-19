@@ -74,6 +74,7 @@ footer { color: var(--muted); font-size: 0.75rem; margin-top: 1.2rem; }
   </div>
   <div class="card" id="runscard" style="display:none"><h2>Active runs</h2><div id="runs">—</div></div>
   <div class="card"><h2>Stories <span style="text-transform:none;letter-spacing:0;font-weight:400">· slice dots = contract / tests / build</span></h2><div id="stories">—</div></div>
+  <div class="card" id="qcard" style="display:none"><h2>Waiting on you</h2><div id="questions">—</div></div>
   <div class="card" id="recentcard" style="display:none"><h2>Finished runs <span style="text-transform:none;letter-spacing:0;font-weight:400">· newest first</span></h2><div id="recent">—</div></div>
   <div class="card" id="statscard" style="display:none"><h2>Typical duration by stage</h2><div id="stats">—</div></div>
   <div class="card"><h2>Runner log</h2><pre class="log" id="log">—</pre></div>
@@ -154,6 +155,28 @@ function render(s) {
       ${slices.length ? `<span class="slices">${dots}</span>` : ""}
     </div>`;
   }).join("") || "<span class='badge'>no stories registered</span>";
+
+  const qs = s.questions || [];
+  if (qs.length) {
+    $("qcard").style.display = "";
+    $("questions").innerHTML = qs.map(q => {
+      const waited = ago((Date.now() / 1000) - q.asked_at);
+      const where = esc(q.stage || "") + (q.slice ? "/" + esc(q.slice) : "");
+      return `<div class="story">
+        <span class="id">${esc(q.story)}</span>
+        <span class="badge escalated">asked ${waited} ago</span>
+        ${where ? `<span class="badge">${where}</span>` : ""}
+        ${q.pr ? `<span class="badge">PR #${esc(q.pr)}</span>` : ""}
+        <span class="slices" style="flex-basis:100%">
+          <span class="sl"><b>${esc(q.question)}</b></span>
+          ${q.recommendation ? `<span class="sl">recommends: ${esc(q.recommendation)}</span>` : ""}
+          <span class="sl mono">pipeline.py answer --ticket ${esc(q.ticket)} --text "…"</span>
+        </span>
+      </div>`;
+    }).join("");
+  } else {
+    $("qcard").style.display = "none";
+  }
 
   const recent = s.recent || [];
   if (recent.length) {

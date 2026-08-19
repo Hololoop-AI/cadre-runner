@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
+from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib.dispatcher import AGENT_MARKER
@@ -780,6 +781,52 @@ def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url="", workflow
     }
 
 
+def cmd_ask(cfg, args):
+    """Agent-side: record a question and keep working. Prints the ticket."""
+    ticket = messages.ask(cfg.data_dir, args.story, args.question,
+                          recommendation=args.recommendation or "",
+                          stage=args.stage or "", slice_name=args.slice or "", pr=args.pr)
+    print(ticket)
+
+
+def cmd_wait(cfg, args):
+    """Agent-side: pick up an answer. Exits 0 with the answer on stdout, or 2
+    with 'pending' — a distinct code so a script can branch without parsing."""
+    m = messages.wait(cfg.data_dir, args.ticket, args.timeout)
+    if m is None:
+        print(f"no such ticket: {args.ticket}", file=sys.stderr)
+        raise SystemExit(3)
+    if m.get("answer") is None:
+        print("pending")
+        raise SystemExit(2)
+    print(m["answer"])
+
+
+def cmd_answer(cfg, args):
+    """Driver-side: answer a waiting agent."""
+    m = messages.answer(cfg.data_dir, args.ticket, args.text)
+    if m is None:
+        raise SystemExit(f"no such ticket: {args.ticket}")
+    waited = round((time.time() - m["asked_at"]) / 60, 1)
+    print(f"answered {args.ticket} (asked {waited} min ago, story {m['story']})")
+
+
+def cmd_messages(cfg, args):
+    """Driver-side: what the pipeline is waiting on."""
+    items = messages.pending(cfg.data_dir, args.story or "")
+    if not items:
+        print("nothing pending")
+        return
+    for m in items:
+        waited = round((time.time() - m["asked_at"]) / 60)
+        where = f"{m['stage']}" + (f"/{m['slice']}" if m.get("slice") else "")
+        print(f"\n{m['ticket']}  [{m['story']} {where}] waiting {waited} min")
+        print(f"  Q: {m['question']}")
+        if m.get("recommendation"):
+            print(f"  recommends: {m['recommendation']}")
+    print(f"\nanswer with: pipeline.py answer --ticket <id> --text \"...\"")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="pipeline", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -805,9 +852,26 @@ def main():
     p.add_argument("--pr", type=int)
     p.add_argument("--role")
 
+    p = sub.add_parser("ask", help="agent: record a driver question without blocking")
+    p.add_argument("--story", required=True)
+    p.add_argument("--question", required=True)
+    p.add_argument("--recommendation", help="what you'd do absent an answer")
+    p.add_argument("--stage")
+    p.add_argument("--slice")
+    p.add_argument("--pr", type=int)
+    p = sub.add_parser("wait", help="agent: pick up an answer (exit 2 = still pending)")
+    p.add_argument("--ticket", required=True)
+    p.add_argument("--timeout", type=float, default=0.0, help="seconds to wait; 0 = check once")
+    p = sub.add_parser("answer", help="driver: answer a waiting agent")
+    p.add_argument("--ticket", required=True)
+    p.add_argument("--text", required=True)
+    p = sub.add_parser("messages", help="driver: list unanswered questions")
+    p.add_argument("--story")
+
     args = ap.parse_args()
     cfg = config_mod.load(args.config)
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
+     "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)

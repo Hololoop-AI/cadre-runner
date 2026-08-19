@@ -60,6 +60,7 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
             "runs": runs or [],
             "stories": _stories(reg),
             "recent": _history(cfg.data_dir / "history.jsonl"),
+            "questions": _questions(cfg),
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".status-", suffix=".tmp")
@@ -98,6 +99,19 @@ def _history(path: Path) -> list[dict]:
                 continue  # a partial first line from the byte-offset seek
         return list(reversed(out))
     except OSError:
+        return []
+
+
+def _questions(cfg) -> list[dict]:
+    """Unanswered driver questions — the one thing on this page that is a
+    request rather than a report."""
+    try:
+        from . import messages
+        return [{"ticket": m["ticket"], "story": m["story"], "stage": m.get("stage"),
+                 "slice": m.get("slice"), "pr": m.get("pr"), "question": m["question"],
+                 "recommendation": m.get("recommendation"), "asked_at": m["asked_at"]}
+                for m in messages.pending(cfg.data_dir)]
+    except Exception:
         return []
 
 
