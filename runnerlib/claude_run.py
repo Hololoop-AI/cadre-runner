@@ -16,7 +16,7 @@ PIPELINE_SKILLS = [
     "engineering", "slicing", "interrogate", "investigating",
     "test-planning", "auto-test-planning",
     "test-writer", "auto-test-writer",
-    "build", "auto-build", "tdd", "refactor", "code-review",
+    "build", "auto-build", "tdd", "refactor", "spec-review",
     "coding-standards", "git-ops", "commit-and-pr",
     "python-quality", "rust-quality", "pr-walkthrough",
     "verification", "systematic-debugging",

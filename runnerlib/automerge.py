@@ -8,7 +8,7 @@ interrupted when the system is unsure.
   suffices; the lock stays meaningful either way — tests are authored by a
   separate session and the dispatcher forbids builds from touching them.
 - build PRs: same confidence rule as tests — the `Confidence:` line comes
-  from fresh reviewer agents (code-review verdict / the build node's check
+  from fresh reviewer agents (spec-review verdict / the build node's check
   panel), never the builder's self-assessment; low/medium waits for the
   driver. No line = legacy path, green suffices.
 - contract PRs: the one human gate — auto-merge ONLY when the PR body carries
