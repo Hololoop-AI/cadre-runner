@@ -6,6 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 STORY="${1:?story name, e.g. tag-notes}"
 MODEL="${2:-sonnet}"   # ALWAYS pinned — never inherit the terminal's model
+# Billing safety, same as the daemon launcher: a stray API key outranks OAuth
+# and would silently turn a subscription run into a metered one.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL 2>/dev/null || true
 STAMP="$(date +%Y%m%d-%H%M%S)"
 WORK="$(mktemp -d /tmp/cadre-eval-XXXX)"
 FIX="$WORK/repo"
