@@ -11,15 +11,18 @@ WORK="$(mktemp -d /tmp/cadre-eval-XXXX)"
 FIX="$WORK/repo"
 python3 "fixtures/mini_notes.py" "$FIX" >/dev/null
 NODES="${CADRE_NODES:-$HOME/Projects/cadre-workflows/workflows}"
-PROMPT="Invoke the Workflow tool with scriptPath \"$NODES/spec-writer.js\" and args {\"story\": <the full contents of the story file at $PWD/stories/$STORY.md>, \"repo\": \"$FIX\", \"variant\": \"change-spec\", \"nodesDir\": \"$NODES\"}. Read the story file first. When the workflow returns, print its ENTIRE result as raw JSON with no commentary."
+PROMPT="Invoke the Workflow tool with scriptPath \"$NODES/spec-writer.js\" and args {\"story\": <the full contents of the story file at $PWD/stories/$STORY.md>, \"repo\": \"$FIX\", \"variant\": \"change-spec\", \"nodesDir\": \"$NODES\"}. Read the story file first. When the workflow returns, use the Write tool to save its ENTIRE result as raw JSON to $WORK/result.json — the file must be valid JSON and nothing else. If the workflow FAILS, write {\"error\": \"<the failure, quoted>\"} to that same file. Then reply with one line: DONE."
 claude -p "$PROMPT" --model "$MODEL" --effort high --output-format json \
   --dangerously-skip-permissions > "$WORK/session.json"
-python3 - "$WORK/session.json" "$WORK/result.json" <<'PY'
-import json, re, sys
-payload = json.load(open(sys.argv[1]))
-text = payload.get("result", "")
-m = re.search(r"\{.*\}", text, re.S)
-open(sys.argv[2], "w").write(m.group(0) if m else "{}")
+# The session writes result.json itself; validate rather than extract.
+python3 - "$WORK/result.json" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as e:
+    sys.exit(f"eval FAILED: session did not produce valid result.json ({e})")
+if "error" in d and len(d) == 1:
+    sys.exit(f"eval FAILED: workflow error — {d['error'][:400]}")
 PY
 mkdir -p results
 DUR=$SECONDS
