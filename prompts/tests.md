@@ -15,3 +15,5 @@ The driver merged slice `$slice`'s Contract PR: the contract is locked. Translat
 Tests define done — write them from the contract, not from any implementation ideas. Never merge anything.
 
 If the workflow returned `notes_for_later` entries, add a **"Noted for later (out of scope)"** section at the end of the PR body listing them — real concerns about future stories, deliberately excluded from the Confidence line. Never let them lower it.
+
+The PR body carries `Risk: <level> — <why>` from the workflow's derivation (the merge gate: low/medium auto-merge, high holds for the driver) and `Confidence: ...` as a logged, non-blocking signal. Add an **Assumptions** section only when some decision sits below high confidence.

@@ -16,3 +16,5 @@ The driver merged the Planning PR: the scope is locked. Author plain-English int
 Contracts must be reviewable by a human in plain English — a reader should be able to say "yes, that proves the slice works" without reading code. Never merge anything.
 
 If the workflow returned `notes_for_later` entries, add a **"Noted for later (out of scope)"** section at the end of the PR body listing them — real concerns about future stories, deliberately excluded from the Confidence line. Never let them lower it.
+
+The Contract PR body carries `Risk: <level> — <why>` from the workflow (low/medium auto-merge; high holds as a driver decision) and `Confidence: ...` as a logged, non-blocking signal. Add an **Assumptions** section only when a decision sits below high confidence.

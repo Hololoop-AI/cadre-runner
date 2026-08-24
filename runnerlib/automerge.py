@@ -1,4 +1,14 @@
-"""Auto-merge policy (NEX-150): after planning approval, the human is only
+"""Auto-merge policy: risk gates merge, confidence only ranks
+(cadre-context decisions/2026-08-23-risk-gates-merge-confidence-ranks.md).
+
+- A fresh reviewer assigns `Risk:` to the finished change: low/medium
+  auto-merge (medium's concerns go to the audit queue), high holds for the
+  driver as a DECISION, with an artifact event emitted by the caller.
+- `Confidence:` stays on every PR as a logged signal — it ranks the audit
+  queue and feeds calibration; it no longer blocks.
+- PRs without a Risk line fall back to the old confidence gate (transitional).
+
+Original policy (NEX-150 era): after planning approval, the human is only
 interrupted when the system is unsure.
 
 - tests PRs: auto-merge when CI is green — unless the body carries a
@@ -26,6 +36,9 @@ import re
 from .dispatcher import AGENT_MARKER
 
 CONFIDENCE_RE = re.compile(r"^\s*confidence:\s*(high|medium|low)\b", re.IGNORECASE | re.MULTILINE)
+# Risk gates merge; confidence only ranks (cadre-context decision 2026-08-23).
+# Risk is assigned once, at the end, by a fresh reviewer — never the author.
+RISK_RE = re.compile(r"^\s*\**risk:\s*\**\s*(high|medium|low)\b", re.IGNORECASE | re.MULTILINE)
 
 
 def title_ok(role: str, title: str, slug: str) -> bool:
@@ -71,18 +84,30 @@ def decide(role: str, pr_detail: dict, checks: list, policy: dict,
     if failed:
         return False, f"check failed ({failed[0].get('name')}: {failed[0].get('conclusion')})"
 
-    m = CONFIDENCE_RE.search(pr_detail.get("body") or "")
+    body = pr_detail.get("body") or ""
+    r = RISK_RE.search(body)
+    if r:
+        # The risk model: low and medium merge (medium's concerns ride to the
+        # audit queue); high holds — and the hold is a decision to make, not
+        # a PR to read, so the caller emits a decision artifact event.
+        risk = r.group(1).lower()
+        if risk == "high":
+            return False, "risk high — driver decision"
+        return True, f"green + risk {risk}"
+
+    # Transitional: a PR whose reviewer emitted no Risk line predates the risk
+    # model — the old confidence gate applies until the fleet cuts over, so
+    # nothing merges looser than it would have last week.
+    m = CONFIDENCE_RE.search(body)
     if role == "contract":
         if not m:
-            return False, "no Confidence: line in body — driver gate"
+            return False, "no Risk or Confidence line in body — driver gate"
         if m.group(1).lower() != "high":
-            return False, f"confidence {m.group(1).lower()} — driver gate"
-        return True, "green + confidence high"
-
+            return False, f"confidence {m.group(1).lower()} — driver gate (legacy)"
+        return True, "green + confidence high (legacy)"
     if role in ("tests", "build") and m and m.group(1).lower() != "high":
-        return False, f"confidence {m.group(1).lower()} — driver gate"
-
-    return True, "green"
+        return False, f"confidence {m.group(1).lower()} — driver gate (legacy)"
+    return True, "green (legacy — no risk line)"
 
 
 def human_activity(pr_detail: dict, recent_bodies: list[str]) -> bool:

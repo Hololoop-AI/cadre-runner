@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
+from runnerlib import board_events
 from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
@@ -362,6 +363,17 @@ def _try_automerge(cfg, reg, ghc, slug, story):
             if ok:
                 ghc.merge_pr(story["repo"], int(num_s))
                 log(f"{slug}: auto-merged {p['role']} PR #{num_s} ({reason})")
+            elif reason.startswith("risk high") and not reg.seen(story, "risk_hold", int(num_s)):
+                # The hold is a decision to make, not a PR to read: emit the
+                # review-requested event the artifact surface consumes.
+                reg.mark_seen(story, "risk_hold", int(num_s))
+                board_events.emit("review-requested",
+                                  story=slug, pr=int(num_s), stage=p["role"],
+                                  slice=p.get("slice"), risk="high",
+                                  title=detail.get("title"),
+                                  status="awaiting-review",
+                                  url=f"https://github.com/{story['repo']}/pull/{num_s}")
+                log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
             elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
                 # once per PR: a silent block here would be an invisible wedge
                 reg.mark_seen(story, "title_lint", int(num_s))

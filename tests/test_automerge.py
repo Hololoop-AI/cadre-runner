@@ -50,4 +50,18 @@ tpr["title"] = "[build] dispatch"
 merged, why = decide("build", tpr, GREEN, POLICY, False, slug="nex-1")
 assert not merged and why.startswith("malformed title")
 assert decide("build", tpr, GREEN, POLICY, False)[0]                       # no slug = lint off (legacy)
+# -- risk gates merge; confidence only ranks (decision 2026-08-23) ------------
+# risk present: it alone decides — confidence no longer blocks
+assert decide("build", pr("Risk: low — mechanical\nConfidence: low — x"), GREEN, POLICY, False)[0]
+assert decide("tests", pr("Risk: medium — concerns are follow-ups\nConfidence: medium — y"), GREEN, POLICY, False)[0]
+assert decide("contract", pr("Risk: medium — safe to merge first"), GREEN, POLICY, False)[0]  # contract's old high-only gate is legacy-path only
+merged, why = decide("build", pr("**Risk: high** — locked-surface ambiguity\nConfidence: high — clean"), GREEN, POLICY, False)
+assert not merged and "risk high" in why                       # high holds even at high confidence
+# risk never overrides the hard preconditions
+assert not decide("build", pr("Risk: low — x"), RED, POLICY, False)[0]
+assert not decide("build", pr("Risk: low — x", labels=["hold"]), GREEN, POLICY, False)[0]
+assert not decide("build", pr("Risk: low — x"), GREEN, POLICY, True)[0]   # human last word
+# no risk line: legacy confidence behavior, unchanged (asserted above throughout)
+assert decide("build", pr("no lines here"), GREEN, POLICY, False)[0]
+
 print("automerge policy tests: all passed")
