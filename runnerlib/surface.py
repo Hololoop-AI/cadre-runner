@@ -307,7 +307,8 @@ def _tick(cfg, reg, ghc, log) -> None:
     # 1) outbox signals -> consume feedback from exactly those sessions
     signalled = {sig.get("key") for sig in _read_outbox(cfg) if sig.get("key")}
     if signalled:
-        by_key = {m.get("key"): (p, m) for p, m in sess.items() if m.get("open")}
+        by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
+                  for p, m in sess.items() if m.get("open")}
         for key in signalled:
             hit = by_key.get(key)
             if hit:
