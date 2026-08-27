@@ -177,7 +177,7 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
         s[str(path)] = {"kind": kind, "path": url_path, "open": True,
                         "opened": time.time(), **meta}
         _save_sessions(cfg, s)
-        board_events.emit("surface_opened", kind=kind, artifact=str(path),
+        board_events.emit("surface_opened", session_kind=kind, artifact=str(path),
                           session=url_path, **{k: v for k, v in meta.items()
                                                if isinstance(v, (str, int, float))})
         log(f"surface: opened {kind} session {url_path or path.name}")
