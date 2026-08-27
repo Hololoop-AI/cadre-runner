@@ -34,10 +34,6 @@ from pathlib import Path
 from . import board_events
 
 CLI = "review-surface"
-# TOON quotes prompt strings; both observed shapes use double-quoted escapes.
-# Inline rows start with a quoted uid cell that may be EMPTY (API-posted
-# prompts have no uid), so the uid cell matches any quoted string, not \d+.
-_PROMPT_RE = re.compile(r'(?:prompt: |^\s*"[^"\n]*",)"((?:[^"\\]|\\.)*)"', re.MULTILINE)
 _DECISION_RE = re.compile(
     r"CADRE_DECISION gate=(\w+) story=([\w.-]+) pr=(\d+) verdict=(approve|reject)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
@@ -103,20 +99,55 @@ def _write_artifact(cfg, name: str, title: str, body: str) -> Path:
     return path
 
 
-def author_risk_hold(cfg, slug: str, pr: int, detail: dict, stage: str) -> Path:
+def _risk_rationale(body: str) -> str:
+    """The Risk line plus its adjacent rationale — the part of the report that
+    actually argues for the hold."""
+    lines = (body or "").splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*\**risk:\s*\**\s*high\b", line, re.IGNORECASE):
+            block = [line.strip()]
+            for follow in lines[i + 1:i + 8]:
+                if not follow.strip():
+                    break
+                block.append(follow.strip())
+            return "\n".join(block)
+    return ""
+
+
+def author_risk_hold(cfg, slug: str, pr: int, detail: dict, stage: str,
+                     files: list | None = None) -> Path:
+    """A decision brief, not a body dump: what the change is, what it touches,
+    why it held — with the full report collapsed for when it's needed."""
     url = f"https://github.com/{detail.get('base', {}).get('repo', {}).get('full_name') or ''}/pull/{pr}"
     html_url = detail.get("html_url") or url
     token = f"CADRE_DECISION gate=risk_hold story={slug} pr={pr} verdict="
+    body_text = detail.get("body") or ""
+    summary = next((p.strip() for p in body_text.split("\n\n")
+                    if p.strip() and not p.lstrip().startswith("#")
+                    and not re.match(r"^\s*\**(risk|confidence):", p.strip(),
+                                     re.IGNORECASE)), "")
+    rationale = _risk_rationale(body_text)
+    file_rows = "".join(
+        f"<tr><td style='font-family:ui-monospace,monospace;font-size:12.5px'>{escape(f.get('filename') or '')}</td>"
+        f"<td style='color:#8fe39e;text-align:right'>+{f.get('additions', 0)}</td>"
+        f"<td style='color:#f06464;text-align:right'>−{f.get('deletions', 0)}</td></tr>"
+        for f in (files or [])[:40])
+    files_html = (f"<div class='card'><span class='chip'>Touches "
+                  f"{len(files)} file(s)</span><table style='width:100%;border-collapse:collapse'>"
+                  f"{file_rows}</table></div>") if files else ""
     body = f"""
 <h1>Risk HIGH — driver decision</h1>
 <div class="meta">{escape(slug)} · {escape(stage)} · <a href="{escape(html_url)}">PR #{pr}</a> — {escape(detail.get('title') or '')}</div>
+<div class="card"><span class="chip">The change</span>
+<p>{escape(summary[:800]) or '<span class="dim">(no summary in the PR body)</span>'}</p></div>
+{files_html}
 <div class="card"><span class="chip">Why it held</span>
-<p class="dim">A fresh reviewer assigned <b>Risk: high</b> to this finished change. Low/medium
-auto-merge; high is a decision, not a PR to read. The reviewer's report is below —
-annotate any part of it, then give the verdict. Approving here merges the PR
-(GitHub merge works too; first channel wins).</p></div>
-<div class="card"><span class="chip">Reviewer report (PR body)</span>
-<pre>{escape((detail.get('body') or '(empty body)')[:20000])}</pre></div>
+{f'<pre>{escape(rationale[:3000])}</pre>' if rationale else ''}
+<p class="dim">A fresh reviewer assigned <b>Risk: high</b> to this finished change — low/medium
+auto-merge; high is a decision, not a PR to read. Annotate anything here, then give the
+verdict. Approving merges the PR (a GitHub merge works too; first channel wins).</p></div>
+<div class="card"><details><summary class="dim" style="cursor:pointer">Full reviewer report (PR body)</summary>
+<pre>{escape(body_text[:20000] or '(empty body)')}</pre></details></div>
 <div class="card"><span class="chip">Verdict</span>
 <form data-review-surface-question="verdict" onsubmit="event.preventDefault();
   const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
@@ -235,12 +266,11 @@ def _read_outbox(cfg) -> list[dict]:
     return out
 
 
-def _parse_feedback(raw: str) -> tuple[list[dict], list[str]]:
+def _classify_prompts(texts: list[str]) -> tuple[list[dict], list[str]]:
     """(decisions/answers, free-text prompts). Tokens are authoritative; every
     non-token prompt string is driver feedback worth recording."""
     structured, free = [], []
-    for quoted in _PROMPT_RE.findall(raw):
-        text = quoted.encode().decode("unicode_escape", errors="replace")
+    for text in texts:
         d = _DECISION_RE.search(text)
         if d:
             structured.append({"type": "decision", "gate": d.group(1),
@@ -257,6 +287,21 @@ def _parse_feedback(raw: str) -> tuple[list[dict], list[str]]:
     return structured, free
 
 
+def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[str]]:
+    """Parse `poll --json` output: (payload, structured, free). payload is
+    None when the line isn't JSON (old CLI on PATH, or an error banner)."""
+    line = next((l for l in raw.splitlines() if l.startswith("{")), "")
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None, [], []
+    prompts = payload.get("prompts") or []
+    texts = [str(p.get("prompt") or "") for p in prompts
+             if isinstance(p, dict)]
+    structured, free = _classify_prompts(texts)
+    return payload, structured, free
+
+
 def tick(cfg, reg, ghc, log) -> None:
     """One daemon pass: consume new outbox signals (short one-shot poll per
     signalled session) -> open sessions for new pending questions."""
@@ -271,21 +316,25 @@ def tick(cfg, reg, ghc, log) -> None:
 def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
     """One short poll on a session the outbox says has feedback waiting."""
     try:
-        raw = _run_cli(["poll", path, "--timeout-ms", "4000"], timeout=30)
+        raw = _run_cli(["poll", path, "--timeout-ms", "4000", "--json"], timeout=30)
     except Exception as e:
         log(f"surface: consume poll failed for {Path(path).name}: {e}")
         return
-    if "status: feedback" not in raw:
-        if re.search(r"status: ended|ended the session|No active Review Surface session",
-                     raw, re.IGNORECASE):
-            s2 = sessions(cfg)
-            if path in s2:
-                s2[path]["open"] = False
-                _save_sessions(cfg, s2)
-                board_events.emit("surface_closed", artifact=path, by="driver")
-                log(f"surface: session ended from browser for {Path(path).name}")
+    payload, structured, free = _parse_feedback(raw)
+    status = (payload or {}).get("status") or ""
+    had_prompts = bool((payload or {}).get("prompts"))
+    # "Send & End" delivers the final feedback once with an ended status —
+    # process prompts whenever present, close whenever the session is over.
+    if status == "ended" or re.search(
+            r"ended the session|No active Review Surface session", raw, re.IGNORECASE):
+        s2 = sessions(cfg)
+        if path in s2 and s2[path].get("open"):
+            s2[path]["open"] = False
+            _save_sessions(cfg, s2)
+            board_events.emit("surface_closed", artifact=path, by="driver")
+            log(f"surface: session ended from browser for {Path(path).name}")
+    if not had_prompts:
         return
-    structured, free = _parse_feedback(raw)
     if not structured and not free:
         # Poll delivery consumes — a parse miss here would silently LOSE the
         # driver's feedback. Keep the raw capture and shout about it.

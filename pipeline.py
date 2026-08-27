@@ -385,8 +385,12 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                 # Surface as driver channel (2026-08-26): the hold becomes an
                 # artifact the driver decides on; GitHub merge stays live too.
                 if surface_mod.available():
+                    try:
+                        pr_files = ghc.get(f"/repos/{story['repo']}/pulls/{num_s}/files")
+                    except Exception:
+                        pr_files = None
                     art = surface_mod.author_risk_hold(cfg, slug, int(num_s), detail,
-                                                       p["role"])
+                                                       p["role"], files=pr_files)
                     surface_mod.open_session(cfg, art, "risk_hold", log,
                                              story=slug, pr=int(num_s),
                                              repo=story["repo"])
@@ -941,8 +945,12 @@ def cmd_surface(cfg, args):
         if not repo:
             print(f"unknown story {args.story}"); return
         detail = ghc.pr(repo, args.pr)
+        try:
+            pr_files = ghc.get(f"/repos/{repo}/pulls/{args.pr}/files")
+        except Exception:
+            pr_files = None
         art = surface_mod.author_risk_hold(cfg, args.story, args.pr, detail,
-                                           "manual-test")
+                                           "manual-test", files=pr_files)
         surface_mod.open_session(cfg, art, "risk_hold", log,
                                  story=args.story, pr=args.pr, repo=repo)
         return

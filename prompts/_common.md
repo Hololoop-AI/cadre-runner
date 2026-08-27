@@ -44,10 +44,16 @@ reach work that genuinely depends on it — and only then — pick up the answer
 python3 <runner>/pipeline.py wait --ticket <id> --timeout 240
 ```
 
-Exit 0 prints the answer; exit 2 means still pending. On pending, **do not
-stop**: finish what you can and open the PR carrying the question and your
-recommendation as an open decision, exactly as you would have without this
-channel. A PR the driver can act on beats a session waiting on them.
+Exit 0 prints the answer; exit 2 means still pending. Between work items,
+check cheaply (`wait --ticket <id> --timeout 0`) and fold in any answer that
+has landed. On pending, keep working through everything the answer does not
+gate. When you hit a genuine wall — no remaining work can proceed without the
+answer — **stop cleanly and exit**: your session is parked, and the runner
+revives this same conversation with the driver's answer the moment it
+arrives, on either channel. Do not idle in a wait loop burning the clock;
+exiting at the wall IS the correct move. If partial work is shippable first,
+open the PR carrying the question and your recommendation as an open
+decision — a PR the driver can act on beats a session waiting on them.
 
 Ask sparingly. The bar is the same as any driver call: a decision you cannot
 make well yourself, phrased so someone with no memory of the codebase can rule
