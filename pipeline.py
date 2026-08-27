@@ -12,6 +12,7 @@ Commands:
 
 import argparse
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -258,6 +259,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     if story["status"] == "intaking":
         return  # nothing to poll until the intake run reaps
     _resume_paused(cfg, reg, ghc, slug, story)
+    _resume_parked(cfg, reg, ghc, slug, story)
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _seed_manifest(reg, ghc, slug, story)
     _try_automerge(cfg, reg, ghc, slug, story)
@@ -523,7 +525,11 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     session_id = str(uuid.uuid4())
     pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, cfg.model_for(stage),
                          cfg.effort_for(stage), cfg.claude["permission_mode"],
-                         cfg.claude["timeout_seconds"], run_dir, session_id=session_id)
+                         cfg.claude["timeout_seconds"], run_dir, session_id=session_id,
+                         # identity for `pipeline.py ask` — links a question to
+                         # this session so an answer can revive it after exit
+                         extra_env={"CADRE_STORY": slug, "CADRE_STAGE": stage,
+                                    "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
@@ -604,6 +610,19 @@ def _reap_runs(cfg, reg, ghc, slug, story):
             "cost_usd": (usage or {}).get("total_cost_usd"),
         })
         del story["active_runs"][rid]
+        # Question-park (2026-08-27): a session that asked the driver something
+        # and exited is waiting, not finished. Keep its worktree and session id;
+        # the daemon revives the same conversation when the answer lands
+        # (surface artifact or CLI — either channel). Mirrors paused_runs.
+        open_q = [m["ticket"] for m in messages.pending(cfg.data_dir, slug)
+                  if m.get("session_id") == run.get("session_id")]
+        if open_q and run.get("session_id"):
+            story.setdefault("parked_runs", {})[rid] = {
+                **run, "parked_for": open_q, "parked_at": time.time(),
+            }
+            log(f"{slug}: stage {run['stage']} parked on question(s) "
+                f"{', '.join(open_q)} — session kept for revival")
+            continue
         ok_rm, rm_detail = runs_mod.remove_worktree(
             cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
         if not ok_rm:
@@ -632,6 +651,56 @@ def _reap_runs(cfg, reg, ghc, slug, story):
             _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
                                  f"Re-summon with @claude after checking. {AGENT_MARKER}")
     _sweep_worktrees(cfg, story, slug)
+
+
+def _resume_parked(cfg, reg, ghc, slug, story):
+    """Revive sessions that exited waiting on a driver question, once every
+    ticket they parked on has an answer. The answer arrives in the resumed
+    conversation itself — no re-reading a message file mid-run."""
+    for rid, run in list((story.get("parked_runs") or {}).items()):
+        answers = []
+        for ticket in run.get("parked_for", []):
+            m = messages.get(cfg.data_dir, ticket)
+            if m is None:
+                continue  # deleted ticket: treat as answered-by-absence
+            if m.get("answer") is None:
+                answers = None
+                break
+            answers.append((ticket, m.get("question") or "", m["answer"]))
+        if answers is None:
+            continue
+        if len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
+            return
+        wt = Path(run["worktree"])
+        if not (wt / ".git").exists():
+            del story["parked_runs"][rid]
+            log(f"{slug}: cannot revive {rid} — worktree gone; question answers "
+                f"remain on the tickets")
+            continue
+        run_dir = Path(run["run_dir"])
+        for stale in ("exit", "out.json", "err.txt"):
+            (run_dir / stale).unlink(missing_ok=True)
+        qa = "\n\n".join(f"Question ({t}): {q}\nDriver's answer: {a}"
+                         for t, q, a in answers)
+        pid = runs_mod.spawn(
+            cfg.claude["bin"],
+            "The driver has answered the question(s) you asked before you stopped. "
+            "Continue the stage from where you left off, applying the answers below "
+            "as decisions — they are authoritative.\n\n" + qa,
+            wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
+            cfg.claude["permission_mode"], cfg.claude["timeout_seconds"], run_dir,
+            session_id=run["session_id"], resume=True,
+            extra_env={"CADRE_STORY": slug, "CADRE_STAGE": run["stage"],
+                       "CADRE_SESSION_ID": run["session_id"], "CADRE_RUN_ID": rid})
+        del story["parked_runs"][rid]
+        story.setdefault("active_runs", {})[rid] = {
+            **{k: v for k, v in run.items() if k not in ("parked_for", "parked_at")},
+            "pid": pid, "started": time.time(), "resumed": True,
+        }
+        board_events.emit("session_revived", story=slug, stage=run["stage"],
+                          tickets=[t for t, _, _ in answers])
+        log(f"{slug}: revived stage {run['stage']} session "
+            f"{run['session_id'][:8]} with {len(answers)} answer(s) — pid {pid}")
 
 
 def _resume_paused(cfg, reg, ghc, slug, story):
@@ -684,6 +753,7 @@ def _sweep_worktrees(cfg, story, slug):
         return
     live = {Path(r["worktree"]).name for r in (story.get("active_runs") or {}).values()}
     live |= {Path(r["worktree"]).name for r in (story.get("paused_runs") or {}).values()}
+    live |= {Path(r["worktree"]).name for r in (story.get("parked_runs") or {}).values()}
     for d in base.iterdir():
         if d.is_dir() and d.name not in live:
             ok, detail = runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)
@@ -811,10 +881,20 @@ def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url="", workflow
 
 
 def cmd_ask(cfg, args):
-    """Agent-side: record a question and keep working. Prints the ticket."""
+    """Agent-side: record a question and keep working. Prints the ticket.
+    Stage sessions carry CADRE_SESSION_ID etc. in their env, so the ticket is
+    linked to the asking session — the agent may then finish and EXIT; the
+    daemon revives the session with the answer when it arrives (parked_runs)."""
     ticket = messages.ask(cfg.data_dir, args.story, args.question,
                           recommendation=args.recommendation or "",
                           stage=args.stage or "", slice_name=args.slice or "", pr=args.pr)
+    session_id = os.environ.get("CADRE_SESSION_ID")
+    if session_id:
+        m = messages.get(cfg.data_dir, ticket)
+        if m is not None:
+            m["session_id"] = session_id
+            m["run_id"] = os.environ.get("CADRE_RUN_ID")
+            messages._write(messages._dir(cfg.data_dir) / f"{ticket}.json", m)
     print(ticket)
 
 

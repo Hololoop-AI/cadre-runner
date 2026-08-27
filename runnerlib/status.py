@@ -52,16 +52,28 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
     try:
         d = status_dir(cfg)
         d.mkdir(parents=True, exist_ok=True)
+        stories = _stories(reg)
+        surfs = _surfaces(cfg)
+        # Surfaces belong to their story's row (driver feedback 2026-08-27);
+        # the standalone list keeps only orphans with no story to live under.
+        by_story = {st["slug"]: st for st in stories}
+        orphans = []
+        for sf in surfs:
+            st = by_story.get(sf.get("story"))
+            if st is not None:
+                st.setdefault("surfaces", []).append(sf)
+            else:
+                orphans.append(sf)
         snap = {
             "ts": time.time(),
             "iso": time.strftime("%Y-%m-%d %H:%M:%S"),
             "poll_interval": cfg.runner["poll_interval"],
             "run": run,
             "runs": runs or [],
-            "stories": _stories(reg),
+            "stories": stories,
             "recent": _history(cfg.data_dir / "history.jsonl"),
             "questions": _questions(cfg),
-            "surfaces": _surfaces(cfg),
+            "surfaces": orphans,
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".status-", suffix=".tmp")

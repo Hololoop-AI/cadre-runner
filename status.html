@@ -74,7 +74,7 @@ footer { color: var(--muted); font-size: 0.75rem; margin-top: 1.2rem; }
   </div>
   <div class="card" id="runscard" style="display:none"><h2>Active runs</h2><div id="runs">—</div></div>
   <div class="card"><h2>Stories <span style="text-transform:none;letter-spacing:0;font-weight:400">· slice dots = contract / tests / build</span></h2><div id="stories">—</div></div>
-  <div class="card" id="surfcard" style="display:none"><h2>Review surfaces <span style="text-transform:none;letter-spacing:0;font-weight:400">· decide these in the browser</span></h2><div id="surfaces">—</div></div>
+  <div class="card" id="surfcard" style="display:none"><h2>Surfaces without a story</h2><div id="surfaces">—</div></div>
   <div class="card" id="qcard" style="display:none"><h2>Waiting on you</h2><div id="questions">—</div></div>
   <div class="card" id="recentcard" style="display:none"><h2>Finished runs <span style="text-transform:none;letter-spacing:0;font-weight:400">· newest first</span></h2><div id="recent">—</div></div>
   <div class="card" id="statscard" style="display:none"><h2>Typical duration by stage</h2><div id="stats">—</div></div>
@@ -148,12 +148,21 @@ function render(s) {
     }).join("");
     const link = st.planning_pr
       ? `<a href="https://github.com/${esc(st.repo)}/pull/${st.planning_pr}">#${st.planning_pr}</a>` : "";
+    const surfRows = (st.surfaces || []).map(sf => {
+      const label = sf.kind === "risk_hold" ? `⚠ decide: risk hold PR #${esc(sf.pr)}`
+                  : sf.kind === "ask" ? `? answer: ${esc(sf.ticket || "question")}`
+                  : `◈ ${esc(sf.kind || "surface")}`;
+      return sf.path
+        ? `<a class="badge escalated" href="${esc(sf.path)}" target="_blank">${label} ↗</a>`
+        : `<span class="badge escalated">${label}</span>`;
+    }).join("");
     return `<div class="story">
       <span class="id">${esc(st.story_id)}</span>
       <span class="badge ${esc(st.status)}">${esc(st.status)} · ${esc(st.phase)}</span>
       ${link}
       <span class="title">${esc(st.title)}</span>
       ${slices.length ? `<span class="slices">${dots}</span>` : ""}
+      ${surfRows ? `<span class="slices" style="flex-basis:100%">${surfRows}</span>` : ""}
     </div>`;
   }).join("") || "<span class='badge'>no stories registered</span>";
 

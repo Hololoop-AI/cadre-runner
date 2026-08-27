@@ -2,9 +2,11 @@
 2026-08-26-surface-as-driver-channel).
 
 The daemon authors deterministic HTML artifacts (no LLM, no tokens) at each
-driver touchpoint, opens them as Review Surface sessions, and long-polls each
-session in a tracked subprocess. Surface feedback comes back as machine
-tokens embedded in queued prompts:
+driver touchpoint and opens them as Review Surface sessions. Nothing here
+long-polls: our review-surface fork appends a wake signal to an outbox JSONL
+on every driver "send", and the daemon's tick consumes new signals with a
+short one-shot poll — delivery semantics stay review-surface's own. Surface
+feedback comes back as machine tokens embedded in queued prompts:
 
     CADRE_DECISION gate=risk_hold story=<slug> pr=<n> verdict=approve|reject
     CADRE_ANSWER ticket=<id> :: <free text>
@@ -14,10 +16,10 @@ Everything else the driver annotates is recorded to the board as
 the record (dual channel: GitHub remains fully live for teammates; the gate
 advances on the first qualifying event from either side).
 
-Poll subprocesses are re-armed on every daemon tick, so a daemon restart
-recovers cleanly: sessions.json is the durable list, the Popen table is not.
-All entry points swallow exceptions — the surface must never take the
-daemon down."""
+sessions.json is the durable session list; the outbox cursor is a byte
+offset persisted next to it, so a daemon restart re-reads nothing and loses
+nothing. All entry points swallow exceptions — the surface must never take
+the daemon down."""
 
 import json
 import os
@@ -38,8 +40,9 @@ _DECISION_RE = re.compile(
     r"CADRE_DECISION gate=(\w+) story=([\w.-]+) pr=(\d+) verdict=(approve|reject)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
 
-_polls: dict[str, subprocess.Popen] = {}  # artifact path -> live poll process
-_poll_logs: dict[str, str] = {}           # artifact path -> stdout temp file
+def outbox_path() -> Path:
+    return Path(os.environ.get("REVIEW_SURFACE_OUTBOX",
+                               str(Path.home() / ".review-surface/outbox.jsonl")))
 
 
 def available() -> bool:
@@ -173,8 +176,9 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
         url_path = ""
         if m:
             url_path = re.sub(r"^https?://[^/]+", "", m.group(1))
+        key = url_path.rsplit("/", 1)[-1] if url_path else ""
         s = sessions(cfg)
-        s[str(path)] = {"kind": kind, "path": url_path, "open": True,
+        s[str(path)] = {"kind": kind, "path": url_path, "key": key, "open": True,
                         "opened": time.time(), **meta}
         _save_sessions(cfg, s)
         board_events.emit("surface_opened", session_kind=kind, artifact=str(path),
@@ -194,24 +198,39 @@ def end_session(cfg, path: str, log) -> None:
     if path in s:
         s[path]["open"] = False
         _save_sessions(cfg, s)
-    proc = _polls.pop(path, None)
-    if proc and proc.poll() is None:
-        proc.terminate()
     log(f"surface: ended session for {Path(path).name}")
 
 
-def _arm_poll(path: str, log) -> None:
-    if path in _polls and _polls[path].poll() is None:
-        return
+def _cursor_path(cfg) -> Path:
+    return _dir(cfg) / "outbox.cursor"
+
+
+def _read_outbox(cfg) -> list[dict]:
+    """New outbox signals since the persisted byte offset."""
+    ob = outbox_path()
     try:
-        fd, tmp = tempfile.mkstemp(prefix="surface-poll-", suffix=".out")
-        os.close(fd)
-        _poll_logs[path] = tmp
-        _polls[path] = subprocess.Popen(
-            [CLI, "poll", path], stdout=open(tmp, "w"), stderr=subprocess.STDOUT,
-            text=True, start_new_session=True)
-    except Exception as e:
-        log(f"surface: poll arm failed for {path}: {e}")
+        size = ob.stat().st_size
+    except OSError:
+        return []
+    try:
+        pos = int(_cursor_path(cfg).read_text().strip() or "0")
+    except (OSError, ValueError):
+        pos = 0
+    if pos > size:  # outbox truncated/rotated
+        pos = 0
+    if pos == size:
+        return []
+    with open(ob, "rb") as f:
+        f.seek(pos)
+        chunk = f.read().decode(errors="replace")
+    _cursor_path(cfg).write_text(str(size))
+    out = []
+    for line in chunk.splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
 def _parse_feedback(raw: str) -> tuple[list[dict], list[str]]:
@@ -237,8 +256,8 @@ def _parse_feedback(raw: str) -> tuple[list[dict], list[str]]:
 
 
 def tick(cfg, reg, ghc, log) -> None:
-    """One daemon pass: reap finished polls -> apply feedback -> re-arm polls
-    for every open session -> open sessions for new pending questions."""
+    """One daemon pass: consume new outbox signals (short one-shot poll per
+    signalled session) -> open sessions for new pending questions."""
     if not available():
         return
     try:
@@ -247,52 +266,53 @@ def tick(cfg, reg, ghc, log) -> None:
         log(f"surface: tick error: {e}")
 
 
+def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
+    """One short poll on a session the outbox says has feedback waiting."""
+    try:
+        raw = _run_cli(["poll", path, "--timeout-ms", "4000"], timeout=30)
+    except Exception as e:
+        log(f"surface: consume poll failed for {Path(path).name}: {e}")
+        return
+    if "status: feedback" not in raw:
+        if re.search(r"status: ended|ended the session|No active Review Surface session",
+                     raw, re.IGNORECASE):
+            s2 = sessions(cfg)
+            if path in s2:
+                s2[path]["open"] = False
+                _save_sessions(cfg, s2)
+                board_events.emit("surface_closed", artifact=path, by="driver")
+                log(f"surface: session ended from browser for {Path(path).name}")
+        return
+    structured, free = _parse_feedback(raw)
+    for item in structured:
+        _apply(cfg, reg, ghc, log, path, meta, item)
+    for text in free:
+        board_events.emit("surface_feedback", artifact=path,
+                          story=meta.get("story"), pr=meta.get("pr"),
+                          text=text[:2000])
+        if meta.get("pr") and meta.get("repo"):
+            try:
+                from .dispatcher import AGENT_MARKER
+                ghc.comment(meta["repo"], int(meta["pr"]),
+                            f"**Driver (via surface):** {text[:1500]} {AGENT_MARKER}")
+            except Exception as e:
+                log(f"surface: PR mirror failed: {e}")
+        log(f"surface: feedback on {Path(path).name}: {text[:120]}")
+
+
 def _tick(cfg, reg, ghc, log) -> None:
     from . import messages
     sess = sessions(cfg)
 
-    # 1) reap finished polls and apply what came back
-    for path, proc in list(_polls.items()):
-        if proc.poll() is None:
-            continue
-        del _polls[path]
-        raw = ""
-        tmp = _poll_logs.pop(path, "")
-        try:
-            raw = Path(tmp).read_text()
-            os.unlink(tmp)
-        except OSError:
-            pass
-        if "status: feedback" not in raw:
-            # Driver ended the session from the browser (or it no longer
-            # exists): stop re-arming, or we poll a corpse every tick.
-            if re.search(r"status: ended|ended the session|No active Review Surface session",
-                         raw, re.IGNORECASE):
-                s2 = sessions(cfg)
-                if path in s2:
-                    s2[path]["open"] = False
-                    _save_sessions(cfg, s2)
-                    board_events.emit("surface_closed", artifact=path, by="driver")
-                    log(f"surface: session ended from browser for {Path(path).name}")
-                sess = sessions(cfg)
-            continue  # interrupted poll; re-armed below if still open
-        meta = sess.get(path, {})
-        structured, free = _parse_feedback(raw)
-        for item in structured:
-            _apply(cfg, reg, ghc, log, path, meta, item)
-        for text in free:
-            board_events.emit("surface_feedback", artifact=path,
-                              story=meta.get("story"), pr=meta.get("pr"),
-                              text=text[:2000])
-            if meta.get("pr") and meta.get("repo"):
-                try:
-                    from .dispatcher import AGENT_MARKER
-                    ghc.comment(meta["repo"], int(meta["pr"]),
-                                f"**Driver (via surface):** {text[:1500]} {AGENT_MARKER}")
-                except Exception as e:
-                    log(f"surface: PR mirror failed: {e}")
-            log(f"surface: feedback on {Path(path).name}: {text[:120]}")
-        sess = sessions(cfg)  # _apply may end sessions
+    # 1) outbox signals -> consume feedback from exactly those sessions
+    signalled = {sig.get("key") for sig in _read_outbox(cfg) if sig.get("key")}
+    if signalled:
+        by_key = {m.get("key"): (p, m) for p, m in sess.items() if m.get("open")}
+        for key in signalled:
+            hit = by_key.get(key)
+            if hit:
+                _consume(cfg, reg, ghc, log, hit[0], hit[1])
+        sess = sessions(cfg)  # consuming may close sessions
 
     # 2) new pending questions get artifacts
     open_tickets = {m.get("ticket") for m in sess.values() if m.get("kind") == "ask"}
@@ -302,12 +322,6 @@ def _tick(cfg, reg, ghc, log) -> None:
         path = author_question(cfg, msg)
         open_session(cfg, path, "ask", log, ticket=msg["ticket"],
                      story=msg.get("story"), pr=msg.get("pr"))
-        sess = sessions(cfg)
-
-    # 3) every open session keeps a live poll
-    for path, meta in sess.items():
-        if meta.get("open") and Path(path).exists():
-            _arm_poll(path, log)
 
 
 def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:

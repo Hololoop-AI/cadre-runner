@@ -116,7 +116,7 @@ def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
 
 def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
           timeout, run_dir: Path, session_id: str | None = None,
-          resume: bool = False) -> int:
+          resume: bool = False, extra_env: dict | None = None) -> int:
     """Detached `claude -p` under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
     the outcome. Returns the wrapper pid.
@@ -139,7 +139,8 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
     env = {**os.environ,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),
            "CADRE_RUN_ERR": str(run_dir / "err.txt"),
-           "CADRE_RUN_EXIT": str(run_dir / "exit")}
+           "CADRE_RUN_EXIT": str(run_dir / "exit"),
+           **(extra_env or {})}
     proc = subprocess.Popen(
         ["/bin/sh", "-c",
          '"$@" > "$CADRE_RUN_OUT" 2> "$CADRE_RUN_ERR"; echo $? > "$CADRE_RUN_EXIT"',
