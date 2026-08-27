@@ -70,6 +70,12 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in self.headers.items():
             if k.lower() not in HOP_HEADERS:
                 req.add_header(k, v)
+        # Standard proxy identity: review-surface's origin guard validates the
+        # browser's Origin against X-Forwarded-Host when that hostname is in
+        # its REVIEW_SURFACE_ALLOWED_HOSTS list (set in the daemon's env).
+        if self.headers.get("Host"):
+            req.add_header("X-Forwarded-Host", self.headers["Host"])
+            req.add_header("X-Forwarded-Proto", "http")
         try:
             resp = urllib.request.urlopen(req, timeout=300)
         except urllib.error.HTTPError as e:
