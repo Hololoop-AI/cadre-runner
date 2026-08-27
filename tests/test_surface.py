@@ -44,6 +44,16 @@ class ParseTest(unittest.TestCase):
     def test_no_feedback_is_empty(self):
         self.assertEqual(_parse_feedback("session:\n  status: opened\n"), ([], []))
 
+    def test_empty_uid_cell(self):
+        # API-posted prompts carry an EMPTY uid cell — the real shape that
+        # silently lost the first end-to-end answer on fedora-1.
+        raw = ('prompts[1]{uid,prompt,selector,tag,text}:\n'
+               '  "","CADRE_ANSWER ticket=nex-158-4a82e20c :: charrette again",'
+               '"",choice,"Answer: charrette"\n')
+        structured, free = _parse_feedback(raw)
+        self.assertEqual(structured[0]["ticket"], "nex-158-4a82e20c")
+        self.assertEqual(structured[0]["text"], "charrette again")
+
 
 if __name__ == "__main__":
     unittest.main()

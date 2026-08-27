@@ -35,7 +35,9 @@ from . import board_events
 
 CLI = "review-surface"
 # TOON quotes prompt strings; both observed shapes use double-quoted escapes.
-_PROMPT_RE = re.compile(r'(?:prompt: |^\s*"\d+",)"((?:[^"\\]|\\.)*)"', re.MULTILINE)
+# Inline rows start with a quoted uid cell that may be EMPTY (API-posted
+# prompts have no uid), so the uid cell matches any quoted string, not \d+.
+_PROMPT_RE = re.compile(r'(?:prompt: |^\s*"[^"\n]*",)"((?:[^"\\]|\\.)*)"', re.MULTILINE)
 _DECISION_RE = re.compile(
     r"CADRE_DECISION gate=(\w+) story=([\w.-]+) pr=(\d+) verdict=(approve|reject)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
@@ -284,6 +286,14 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
                 log(f"surface: session ended from browser for {Path(path).name}")
         return
     structured, free = _parse_feedback(raw)
+    if not structured and not free:
+        # Poll delivery consumes — a parse miss here would silently LOSE the
+        # driver's feedback. Keep the raw capture and shout about it.
+        keep = _dir(cfg) / f"unparsed-{int(time.time())}.txt"
+        keep.write_text(raw)
+        board_events.emit("surface_unparsed", artifact=path, raw_file=str(keep))
+        log(f"surface: feedback arrived but parsed to NOTHING — raw kept at {keep}")
+        return
     for item in structured:
         _apply(cfg, reg, ghc, log, path, meta, item)
     for text in free:
