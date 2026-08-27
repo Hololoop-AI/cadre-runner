@@ -300,9 +300,29 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
 
 
+def _ensure_server(cfg, sess: dict, log) -> None:
+    """The surface server self-stops when idle and dies on reboots; any open
+    session must be reachable, so re-open the first one to relaunch it."""
+    open_paths = [p for p, m in sess.items() if m.get("open") and Path(p).exists()]
+    if not open_paths:
+        return
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://127.0.0.1:4387/health", timeout=3)
+        return
+    except OSError:
+        pass
+    try:
+        _run_cli([open_paths[0]])
+        log("surface: server was down — relaunched")
+    except Exception as e:
+        log(f"surface: server relaunch failed: {e}")
+
+
 def _tick(cfg, reg, ghc, log) -> None:
     from . import messages
     sess = sessions(cfg)
+    _ensure_server(cfg, sess, log)
 
     # 1) outbox signals -> consume feedback from exactly those sessions
     signalled = {sig.get("key") for sig in _read_outbox(cfg) if sig.get("key")}
