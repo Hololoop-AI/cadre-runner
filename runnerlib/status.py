@@ -61,6 +61,7 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
             "stories": _stories(reg),
             "recent": _history(cfg.data_dir / "history.jsonl"),
             "questions": _questions(cfg),
+            "surfaces": _surfaces(cfg),
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".status-", suffix=".tmp")
@@ -99,6 +100,16 @@ def _history(path: Path) -> list[dict]:
                 continue  # a partial first line from the byte-offset seek
         return list(reversed(out))
     except OSError:
+        return []
+
+
+def _surfaces(cfg) -> list[dict]:
+    """Open Review Surface sessions — driver decisions and questions living on
+    the surface channel. Links are proxy-relative (statusd forwards them)."""
+    try:
+        from . import surface
+        return surface.status_list(cfg)
+    except Exception:
         return []
 
 

@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import board_events
+from runnerlib import surface as surface_mod
 from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
@@ -191,6 +192,11 @@ def cmd_run(cfg, args, single_pass=False):
                 log(f"ERROR polling {slug}: {e}")
             board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
             reg.save()
+        surface_mod.tick(cfg, reg, ghc, log)
+        try:
+            surface_mod.reconcile_merged_holds(cfg, reg, log)
+        except Exception as e:
+            log(f"surface: reconcile error: {e}")
         act = [{"stage": r["stage"], "story": s, "slice": r.get("slice"),
                 "pr": r.get("pr"), "started": r["started"]}
                for s, _rid, r in runs_mod.all_active(reg)]
@@ -374,6 +380,14 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                                   status="awaiting-review",
                                   url=f"https://github.com/{story['repo']}/pull/{num_s}")
                 log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
+                # Surface as driver channel (2026-08-26): the hold becomes an
+                # artifact the driver decides on; GitHub merge stays live too.
+                if surface_mod.available():
+                    art = surface_mod.author_risk_hold(cfg, slug, int(num_s), detail,
+                                                       p["role"])
+                    surface_mod.open_session(cfg, art, "risk_hold", log,
+                                             story=slug, pr=int(num_s),
+                                             repo=story["repo"])
             elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
                 # once per PR: a silent block here would be an invisible wedge
                 reg.mark_seen(story, "title_lint", int(num_s))
@@ -826,6 +840,50 @@ def cmd_answer(cfg, args):
     print(f"answered {args.ticket} (asked {waited} min ago, story {m['story']})")
 
 
+def cmd_surface(cfg, args):
+    """Driver channel controls: list open sessions, force a test hold artifact
+    for any PR, publish an outbound notice, or run one collect pass."""
+    if not surface_mod.available():
+        print("review-surface CLI not on PATH")
+        return
+    if args.action == "list":
+        for s in surface_mod.status_list(cfg):
+            print(f"{s['kind']:10} {s.get('story') or '':10} "
+                  f"{('PR #' + str(s['pr'])) if s.get('pr') else (s.get('ticket') or '')}  {s.get('path')}")
+        return
+    if args.action == "hold":
+        if not (args.story and args.pr):
+            print("hold needs --story and --pr"); return
+        ghc = GitHub(cfg.data_dir / "etags.json")
+        reg = Registry(cfg.data_dir / "registry.json")
+        story = reg.stories().get(args.story) or {}
+        repo = story.get("repo")
+        if not repo:
+            print(f"unknown story {args.story}"); return
+        detail = ghc.pr(repo, args.pr)
+        art = surface_mod.author_risk_hold(cfg, args.story, args.pr, detail,
+                                           "manual-test")
+        surface_mod.open_session(cfg, art, "risk_hold", log,
+                                 story=args.story, pr=args.pr, repo=repo)
+        return
+    if args.action == "notify":
+        if not (args.story and args.text):
+            print("notify needs --story and --text"); return
+        from html import escape as _esc
+        art = surface_mod.author_notice(cfg, args.story,
+                                        args.s_title or f"Update on {args.story}",
+                                        f"<p>{_esc(args.text)}</p>")
+        surface_mod.open_session(cfg, art, "notice", log, story=args.story)
+        return
+    if args.action == "collect":
+        ghc = GitHub(cfg.data_dir / "etags.json")
+        reg = Registry(cfg.data_dir / "registry.json")
+        surface_mod.tick(cfg, reg, ghc, log)
+        print("collected one pass; sessions:")
+        for s in surface_mod.status_list(cfg):
+            print(f"  {s['kind']} {s.get('story')} {s.get('path')}")
+
+
 def cmd_messages(cfg, args):
     """Driver-side: what the pipeline is waiting on."""
     items = messages.pending(cfg.data_dir, args.story or "")
@@ -882,12 +940,18 @@ def main():
     p.add_argument("--text", required=True)
     p = sub.add_parser("messages", help="driver: list unanswered questions")
     p.add_argument("--story")
+    p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
+    p.add_argument("action", choices=["list", "hold", "notify", "collect"])
+    p.add_argument("--story")
+    p.add_argument("--pr", type=int)
+    p.add_argument("--title", dest="s_title")
+    p.add_argument("--text")
 
     args = ap.parse_args()
     cfg = config_mod.load(args.config)
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
-     "board-check": cmd_board_check,
+     "board-check": cmd_board_check, "surface": cmd_surface,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 
