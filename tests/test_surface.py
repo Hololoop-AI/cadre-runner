@@ -49,5 +49,34 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(free, ["real note"])
 
 
+class TemplateTest(unittest.TestCase):
+    """The onsubmit attribute is double-quoted HTML: any double quote inside
+    it truncates the handler and the form falls back to a GET navigation —
+    the real form did exactly that on fedora-1 while curl tests passed."""
+
+    def _artifacts(self, tmp):
+        import types
+        from runnerlib import surface
+        cfg = types.SimpleNamespace(data_dir=tmp)
+        hold = surface.author_risk_hold(
+            cfg, "nex-158", 123, {"title": "t", "body": "Risk: high\nbecause"},
+            "contracts", files=[{"filename": "a.py", "additions": 1, "deletions": 2}])
+        ask = surface.author_question(cfg, {"ticket": "nex-1-abc", "story": "nex-1",
+                                            "question": "q?", "recommendation": "r"})
+        return hold.read_text(), ask.read_text()
+
+    def test_onsubmit_attributes_have_no_double_quotes(self):
+        import re
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            for html in self._artifacts(Path(td)):
+                for m in re.finditer(r'onsubmit="([^"]*)"', html):
+                    handler = m.group(1)
+                    self.assertIn("queuePrompt", handler,
+                                  "handler truncated by an embedded double quote")
+                    self.assertIn("event.preventDefault()", handler)
+
+
 if __name__ == "__main__":
     unittest.main()

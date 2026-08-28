@@ -87,6 +87,15 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in resp.headers.items():
             if k.lower() not in HOP_HEADERS:
                 self.send_header(k, v)
+        # 1xx/204/304 (and HEAD) responses MUST NOT carry a body — chunked
+        # framing on them puts stray bytes on the wire and the browser reports
+        # ERR_INVALID_HTTP_RESPONSE on the next request (observed).
+        bodyless = (resp.status in (204, 304) or resp.status < 200
+                    or self.command == "HEAD")
+        if bodyless:
+            self.end_headers()
+            resp.close()
+            return
         chunked = "content-length" not in {k.lower() for k in resp.headers}
         if chunked:
             self.send_header("Transfer-Encoding", "chunked")

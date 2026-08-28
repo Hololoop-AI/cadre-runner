@@ -151,9 +151,9 @@ verdict. Approving merges the PR (a GitHub merge works too; first channel wins).
 <div class="card"><span class="chip">Verdict</span>
 <form data-review-surface-question="verdict" onsubmit="event.preventDefault();
   const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
-  window.reviewSurface.queuePrompt({json.dumps(token)}+v,
+  window.reviewSurface.queuePrompt('{token}'+v,
     {{tag:'choice', text:'Risk-hold verdict: '+v, element:event.currentTarget,
-     data:{{gate:'risk_hold', story:{json.dumps(slug)}, pr:{pr}, verdict:v}}}});">
+     data:{{gate:'risk_hold', story:'{slug}', pr:{pr}, verdict:v}}}});">
 <label><input type="radio" name="verdict" value="approve"><b>Approve — merge it</b>
 <span class="why">The risk is acceptable; the change merges as-is.</span></label>
 <label><input type="radio" name="verdict" value="reject"><b>Reject — send back</b>
@@ -178,7 +178,7 @@ def author_question(cfg, msg: dict) -> Path:
   const t=new FormData(event.currentTarget).get('text'); if(!t) return;
   window.reviewSurface.queuePrompt('CADRE_ANSWER ticket={ticket} :: '+t,
     {{tag:'choice', text:'Answer: '+t.slice(0,120), element:event.currentTarget,
-     data:{{ticket:{json.dumps(ticket)}}}}});">
+     data:{{ticket:'{ticket}'}}}});">
 <textarea name="text" placeholder="Answer in your own words — it reaches the run verbatim."></textarea>
 <button type="submit">Queue answer</button></form></div>"""
     return _write_artifact(cfg, f"ask-{ticket}.html", f"Question — {ticket}", body)
