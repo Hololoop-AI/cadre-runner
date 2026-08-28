@@ -150,6 +150,7 @@ function render(s) {
       ? `<a href="https://github.com/${esc(st.repo)}/pull/${st.planning_pr}">#${st.planning_pr}</a>` : "";
     const surfRows = (st.surfaces || []).map(sf => {
       const label = sf.kind === "risk_hold" ? `⚠ decide: risk hold PR #${esc(sf.pr)}`
+                  : sf.kind === "spec_review" ? `▤ review spec (PR #${esc(sf.pr)})`
                   : sf.kind === "ask" ? `? answer: ${esc(sf.ticket || "question")}`
                   : `◈ ${esc(sf.kind || "surface")}`;
       return sf.path

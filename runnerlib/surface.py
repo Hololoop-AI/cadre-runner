@@ -184,6 +184,44 @@ def author_question(cfg, msg: dict) -> Path:
     return _write_artifact(cfg, f"ask-{ticket}.html", f"Question — {ticket}", body)
 
 
+def author_spec_review(cfg, slug: str, pr: int, detail: dict,
+                       spec_files: list[dict]) -> Path:
+    """The unified spec gate (cadre-context 2026-08-26-unified-spec): one
+    artifact carrying the plan narrative and every spec document on the
+    planning branch, each annotatable in place, with the approval verdict.
+    Approve merges the planning PR; revise feeds annotations to the ordinary
+    revise machinery. spec_files: [{path, text}]."""
+    html_url = detail.get("html_url") or ""
+    token = f"CADRE_DECISION gate=spec_review story={slug} pr={pr} verdict="
+    docs = "".join(
+        f"""<div class="card"><span class="chip">{escape(f['path'])}</span>
+<pre>{escape(f['text'][:30000])}</pre></div>"""
+        for f in spec_files)
+    body = f"""
+<h1>Spec review — the one human gate</h1>
+<div class="meta">{escape(slug)} · <a href="{escape(html_url)}">planning PR #{pr}</a> — {escape(detail.get('title') or '')}</div>
+<div class="card"><span class="chip">Plan narrative (PR description)</span>
+<pre>{escape((detail.get('body') or '(empty)')[:20000])}</pre></div>
+{docs}
+<div class="card"><span class="chip">Verdict</span>
+<p class="dim">Annotate any slice, decision, or contract above first — annotations reach the
+agents as your PR comments either way. On approval the spec locks and everything
+after is automated; a GitHub merge of the planning PR does the same thing (first
+channel wins).</p>
+<form data-review-surface-question="verdict" onsubmit="event.preventDefault();
+  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
+  window.reviewSurface.queuePrompt('{token}'+v,
+    {{tag:'choice', text:'Spec verdict: '+v, element:event.currentTarget,
+     data:{{gate:'spec_review', story:'{slug}', pr:{pr}, verdict:v}}}});">
+<label><input type="radio" name="verdict" value="approve"><b>Approve — lock the spec and run</b>
+<span class="why">Merges the planning PR; slices dispatch from the next daemon pass.</span></label>
+<label><input type="radio" name="verdict" value="revise"><b>Revise — send my annotations back</b>
+<span class="why">Your annotations become driver comments on the PR; a revise round picks them up.</span></label>
+<button type="submit">Queue verdict</button></form></div>"""
+    return _write_artifact(cfg, f"spec-{slug}-pr{pr}.html",
+                           f"Spec review — {slug}", body)
+
+
 def author_notice(cfg, story: str, title: str, message_html: str) -> Path:
     """Agent-outbound message as a surface artifact (replaces the message UI).
     No controls — annotations come back as surface_feedback."""
@@ -351,9 +389,11 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
                           text=text[:2000])
         if meta.get("pr") and meta.get("repo"):
             try:
-                from .dispatcher import AGENT_MARKER
+                # Deliberately NO agent marker: these are the driver's words.
+                # They must count as human activity — blocking automerge and
+                # triggering revise rounds — exactly like a typed PR comment.
                 ghc.comment(meta["repo"], int(meta["pr"]),
-                            f"**Driver (via surface):** {text[:1500]} {AGENT_MARKER}")
+                            f"**Driver (via surface):** {text[:1500]}")
             except Exception as e:
                 log(f"surface: PR mirror failed: {e}")
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
@@ -440,21 +480,26 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
         log(f"surface: answer recorded for {item['ticket']}")
         end_session(cfg, path, log)
         return
-    if item["type"] == "decision" and item["gate"] == "risk_hold":
+    if item["type"] == "decision" and item["gate"] in ("risk_hold", "spec_review"):
         slug, pr = item["story"], item["pr"]
         story = reg.stories().get(slug) or {}
         repo = story.get("repo") or meta.get("repo")
         if not repo:
             log(f"surface: no repo known for {slug} — decision dropped")
             return
-        board_events.emit("surface_approval", gate="risk_hold", story=slug,
+        board_events.emit("surface_approval", gate=item["gate"], story=slug,
                           pr=pr, verdict=item["verdict"])
         try:
             if item["verdict"] == "approve":
                 ghc.merge_pr(repo, pr)
                 ghc.comment(repo, pr, f"Approved via surface — merged. {AGENT_MARKER}")
                 log(f"surface: {slug} PR #{pr} approved via surface — merged")
-            else:
+            elif item["verdict"] == "revise":  # spec gate: back to the agents
+                ghc.comment(repo, pr,
+                            "**Driver (via surface):** revise requested — my "
+                            "annotations above say what to change.")
+                log(f"surface: {slug} planning PR #{pr} sent to revise via surface")
+            else:  # reject (risk hold)
                 ghc.post(f"/repos/{repo}/issues/{pr}/labels", {"labels": ["hold"]})
                 ghc.comment(repo, pr,
                             f"Rejected via surface — held. See surface annotations "
@@ -470,7 +515,7 @@ def reconcile_merged_holds(cfg, reg, log) -> None:
     surface session sat open -> close the session (first event won there)."""
     sess = sessions(cfg)
     for path, meta in list(sess.items()):
-        if not meta.get("open") or meta.get("kind") != "risk_hold":
+        if not meta.get("open") or meta.get("kind") not in ("risk_hold", "spec_review"):
             continue
         slug = meta.get("story")
         story = reg.stories().get(slug) if slug else None

@@ -63,7 +63,10 @@ class TemplateTest(unittest.TestCase):
             "contracts", files=[{"filename": "a.py", "additions": 1, "deletions": 2}])
         ask = surface.author_question(cfg, {"ticket": "nex-1-abc", "story": "nex-1",
                                             "question": "q?", "recommendation": "r"})
-        return hold.read_text(), ask.read_text()
+        spec = surface.author_spec_review(
+            cfg, "nex-158", 78, {"title": "plan", "body": "narrative"},
+            [{"path": "spec/a.md", "text": "# slice a\ncontract"}])
+        return hold.read_text(), ask.read_text(), spec.read_text()
 
     def test_onsubmit_attributes_have_no_double_quotes(self):
         import re

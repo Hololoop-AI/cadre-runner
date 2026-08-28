@@ -262,6 +262,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     _resume_parked(cfg, reg, ghc, slug, story)
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _seed_manifest(reg, ghc, slug, story)
+    _ensure_spec_surface(cfg, reg, ghc, slug, story)
     _try_automerge(cfg, reg, ghc, slug, story)
     # Events are seen-marked at collection, so a crash between collection and
     # execution would lose them forever (the since-window never re-collects).
@@ -343,6 +344,62 @@ def _seed_manifest(reg, ghc, slug, story):
                 rec[f"{role}_merged"] = True  # exempt by flow, not actually run
     story["plan_slices"] = slices
     log(f"{slug}: manifest seeded — {len(slices)} slice(s), flow-aware dispatch active")
+
+
+def _spec_files_for_pr(ghc, repo: str, pr_detail: dict, pr: int) -> list[dict]:
+    """Markdown documents the planning branch adds/changes — the unified spec
+    content. Full file contents from the head ref, falling back to the diff
+    patch when a blob fetch fails."""
+    import base64
+    out = []
+    try:
+        files = ghc.get(f"/repos/{repo}/pulls/{pr}/files")
+    except Exception:
+        return out
+    ref = (pr_detail.get("head") or {}).get("ref") or ""
+    for f in files:
+        path = f.get("filename") or ""
+        if not path.endswith(".md") or f.get("status") == "removed":
+            continue
+        text = ""
+        try:
+            blob = ghc.get(f"/repos/{repo}/contents/{path}", params={"ref": ref})
+            text = base64.b64decode(blob.get("content") or "").decode(errors="replace")
+        except Exception:
+            text = f.get("patch") or ""
+        if text:
+            out.append({"path": path, "text": text[:30000]})
+        if len(out) >= 10:
+            break
+    return out
+
+
+def _ensure_spec_surface(cfg, reg, ghc, slug, story):
+    """The unified spec gate lives on the surface: every open planning PR gets
+    a spec-review artifact, re-authored when the branch head moves (a revise
+    round produced a new spec version). Driver-closed sessions are not nagged
+    for the same version; a NEW version reopens."""
+    if not surface_mod.available() or story["status"] != "active":
+        return
+    for num_s, p in list(story.get("prs_cache", {}).items()):
+        if p.get("role") != "planning" or p.get("state") != "open":
+            continue
+        art = surface_mod._dir(cfg) / f"spec-{slug}-pr{num_s}.html"
+        sess = surface_mod.sessions(cfg).get(str(art))
+        try:
+            detail = ghc.pr(story["repo"], int(num_s))
+        except Exception as e:
+            log(f"{slug}: spec surface skipped (PR fetch failed: {e})")
+            continue
+        if detail.get("state") != "open":
+            continue
+        sha = (detail.get("head") or {}).get("sha") or ""
+        if sess and sess.get("sha") == sha:
+            continue  # current version already surfaced (open or driver-closed)
+        spec_files = _spec_files_for_pr(ghc, story["repo"], detail, int(num_s))
+        art = surface_mod.author_spec_review(cfg, slug, int(num_s), detail, spec_files)
+        surface_mod.open_session(cfg, art, "spec_review", log, story=slug,
+                                 pr=int(num_s), repo=story["repo"], sha=sha)
 
 
 def _try_automerge(cfg, reg, ghc, slug, story):
@@ -954,6 +1011,22 @@ def cmd_surface(cfg, args):
         surface_mod.open_session(cfg, art, "risk_hold", log,
                                  story=args.story, pr=args.pr, repo=repo)
         return
+    if args.action == "spec":
+        if not (args.story and args.pr):
+            print("spec needs --story and --pr"); return
+        ghc = GitHub(cfg.data_dir / "etags.json")
+        reg = Registry(cfg.data_dir / "registry.json")
+        story = reg.stories().get(args.story) or {}
+        repo = story.get("repo")
+        if not repo:
+            print(f"unknown story {args.story}"); return
+        detail = ghc.pr(repo, args.pr)
+        spec_files = _spec_files_for_pr(ghc, repo, detail, args.pr)
+        art = surface_mod.author_spec_review(cfg, args.story, args.pr, detail, spec_files)
+        surface_mod.open_session(cfg, art, "spec_review", log, story=args.story,
+                                 pr=args.pr, repo=repo,
+                                 sha=(detail.get("head") or {}).get("sha") or "")
+        return
     if args.action == "notify":
         if not (args.story and args.text):
             print("notify needs --story and --text"); return
@@ -1029,7 +1102,7 @@ def main():
     p = sub.add_parser("messages", help="driver: list unanswered questions")
     p.add_argument("--story")
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
-    p.add_argument("action", choices=["list", "hold", "notify", "collect"])
+    p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect"])
     p.add_argument("--story")
     p.add_argument("--pr", type=int)
     p.add_argument("--title", dest="s_title")
