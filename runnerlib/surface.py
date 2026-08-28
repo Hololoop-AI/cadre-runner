@@ -378,8 +378,27 @@ def _ensure_server(cfg, sess: dict, log) -> None:
         log(f"surface: server relaunch failed: {e}")
 
 
+def _sweep_stale(cfg, log) -> None:
+    """Close sessions that can no longer be acted on: artifact file deleted,
+    or an ask whose ticket is already answered/gone (a CLI answer must retire
+    the surface twin, or the driver is shown a dead question — observed)."""
+    from . import messages
+    sess = sessions(cfg)
+    for path, meta in list(sess.items()):
+        if not meta.get("open"):
+            continue
+        stale = not Path(path).exists()
+        if not stale and meta.get("kind") == "ask" and meta.get("ticket"):
+            m = messages.get(cfg.data_dir, meta["ticket"])
+            stale = m is None or m.get("answer") is not None
+        if stale:
+            end_session(cfg, path, log)
+            board_events.emit("surface_closed", artifact=path, by="sweep")
+
+
 def _tick(cfg, reg, ghc, log) -> None:
     from . import messages
+    _sweep_stale(cfg, log)
     sess = sessions(cfg)
     _ensure_server(cfg, sess, log)
 
