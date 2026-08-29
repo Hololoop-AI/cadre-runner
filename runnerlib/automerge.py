@@ -81,13 +81,14 @@ def decide(role: str, pr_detail: dict, checks: list, policy: dict,
     if unfinished:
         return False, f"checks still running ({unfinished[0].get('name')})"
     failed = [c for c in checks if c.get("conclusion") not in ("success", "neutral", "skipped")]
-    if failed and role == "tests":
+    if failed and role == "tests" and RISK_RE.search(pr_detail.get("body") or ""):
         # A tests PR is red BY DESIGN: it locks failing tests for unbuilt
         # behavior, and the tests prompt prices that into this merge decision
         # ("feature CI shows these tests red until the slice's build merges").
-        # Tolerate the test-suite check alone; any OTHER failing check (lint,
-        # types, build) still blocks — red tests are the point, a broken tree
-        # is not.
+        # Priced-in requires a pricer: only a PR whose reviewer emitted a Risk
+        # line gets the tolerance, and only for the test-suite check — any
+        # OTHER failing check (lint, types, build) still blocks. Legacy PRs
+        # with no Risk line keep the old conservative block.
         failed = [c for c in failed if c.get("name") != "test"]
     if failed:
         return False, f"check failed ({failed[0].get('name')}: {failed[0].get('conclusion')})"

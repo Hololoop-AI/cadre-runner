@@ -63,5 +63,14 @@ assert not decide("build", pr("Risk: low — x", labels=["hold"]), GREEN, POLICY
 assert not decide("build", pr("Risk: low — x"), GREEN, POLICY, True)[0]   # human last word
 # no risk line: legacy confidence behavior, unchanged (asserted above throughout)
 assert decide("build", pr("no lines here"), GREEN, POLICY, False)[0]
+# -- red-by-design tests PRs (unified spec, 2026-08-29) -----------------------
+# a risk-priced tests PR merges through its own red suite...
+assert decide("tests", pr("Risk: low — red until build, priced in"), RED, POLICY, False)[0]
+# ...but a legacy tests PR (no risk line) stays blocked (asserted at top too),
+# a red NON-test check still blocks even with the risk line...
+RED_LINT = [{"name": "lint", "status": "completed", "conclusion": "failure"}] + GREEN
+assert not decide("tests", pr("Risk: low — x"), RED_LINT, POLICY, False)[0]
+# ...and build PRs get no tolerance at all
+assert not decide("build", pr("Risk: low — x"), RED, POLICY, False)[0]
 
 print("automerge policy tests: all passed")
