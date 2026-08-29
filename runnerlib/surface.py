@@ -483,6 +483,10 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
     if item["type"] == "decision" and item["gate"] in ("risk_hold", "spec_review"):
         slug, pr = item["story"], item["pr"]
         story = reg.stories().get(slug) or {}
+        if item["gate"] == "spec_review" and story.get("planning_pr"):
+            # The spec gate targets THE planning PR; a session-substituted
+            # number in the form can be stale after a re-plan.
+            pr = int(story["planning_pr"])
         repo = story.get("repo") or meta.get("repo")
         if not repo:
             log(f"surface: no repo known for {slug} — decision dropped")

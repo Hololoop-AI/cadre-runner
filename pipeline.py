@@ -384,6 +384,17 @@ def _ensure_spec_surface(cfg, reg, ghc, slug, story):
     for num_s, p in list(story.get("prs_cache", {}).items()):
         if p.get("role") != "planning" or p.get("state") != "open":
             continue
+        # Session-authored briefing wins outright: the spec session wrote its
+        # own review surface (stable path, live-reloads on revise rewrites).
+        authored = surface_mod._dir(cfg) / f"spec-{slug}.html"
+        if authored.exists():
+            asess = surface_mod.sessions(cfg).get(str(authored))
+            if not (asess and asess.get("open")):
+                surface_mod.open_session(cfg, authored, "spec_review", log,
+                                         story=slug, pr=int(num_s),
+                                         repo=story["repo"])
+            continue
+        # Fallback: daemon-templated rendering (legacy planning PRs only).
         art = surface_mod._dir(cfg) / f"spec-{slug}-pr{num_s}.html"
         sess = surface_mod.sessions(cfg).get(str(art))
         try:
@@ -439,18 +450,9 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                                   status="awaiting-review",
                                   url=f"https://github.com/{story['repo']}/pull/{num_s}")
                 log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
-                # Surface as driver channel (2026-08-26): the hold becomes an
-                # artifact the driver decides on; GitHub merge stays live too.
-                if surface_mod.available():
-                    try:
-                        pr_files = ghc.get(f"/repos/{story['repo']}/pulls/{num_s}/files")
-                    except Exception:
-                        pr_files = None
-                    art = surface_mod.author_risk_hold(cfg, slug, int(num_s), detail,
-                                                       p["role"], files=pr_files)
-                    surface_mod.open_session(cfg, art, "risk_hold", log,
-                                             story=slug, pr=int(num_s),
-                                             repo=story["repo"])
+                # 2026-08-27 driver decision: review surfaces exist ONLY at
+                # the spec gate. A risk hold stays a board event + a held PR
+                # the driver acts on in GitHub (or `surface hold` manually).
             elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
                 # once per PR: a silent block here would be an invisible wedge
                 reg.mark_seen(story, "title_lint", int(num_s))
@@ -517,6 +519,11 @@ def _execute(cfg, reg, ghc, slug, story, action, event, open_prs):
         return
     if kind == "post_status":
         _post_status(cfg, ghc, slug, story, open_prs)
+        return
+    if kind == "phase_slices":
+        story["phase"] = "slices"
+        log(f"{slug}: spec approved (contract-less flow) — phase -> slices; "
+            f"tests dispatch from the manifest")
         return
     if kind == "story_done":
         story["status"] = "done"
@@ -588,9 +595,16 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                          cfg.effort_for(stage), cfg.claude["permission_mode"],
                          cfg.claude["timeout_seconds"], run_dir, session_id=session_id,
                          # identity for `pipeline.py ask` — links a question to
-                         # this session so an answer can revive it after exit
+                         # this session so an answer can revive it after exit.
+                         # Spec-shaping stages also get the surface out-path:
+                         # the SESSION authors the driver's review briefing
+                         # (2026-08-27 driver feedback — never a PR copy).
                          extra_env={"CADRE_STORY": slug, "CADRE_STAGE": stage,
-                                    "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid})
+                                    "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid,
+                                    **({"CADRE_SURFACE_OUT":
+                                        str(surface_mod._dir(cfg) / f"spec-{slug}.html")}
+                                       if stage in ("intake", "interrogate", "revise")
+                                       else {})})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),

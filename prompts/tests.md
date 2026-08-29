@@ -1,9 +1,9 @@
 # Stage: Tests (S3) — slice `$slice` — its Contract PR merged
 
-The driver merged slice `$slice`'s Contract PR: the contract is locked. Translate it into executable red tests.
+The driver approved the spec: slice `$slice`'s contract is locked with it (unified spec — contracts live inside the approved spec documents, there is no separate contract PR). Translate the contract into executable red tests.
 
 0. Workflow binding: `$workflows_dir` — when non-empty, auto-test-writer's workflow-backed authoring applies (its section -1); include the resulting `Confidence:` line in the Tests PR body.
-1. You are on a clean `$feature_branch`. Read the merged contract for `$slice` (variant layout: `changes/$story_slug/contracts/$slice.md` or `spec/$slice.md`). Branch `$tests_branch` off `$feature_branch`.
+1. You are on a clean `$feature_branch`. Read the locked contract for `$slice` — it lives in the approved spec: the `## Contract` section for this slice in `changes/$story_slug/change-spec.md`, or `changes/$story_slug/contracts/$slice.md`, or legacy `spec/$slice.md`. Branch `$tests_branch` off `$feature_branch`.
 2. Invoke the **auto-test-writer** skill: integration tests per the contract, AAA structure, one test per contract case. Run each test and confirm it **fails for the right reason** (missing behavior — not import errors or typos). Capture the failure output.
 2a. If a `<language>-quality` skill exists for the implementation language (python-quality, rust-quality), invoke it — test code is held to the same bar as implementation code.
 

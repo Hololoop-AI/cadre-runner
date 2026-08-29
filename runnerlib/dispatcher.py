@@ -50,6 +50,15 @@ def dispatch(story: dict, event: dict, limits: dict) -> dict:
             if current and int(event["pr"]) != int(current):
                 return _noop(f"merge of superseded planning PR #{event['pr']} "
                              f"(current plan is #{current})")
+            # Unified spec (2026-08-26): when no slice's flow carries a
+            # contract node, the approved spec IS the contract — flip the
+            # phase and let ready_actions fire tests per slice. The separate
+            # contracts stage remains only for legacy manifests that ask.
+            plan = story.get("plan_slices")
+            if plan and not any(
+                    "contract" in (s.get("nodes") or ["contract", "tests", "build"])
+                    for s in plan):
+                return {"type": "phase_slices", "pr": event["pr"]}
             return {"type": "run_stage", "stage": "contracts", "slice": None, "pr": event["pr"]}
         if role == "final":
             # the human merged the story PR — the act that ships it
