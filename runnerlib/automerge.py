@@ -81,6 +81,14 @@ def decide(role: str, pr_detail: dict, checks: list, policy: dict,
     if unfinished:
         return False, f"checks still running ({unfinished[0].get('name')})"
     failed = [c for c in checks if c.get("conclusion") not in ("success", "neutral", "skipped")]
+    if failed and role == "tests":
+        # A tests PR is red BY DESIGN: it locks failing tests for unbuilt
+        # behavior, and the tests prompt prices that into this merge decision
+        # ("feature CI shows these tests red until the slice's build merges").
+        # Tolerate the test-suite check alone; any OTHER failing check (lint,
+        # types, build) still blocks — red tests are the point, a broken tree
+        # is not.
+        failed = [c for c in failed if c.get("name") != "test"]
     if failed:
         return False, f"check failed ({failed[0].get('name')}: {failed[0].get('conclusion')})"
 
