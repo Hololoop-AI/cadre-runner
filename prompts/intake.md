@@ -40,9 +40,17 @@ give them what the diff cannot:
 
 - what the story asks and how you understood it (2-3 sentences)
 - the shape of your solution: the slices, why you cut them there, what depends on what
-- the architecture: where the change lives in the codebase, what it touches, one
-  Mermaid diagram in a `<div class="mermaid">` block if structure matters
-- each slice: one paragraph of intent + its contract's essence (what proves it done)
+- **the architecture, drawn** (required): one Mermaid diagram in a
+  `<div class="mermaid">` block showing where the change lands — the affected
+  files/modules and how the touched parts relate, new pieces visually distinct
+  from modified ones. Loose by design: caption it as the expected footprint,
+  NOT a lock — builds may land differently and that is fine (only the spec
+  prose and contracts lock at approval). No pseudocode, no function-level
+  detail; this is the map the driver glances at to see the blast radius.
+- each slice: one paragraph of intent + **its full test contract, shown** —
+  render the contract (or embed it in a collapsed `<details>`) so the driver
+  can review it on the surface without opening the spec files; name the
+  slice's flow (its `nodes`) beside it
 - what you were unsure about: decisions you made that the driver might make
   differently, ranked — these are the things worth annotating
 - what your self-interrogation killed or changed
