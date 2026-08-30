@@ -151,6 +151,7 @@ function render(s) {
     const surfRows = (st.surfaces || []).map(sf => {
       const label = sf.kind === "risk_hold" ? `⚠ decide: risk hold PR #${esc(sf.pr)}`
                   : sf.kind === "spec_review" ? `▤ review spec (PR #${esc(sf.pr)})`
+                  : sf.kind === "final_review" ? `✓ ship it? final review`
                   : sf.kind === "ask" ? `? answer: ${esc(sf.ticket || "question")}`
                   : `◈ ${esc(sf.kind || "surface")}`;
       return sf.path

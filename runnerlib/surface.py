@@ -418,16 +418,23 @@ def _ensure_server(cfg, sess: dict, log) -> None:
         log(f"surface: server relaunch failed: {e}")
 
 
-def _sweep_stale(cfg, log) -> None:
+def _sweep_stale(cfg, reg, log) -> None:
     """Close sessions that can no longer be acted on: artifact file deleted,
-    or an ask whose ticket is already answered/gone (a CLI answer must retire
-    the surface twin, or the driver is shown a dead question — observed)."""
+    an ask whose ticket is already answered/gone (a CLI answer must retire
+    the surface twin, or the driver is shown a dead question — observed), or
+    any session on a story that is no longer active (shipped/escalated)."""
     from . import messages
     sess = sessions(cfg)
+    # reg.stories() filters to active — the whole point here is seeing the
+    # NON-active ones, so read the raw table.
+    stories = (reg.data.get("stories") or {}) if reg is not None else {}
     for path, meta in list(sess.items()):
         if not meta.get("open"):
             continue
         stale = not Path(path).exists()
+        if not stale and meta.get("story"):
+            st = stories.get(meta["story"])
+            stale = st is not None and st.get("status") != "active"
         if not stale and meta.get("kind") == "ask" and meta.get("ticket"):
             m = messages.get(cfg.data_dir, meta["ticket"])
             stale = m is None or m.get("answer") is not None
@@ -438,7 +445,7 @@ def _sweep_stale(cfg, log) -> None:
 
 def _tick(cfg, reg, ghc, log) -> None:
     from . import messages
-    _sweep_stale(cfg, log)
+    _sweep_stale(cfg, reg, log)
     sess = sessions(cfg)
     _ensure_server(cfg, sess, log)
 
@@ -480,13 +487,21 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
         log(f"surface: answer recorded for {item['ticket']}")
         end_session(cfg, path, log)
         return
-    if item["type"] == "decision" and item["gate"] in ("risk_hold", "spec_review"):
+    if item["type"] == "decision" and item["gate"] in ("risk_hold", "spec_review",
+                                                       "final_review"):
         slug, pr = item["story"], item["pr"]
         story = reg.stories().get(slug) or {}
         if item["gate"] == "spec_review" and story.get("planning_pr"):
             # The spec gate targets THE planning PR; a session-substituted
             # number in the form can be stale after a re-plan.
             pr = int(story["planning_pr"])
+        if item["gate"] == "final_review":
+            # Same trust rule: the open final PR from the store beats the
+            # session-substituted number.
+            finals = [int(n) for n, p in (story.get("prs_cache") or {}).items()
+                      if p.get("role") == "final" and p.get("state") == "open"]
+            if finals:
+                pr = finals[0]
         repo = story.get("repo") or meta.get("repo")
         if not repo:
             log(f"surface: no repo known for {slug} — decision dropped")
@@ -519,7 +534,8 @@ def reconcile_merged_holds(cfg, reg, log) -> None:
     surface session sat open -> close the session (first event won there)."""
     sess = sessions(cfg)
     for path, meta in list(sess.items()):
-        if not meta.get("open") or meta.get("kind") not in ("risk_hold", "spec_review"):
+        if not meta.get("open") or meta.get("kind") not in ("risk_hold", "spec_review",
+                                                            "final_review"):
             continue
         slug = meta.get("story")
         story = reg.stories().get(slug) if slug else None

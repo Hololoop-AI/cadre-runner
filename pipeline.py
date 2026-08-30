@@ -604,7 +604,9 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                                     **({"CADRE_SURFACE_OUT":
                                         str(surface_mod._dir(cfg) / f"spec-{slug}.html")}
                                        if stage in ("intake", "interrogate", "revise")
-                                       else {})})
+                                       else {"CADRE_SURFACE_OUT":
+                                             str(surface_mod._dir(cfg) / f"final-{slug}.html")}
+                                       if stage == "assembly" else {})})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
@@ -722,6 +724,12 @@ def _reap_runs(cfg, reg, ghc, slug, story):
             # ok -> awaiting the human merge of the final PR; fail -> parked for
             # a manual re-trigger (pipeline.py trigger --stage assembly)
             story["phase"] = "final-review" if ok else "assembly-pending"
+            # Final review is the second legitimate surface (driver decision
+            # 2026-08-30): the assembly session authored its own briefing.
+            final_art = surface_mod._dir(cfg) / f"final-{slug}.html"
+            if ok and surface_mod.available() and final_art.exists():
+                surface_mod.open_session(cfg, final_art, "final_review", log,
+                                         story=slug, repo=story["repo"])
         if not ok:
             _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
                                  f"Re-summon with @claude after checking. {AGENT_MARKER}")

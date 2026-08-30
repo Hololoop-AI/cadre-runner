@@ -8,5 +8,32 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
 4. **Review aids** — invoke the **pr-walkthrough** skill against the combined change (head `$feature_branch`, base `$default_branch`). Commit `study/$story_slug/walkthrough.md` on `$feature_branch` — GitHub-flavored markdown, which renders where the reviewer already is. Produce only that: interactive HTML and flashcard decks need a host to be usable, and until one exists they cost tokens for a file nobody can open. Push.
 5. **Final PR** — open `$feature_branch` → `$default_branch`, title "[story] $story_id: $story_title". Body per artifact-voice — orient first (what this story is and why, from the planning artifact), then: slice list with one-liners, a link to `study/$story_slug/walkthrough.md`, the spec-review verdict, the full-suite result. Merging this PR ships the story; it is the one PR written for human readers.
 6. Comment on tracking issue #$tracking_issue: assembly done, link the final PR.
+7. **Final-review surface** — the driver reviews on a Review Surface artifact,
+   not the PR diff (GitHub stays available; the surface is primary). Write a
+   self-contained HTML page to the exact path in `$CADRE_SURFACE_OUT` (skip if
+   that env var is empty). This is YOUR briefing from full context, never a
+   diff copy:
+   - what shipped, in the story's own terms (2-3 sentences)
+   - per slice: what it does now and how the locked tests prove it
+   - what changed between plan and build: deviations, refactors, anything the
+     spec reader would not expect
+   - the spec-review verdict and any findings, plain
+   - what you would look at first if something breaks — ranked residual risks
+   Style: dark self-painted page (`background:#0f1115; color:#f7f3ea`), plain
+   semantic HTML, no double quotes inside attribute values. End with EXACTLY
+   this verdict form, substituting `<PR>` with the final PR number (twice) and
+   `<SLUG>` with `$story_slug` (once):
 
-Never merge the final PR — that is the human act that ships the story.
+```html
+<form data-review-surface-question="verdict" onsubmit="event.preventDefault();
+  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
+  window.reviewSurface.queuePrompt('CADRE_DECISION gate=final_review story=<SLUG> pr=<PR> verdict='+v,
+    {tag:'choice', text:'Final verdict: '+v, element:event.currentTarget,
+     data:{gate:'final_review', story:'<SLUG>', pr:<PR>, verdict:v}});">
+<label><input type="radio" name="verdict" value="approve"> Approve — ship the story</label>
+<label><input type="radio" name="verdict" value="revise"> Revise — send my annotations back</label>
+<button type="submit">Queue verdict</button></form>
+```
+
+Never merge the final PR yourself — approval on the surface, or the driver's
+GitHub merge, is the human act that ships the story.
