@@ -15,6 +15,14 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
    diff copy:
    - what shipped, in the story's own terms (2-3 sentences)
    - per slice: what it does now and how the locked tests prove it
+   - **the code itself, curated**: the surface must be sufficient to review
+     WITHOUT opening GitHub. Embed the hotspots — the handful of hunks a
+     reviewer would actually scrutinize (new public surfaces, the trickiest
+     logic, anything security- or data-touching) — as `<pre>` snippets with
+     file:line captions and one sentence each on WHY it is written that way.
+     Skim-level code (boilerplate, mechanical edits) gets a one-line mention,
+     not a snippet. Every snippet is annotatable; a GitHub link per file is
+     the escape hatch, not the venue.
    - what changed between plan and build: deviations, refactors, anything the
      spec reader would not expect
    - the spec-review verdict and any findings, plain
