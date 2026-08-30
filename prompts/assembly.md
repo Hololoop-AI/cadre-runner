@@ -17,9 +17,15 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
    works, name what might still be wrong. The driver approves a working
    solution to the story, not a diff:
    - the story's problems restated, and per problem the demonstration that
-     it is now solved: the actual behavior — real command output from
-     exercising the story's own scenario, before/after where that reads
-     clearly — with the passing locked tests as standing evidence
+     it is now solved: the actual behavior, in the modality the change is
+     experienced in. CLI/daemon → real command transcripts of the story's own
+     scenario; UI → screenshots (drive the app headless, capture, save the
+     PNGs beside the artifact and reference them by relative filename — the
+     surface serves sibling files); API/service → request/response
+     transcripts; data/pipeline → small before/after samples; bug fix → the
+     repro failing before and passing after; performance → measured
+     numbers, both sides. The passing locked tests are standing evidence
+     under all of it. Never describe behavior you could show.
    - what shipped, in the story's own terms (2-3 sentences)
    - per slice: what it does now and how the locked tests prove it
    - **the code itself, curated**: the surface must be sufficient to review
