@@ -54,10 +54,25 @@ class Registry:
             self.data = {"stories": {}}
 
     def save(self):
+        """Merge-safe write: stories on disk that this instance has never seen
+        survive (a `start` CLI registering mid-daemon-pass was erased by the
+        daemon's whole-file save — observed twice). Memory wins per-slug;
+        deleting a story therefore requires the daemon stopped, which is
+        already the surgery rule. flock serializes concurrent read-merge-write."""
+        import fcntl
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=2))
-        tmp.replace(self.path)
+        lock = self.path.with_suffix(".lock")
+        with open(lock, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = json.loads(self.path.read_text()).get("stories", {})
+            except (FileNotFoundError, json.JSONDecodeError):
+                disk = {}
+            merged = {**disk, **self.data["stories"]}
+            self.data["stories"] = merged
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data, indent=2))
+            tmp.replace(self.path)
 
     def add_story(self, slug: str, repo: str, story_id: str, title: str, variant: str):
         self.data["stories"][slug] = {
