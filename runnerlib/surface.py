@@ -434,7 +434,17 @@ def _sweep_stale(cfg, reg, log) -> None:
         stale = not Path(path).exists()
         if not stale and meta.get("story"):
             st = stories.get(meta["story"])
-            stale = st is not None and st.get("status") != "active"
+            if st is None:
+                stale = True  # story record deleted (reset/re-plan)
+            elif st.get("status") != "active":
+                stale = True
+            elif (meta.get("kind") == "spec_review" and meta.get("pr")
+                  and st.get("planning_pr")
+                  and int(meta["pr"]) != int(st["planning_pr"])):
+                # A re-planned story has a NEW planning PR; a surface pinned
+                # to the superseded one is a zombie (observed: the driver
+                # reviewed a closed PR's plan).
+                stale = True
         if not stale and meta.get("kind") == "ask" and meta.get("ticket"):
             m = messages.get(cfg.data_dir, meta["ticket"])
             stale = m is None or m.get("answer") is not None
