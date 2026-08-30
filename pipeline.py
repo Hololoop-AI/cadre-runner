@@ -746,9 +746,12 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         elif stage == "risk-triage" and ok:
             # The triage agent either re-graded (no surface — the hold is
             # resolved and auto-merge proceeds on its grade) or authored the
-            # decision brief; open the latter if it exists.
+            # decision brief. Open it ONLY if this run wrote it: a stale
+            # artifact from an earlier manual hold predates the run and must
+            # not resurface (observed: re-opened a template for a merged PR).
             hold_art = surface_mod._dir(cfg) / f"hold-{slug}-pr{pr}.html"
-            if surface_mod.available() and hold_art.exists():
+            if (surface_mod.available() and hold_art.exists()
+                    and hold_art.stat().st_mtime >= run["started"]):
                 surface_mod.open_session(cfg, hold_art, "risk_hold", log,
                                          story=slug, pr=pr, repo=story["repo"])
         if not ok:
