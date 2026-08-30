@@ -450,9 +450,19 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                                   status="awaiting-review",
                                   url=f"https://github.com/{story['repo']}/pull/{num_s}")
                 log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
-                # 2026-08-27 driver decision: review surfaces exist ONLY at
-                # the spec gate. A risk hold stays a board event + a held PR
-                # the driver acts on in GitHub (or `surface hold` manually).
+                # Risk triage (driver decision 2026-08-30): a hold spawns a
+                # second independent assessor that audits the grade — it may
+                # re-grade a mechanical over-flag (justified, on the PR) or
+                # author the decision surface for the driver. Every Cadre →
+                # driver communication rides the surface; GitHub mirrors.
+                try:
+                    _run_stage(cfg, reg, ghc, slug, story,
+                               {"type": "run_stage", "stage": "risk-triage",
+                                "slice": p.get("slice"), "pr": int(num_s)})
+                except runs_mod.RunsBusy:
+                    log(f"{slug}: risk-triage deferred for PR #{num_s} (run cap); use `surface hold` if urgent")
+                except Exception as e:
+                    log(f"{slug}: risk-triage spawn failed for PR #{num_s}: {e}")
             elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
                 # once per PR: a silent block here would be an invisible wedge
                 reg.mark_seen(story, "title_lint", int(num_s))
@@ -606,7 +616,10 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                                        if stage in ("intake", "interrogate", "revise")
                                        else {"CADRE_SURFACE_OUT":
                                              str(surface_mod._dir(cfg) / f"final-{slug}.html")}
-                                       if stage == "assembly" else {})})
+                                       if stage == "assembly"
+                                       else {"CADRE_SURFACE_OUT":
+                                             str(surface_mod._dir(cfg) / f"hold-{slug}-pr{pr}.html")}
+                                       if stage == "risk-triage" else {})})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
@@ -730,6 +743,14 @@ def _reap_runs(cfg, reg, ghc, slug, story):
             if ok and surface_mod.available() and final_art.exists():
                 surface_mod.open_session(cfg, final_art, "final_review", log,
                                          story=slug, repo=story["repo"])
+        elif stage == "risk-triage" and ok:
+            # The triage agent either re-graded (no surface — the hold is
+            # resolved and auto-merge proceeds on its grade) or authored the
+            # decision brief; open the latter if it exists.
+            hold_art = surface_mod._dir(cfg) / f"hold-{slug}-pr{pr}.html"
+            if surface_mod.available() and hold_art.exists():
+                surface_mod.open_session(cfg, hold_art, "risk_hold", log,
+                                         story=slug, pr=pr, repo=story["repo"])
         if not ok:
             _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
                                  f"Re-summon with @claude after checking. {AGENT_MARKER}")
@@ -1103,7 +1124,7 @@ def main():
     sub.add_parser("board-check", help="validate board-intake config against the live tracker")
     p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
     p.add_argument("--story", required=True)
-    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise", "assembly"])
+    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise", "assembly", "risk-triage"])
     p.add_argument("--slice")
     p.add_argument("--pr", type=int)
     p.add_argument("--role")
