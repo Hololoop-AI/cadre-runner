@@ -95,15 +95,17 @@ class GitHub:
 
     # -- endpoints -----------------------------------------------------------
 
-    def pulls(self, repo: str, base: str = None, head: str = None):
+    def pulls(self, repo: str, base: str = None, head: str = None, etag: bool = True):
         """All PRs (open + closed) targeting `base` or from `head`
-        ("owner:branch"). One ETag'd call per story per filter."""
+        ("owner:branch"). One ETag'd call per story per filter; pass
+        etag=False to force a full fetch (a consumer with no cache to fall
+        back on gets nothing useful from a 304)."""
         params = {"state": "all", "per_page": 100, "sort": "updated", "direction": "desc"}
         if base:
             params["base"] = base
         if head:
             params["head"] = head
-        return self.get(f"/repos/{repo}/pulls", params, etag=True)
+        return self.get(f"/repos/{repo}/pulls", params, etag=etag)
 
     def issue_comments_since(self, repo: str, since: str):
         """Repo-wide issue comments (includes PR conversation comments)."""

@@ -37,13 +37,20 @@ def collect_events(ghc, reg, slug: str, story: dict) -> tuple[list[dict], int]:
     events: list[dict] = []
 
     # --- 1. PR structure: one ETag'd list call covers every stage PR ----------
-    pulls = ghc.pulls(repo, base=story["feature_branch"])
+    # A story record with NO cache yet (fresh registration, or a re-registered
+    # story inheriting another record's etags for the same URLs) cannot use a
+    # 304 — it would reconstruct from nothing, forever (observed on the
+    # nex-162 re-plan). Force the full fetch once.
+    use_etag = "prs_cache" in story
+    pulls = ghc.pulls(repo, base=story["feature_branch"], etag=use_etag)
     # The FINAL story PR rides the feature branch itself (feat/... -> main), so
     # the base-filtered call never sees it — without this, teammate @claude
     # summons on the one PR humans actually review are silently unroutable.
-    finals = ghc.pulls(repo, head=f"{repo.split('/')[0]}:{story['feature_branch']}")
+    finals = ghc.pulls(repo, head=f"{repo.split('/')[0]}:{story['feature_branch']}",
+                       etag=use_etag)
     if pulls is NOT_MODIFIED and finals is NOT_MODIFIED:
         prs = story.get("prs_cache", {})
+        story["prs_cache"] = prs  # write-through so a fresh record still gains the key
     else:
         cached = story.get("prs_cache", {})
         prs = {}
