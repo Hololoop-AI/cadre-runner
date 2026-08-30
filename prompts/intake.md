@@ -40,13 +40,17 @@ give them what the diff cannot:
 
 - what the story asks and how you understood it (2-3 sentences)
 - the shape of your solution: the slices, why you cut them there, what depends on what
-- **the architecture, drawn** (required): one Mermaid diagram in a
-  `<div class="mermaid">` block showing where the change lands — the affected
-  files/modules and how the touched parts relate, new pieces visually distinct
-  from modified ones. Loose by design: caption it as the expected footprint,
-  NOT a lock — builds may land differently and that is fine (only the spec
-  prose and contracts lock at approval). No pseudocode, no function-level
-  detail; this is the map the driver glances at to see the blast radius.
+- **the footprint, as a file tree** (required): an annotated tree of the
+  repo areas this change touches — `<pre>` block, real paths, one short
+  annotation per entry, new files marked distinctly from modified ones
+  (e.g. `+ runner/provenance.py   new — loader + predicate` vs
+  `~ runner/dispatch.py          gate after actor_allowed`). Untouched areas
+  collapse to a bare directory line. Loose by design: caption it as the
+  expected footprint, NOT a lock — builds may land differently and that is
+  fine (only the spec prose and contracts lock at approval). No pseudocode.
+  This is the map the driver glances at to see the blast radius; a Mermaid
+  diagram is the wrong tool here (that belongs to true system-architecture
+  views, which live upstream in the context repo).
 - each slice: one paragraph of intent + **its full test contract, shown** —
   render the contract (or embed it in a collapsed `<details>`) so the driver
   can review it on the surface without opening the spec files; name the
