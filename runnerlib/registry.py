@@ -98,11 +98,16 @@ class Registry:
         return self.data["stories"][slug]
 
     def seen(self, story: dict, kind: str, item_id: int) -> bool:
-        return item_id in story["seen"][kind]
+        # setdefault twice over: event kinds grow over time (risk_hold,
+        # title_lint...) and older/re-registered records lack them — a missing
+        # kind is "never seen", not a crash (KeyError wedged nex-162's
+        # risk hold for hours).
+        return item_id in story.setdefault("seen", {}).setdefault(kind, [])
 
     def mark_seen(self, story: dict, kind: str, item_id: int):
-        if item_id not in story["seen"][kind]:
-            story["seen"][kind].append(item_id)
+        bucket = story.setdefault("seen", {}).setdefault(kind, [])
+        if item_id not in bucket:
+            bucket.append(item_id)
 
     def slice_rec(self, story: dict, name: str) -> dict:
         return story["slices"].setdefault(name, {

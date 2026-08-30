@@ -12,7 +12,14 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
    not the PR diff (GitHub stays available; the surface is primary). Write a
    self-contained HTML page to the exact path in `$CADRE_SURFACE_OUT` (skip if
    that env var is empty). This is YOUR briefing from full context, never a
-   diff copy:
+   diff copy — and its stance is a DEMONSTRATION: you are the engineer
+   showing the boss a finished assignment. Prove it works, explain why it
+   works, name what might still be wrong. The driver approves a working
+   solution to the story, not a diff:
+   - the story's problems restated, and per problem the demonstration that
+     it is now solved: the actual behavior — real command output from
+     exercising the story's own scenario, before/after where that reads
+     clearly — with the passing locked tests as standing evidence
    - what shipped, in the story's own terms (2-3 sentences)
    - per slice: what it does now and how the locked tests prove it
    - **the code itself, curated**: the surface must be sufficient to review
