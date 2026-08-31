@@ -48,10 +48,18 @@ def classify_branch(head: str, slug: str):
 class Registry:
     def __init__(self, path: Path):
         self.path = path
+        self._deleted: set[str] = set()
         try:
             self.data = json.loads(path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
             self.data = {"stories": {}}
+
+    def delete_story(self, slug: str) -> bool:
+        """The only way to remove a story: the merge-safe save resurrects
+        mere absence from disk (observed — a popped story came back), so
+        deletion is recorded and enforced at save time."""
+        self._deleted.add(slug)
+        return self.data["stories"].pop(slug, None) is not None
 
     def save(self):
         """Merge-safe write: stories on disk that this instance has never seen
@@ -69,6 +77,8 @@ class Registry:
             except (FileNotFoundError, json.JSONDecodeError):
                 disk = {}
             merged = {**disk, **self.data["stories"]}
+            for slug in self._deleted:
+                merged.pop(slug, None)
             self.data["stories"] = merged
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(self.data, indent=2))
