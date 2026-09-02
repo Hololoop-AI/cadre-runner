@@ -37,10 +37,13 @@ def install_page(cfg) -> None:
     """Copy the page asset next to status.json as index.html (refreshed each
     daemon start, so page updates deploy with a daemon restart)."""
     try:
-        src = Path(__file__).resolve().parent.parent / "status.html"
+        root = Path(__file__).resolve().parent.parent
         d = status_dir(cfg)
         d.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, d / "index.html")
+        shutil.copy2(root / "status.html", d / "index.html")
+        # The surface theme: agents write content; this ONE file owns design.
+        # Served as /surface-theme.css by statusd for every surface artifact.
+        shutil.copy2(root / "surface-theme.css", d / "surface-theme.css")
     except Exception:
         pass
 

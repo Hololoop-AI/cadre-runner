@@ -60,16 +60,20 @@ make well yourself, phrased so someone with no memory of the codebase can rule
 on it in one read. Whatever comes back goes on the PR too — the message is how
 you reached the driver, the PR is still the record.
 
-## The surface palette (any artifact written to $CADRE_SURFACE_OUT)
+## Surface artifacts: you write CONTENT, the platform owns design
 
-Use EXACTLY these colors — the driver reads many surfaces a day and they must
-read as one product, not one improvisation per session:
+Any artifact written to $CADRE_SURFACE_OUT is semantic content poured into
+pre-built sections — you do NOT design it. The platform themes it.
 
-- page `#0f1115` · panel `#12161e` · border `#2a2e36`
-- text `#f7f3ea` · muted `#9aa4b2` · labels `#8c96aa`
-- accent `#8fc7ff` (chips, labels, links — sparingly)
-- success `#8fe0a8` · danger `#ff8f8f` · code on `#0b0e13`
-
-Plain semantic HTML, generous line-height, max-width around 72ch for prose.
-**Never yellow, orange, or amber anywhere — not for text, chips, or borders.**
-No other hues beyond this list. No double quotes inside attribute values.
+- First line of <head>-equivalent: `<link rel="stylesheet" href="/surface-theme.css">`
+  (root-relative; the Cadre page server provides it).
+- Build from these blocks only, with plain semantic HTML inside:
+  `<section>` with an `<h2>` title · prose `<p>`/`<ul>` · `<table>` ·
+  `<pre>` for code/transcripts/file-trees (`<pre class="code">` for code) ·
+  `<div class="mermaid">` for diagrams/whiteboards · `<details><summary>` for
+  collapsed depth · `<span class="chip">` for small labels · the verdict
+  `<form>` exactly as given in your stage instructions.
+- NO `<style>` blocks, NO inline `style=` attributes, NO colors, NO fonts.
+  If you are choosing a hex value, you are doing the platform's job.
+- Structure and words are your whole surface: section order, table design,
+  what goes in a diagram, what collapses — that is where your judgment goes.
