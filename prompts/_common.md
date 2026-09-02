@@ -59,3 +59,17 @@ Ask sparingly. The bar is the same as any driver call: a decision you cannot
 make well yourself, phrased so someone with no memory of the codebase can rule
 on it in one read. Whatever comes back goes on the PR too — the message is how
 you reached the driver, the PR is still the record.
+
+## The surface palette (any artifact written to $CADRE_SURFACE_OUT)
+
+Use EXACTLY these colors — the driver reads many surfaces a day and they must
+read as one product, not one improvisation per session:
+
+- page `#0f1115` · panel `#12161e` · border `#2a2e36`
+- text `#f7f3ea` · muted `#9aa4b2` · labels `#8c96aa`
+- accent `#8fc7ff` (chips, labels, links — sparingly)
+- success `#8fe0a8` · danger `#ff8f8f` · code on `#0b0e13`
+
+Plain semantic HTML, generous line-height, max-width around 72ch for prose.
+**Never yellow, orange, or amber anywhere — not for text, chips, or borders.**
+No other hues beyond this list. No double quotes inside attribute values.

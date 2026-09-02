@@ -36,7 +36,7 @@ assessor with the whole story's context. Your job, in order of preference:
    - the alternatives you considered (including any de-risk proposal from
      step 3) and why they do or do not resolve it
    - your recommendation, stated plainly
-   Style: dark self-painted page (`background:#0f1115; color:#f7f3ea`), plain
+   Style: the surface palette (common rules above), exactly — plain
    semantic HTML, no double quotes inside attribute values. End with EXACTLY
    this verdict form, substituting `<PR>` with $pr (twice) and `<SLUG>` with
    `$story_slug` (once):

@@ -40,7 +40,7 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
      spec reader would not expect
    - the spec-review verdict and any findings, plain
    - what you would look at first if something breaks — ranked residual risks
-   Style: dark self-painted page (`background:#0f1115; color:#f7f3ea`), plain
+   Style: the surface palette (common rules above), exactly — plain
    semantic HTML, no double quotes inside attribute values. End with EXACTLY
    this verdict form, substituting `<PR>` with the final PR number (twice) and
    `<SLUG>` with `$story_slug` (once):

@@ -59,7 +59,7 @@ give them what the diff cannot:
   differently, ranked — these are the things worth annotating
 - what your self-interrogation killed or changed
 
-Style: dark self-painted page (`background:#0f1115; color:#f7f3ea`), readable
+Style: the surface palette (common rules above), exactly — readable
 sections, no external assets except the Mermaid CDN if you use a diagram. Every
 section annotatable (plain semantic HTML — the surface handles annotation).
 
