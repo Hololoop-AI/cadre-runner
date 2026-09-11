@@ -19,11 +19,13 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import board_events
+from runnerlib import engine_seam
 from runnerlib import surface as surface_mod
 from runnerlib import messages
 from runnerlib import runs as runs_mod
@@ -71,7 +73,10 @@ def cmd_start(cfg, args):
     variant = args.variant or cfg.repo(args.repo).get("variant", "change-spec")
     slug, story, planning = _intake_story(cfg, reg, args.repo, story_id,
                                           args.title, story_text, variant)
-    if planning:
+    if engine_seam.mode() == "only":
+        log(f"story {slug} registered — its intake command (with the story text) is on "
+            f"the board; the daemon's engine pass spawns S0. Watch `pipeline.py status`.")
+    elif planning:
         log(f"story {slug} registered — planning PR #{planning}")
         log("review the planning PR on GitHub; summon with @claude; merge it to start contracts")
     else:
@@ -86,6 +91,11 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
     never blocks on an intake. Raises RuntimeError on failure."""
     slug, story = _begin_intake(cfg, reg, repo_name, story_id, title, story_text,
                                 variant, story_url=story_url)
+    if engine_seam.mode() == "only":
+        # Engine-only: _begin_intake registered the story and put its intake
+        # command on the board, but did NOT spawn. There is nothing to wait for
+        # here — the daemon's engine pass owns the spawn and the reap.
+        return slug, story, None
     ghc = GitHub(cfg.data_dir / "etags.json")
     while any(not runs_mod.finished(r) for r in story["active_runs"].values()):
         time.sleep(10)
@@ -106,6 +116,21 @@ def _begin_intake(cfg, reg, repo_name, story_id, title, story_text, variant, sto
     reg.add_story(slug, repo_name, story_id, title, variant)
     story = reg.get(slug)
     story["status"] = "intaking"
+    # ---- ENGINE SEAM: the story text enters the board here, with the story.
+    # `adopt_story` reconstructs an intake command from the registry, which has
+    # never held the story text — so S0's prompt would render with an empty
+    # $story_text. This is the write that carries it. No-op with the flag off.
+    try:
+        engine_seam.intake_command(cfg, slug, story, story_text, story_url)
+    except Exception as e:
+        log(f"{slug}: engine intake command write failed: {e}")
+    if engine_seam.mode() == "only":
+        # The engine's story-to-intake action owns the spawn; spawning here too
+        # would be the shadow-mode duplicate, which only key_active saves us from.
+        reg.save()
+        log(f"{slug}: registered — engine-only, S0 spawns on the next daemon pass")
+        return slug, story
+    # ---- end engine seam
     _run_stage(cfg, reg, GitHub(cfg.data_dir / "etags.json"), slug, story,
                {"stage": "intake", "slice": None, "pr": None,
                 "extra_vars": {"story_text": story_text, "story_url": story_url}},
@@ -198,6 +223,20 @@ def cmd_run(cfg, args, single_pass=False):
             surface_mod.reconcile_merged_holds(cfg, reg, log)
         except Exception as e:
             log(f"surface: reconcile error: {e}")
+        # ---- ENGINE SEAM (CADRE_ENGINE=1 | only) ----------------------------
+        # The whole board-driven path, in one block: heartbeat, engine.tick,
+        # and spawns executed through THIS module's _run_stage. In `shadow` it
+        # runs AFTER the legacy dispatch on purpose — the legacy spawn wins the
+        # (stage, slice, pr) key and the engine's duplicate drops silently in
+        # _run_stage. In `only`, _poll_story spawned nothing and this block is
+        # the only thing that starts a stage. Unset the flag: none of it runs.
+        if engine_seam.enabled():
+            try:
+                engine_seam.tick_pass(cfg, reg, ghc, log, _run_stage)
+            except Exception as e:      # the engine must not take the daemon down
+                log(f"ERROR engine tick: {e}")
+            reg.save()
+        # ---- end engine seam -------------------------------------------------
         act = [{"stage": r["stage"], "story": s, "slice": r.get("slice"),
                 "pr": r.get("pr"), "started": r["started"]}
                for s, _rid, r in runs_mod.all_active(reg)]
@@ -255,6 +294,16 @@ def _board_intake(cfg, reg, board):
 
 
 def _poll_story(cfg, reg, ghc, slug, story):
+    # ---- ENGINE SEAM (CADRE_ENGINE=only): the engine owns stage SPAWNING.
+    # Everything else in this function is kept, because the engine has no
+    # equivalent for any of it: reaping, the registry effects that ride on a
+    # reap, ask/park/revive, the surface, and auto-merge. What is skipped below
+    # is exactly the four places this function forks an agent — the dispatcher's
+    # run_stage actions, the flow-aware ready set, the all-built assembly spawn,
+    # and auto-merge's risk-triage/reconcile spawns. The non-spawn dispatch
+    # effects (phase_slices, story_done, escalate, post_status) still run: they
+    # are registry mutations, not spawns, and nothing on the board performs them.
+    engine_only = engine_seam.mode() == "only"
     _reap_runs(cfg, reg, ghc, slug, story)
     if story["status"] == "intaking":
         return  # nothing to poll until the intake run reaps
@@ -263,7 +312,7 @@ def _poll_story(cfg, reg, ghc, slug, story):
     events, open_prs = poller.collect_events(ghc, reg, slug, story)
     _seed_manifest(reg, ghc, slug, story)
     _ensure_spec_surface(cfg, reg, ghc, slug, story)
-    _try_automerge(cfg, reg, ghc, slug, story)
+    _try_automerge(cfg, reg, ghc, slug, story, engine_only=engine_only)
     # Events are seen-marked at collection, so a crash between collection and
     # execution would lose them forever (the since-window never re-collects).
     # Failed events persist in a retry queue instead: re-dispatched next pass,
@@ -273,6 +322,14 @@ def _poll_story(cfg, reg, ghc, slug, story):
     story["retry_events"] = []
     pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in retries + events]
     for action, event in poller.coalesce(pairs):
+        if engine_only and action["type"] == "run_stage":
+            # The same merge/summon is on the board as a gh_watch event; the
+            # engine's action fires the stage. Dropping it here rather than at
+            # collection keeps the event's seen-marking and retry accounting
+            # identical between modes.
+            log(f"{slug}: engine-only — legacy dispatch of {action['stage']} skipped "
+                f"(the board drives it)")
+            continue
         try:
             _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
         except runs_mod.RunsBusy as e:
@@ -295,6 +352,8 @@ def _poll_story(cfg, reg, ghc, slug, story):
                 event["_attempts"] = attempts
                 story["retry_events"].append(event)
                 log(f"{slug}: event failed (attempt {attempts}/3), queued for retry: {e}")
+    if engine_only:
+        return      # the ready set and the assembly check below are both spawns
     # Flow-aware ready-set: the guarantee behind the event fast path — exempt
     # stages, dependency unblocks, and missed events all dispatch from here.
     for action in dispatcher.ready_actions(story):
@@ -413,11 +472,17 @@ def _ensure_spec_surface(cfg, reg, ghc, slug, story):
                                  pr=int(num_s), repo=story["repo"], sha=sha)
 
 
-def _try_automerge(cfg, reg, ghc, slug, story):
+def _try_automerge(cfg, reg, ghc, slug, story, engine_only=False):
     """NEX-150: merge green stage PRs so the pipeline advances without a human,
     except contract PRs below high confidence. Merge events dispatch the next
     stage on the following pass — auto-merge IS the handoff. Conflicted PRs
-    spawn a reconcile run instead of waiting for a human untangle."""
+    spawn a reconcile run instead of waiting for a human untangle.
+
+    The merge DECISION is kept in every mode — nothing on the board makes it.
+    `engine_only` suppresses only the two spawns this function makes
+    (risk-triage, reconcile); gh_watch reports the same risk grade and the same
+    conflict, and the engine's risk-high-to-triage / conflict-to-reconcile
+    actions fire them."""
     if story["status"] != "active":
         return
     for num_s, p in list(story.get("prs_cache", {}).items()):
@@ -428,7 +493,8 @@ def _try_automerge(cfg, reg, ghc, slug, story):
             if detail.get("state") != "open" or detail.get("merged"):
                 continue
             if detail.get("mergeable") is False:
-                _maybe_reconcile(cfg, reg, ghc, slug, story, int(num_s), p)
+                if not engine_only:
+                    _maybe_reconcile(cfg, reg, ghc, slug, story, int(num_s), p)
                 continue
             if p["role"] == "final":
                 continue  # never auto-merged; only watched for conflicts
@@ -456,9 +522,10 @@ def _try_automerge(cfg, reg, ghc, slug, story):
                 # author the decision surface for the driver. Every Cadre →
                 # driver communication rides the surface; GitHub mirrors.
                 try:
-                    _run_stage(cfg, reg, ghc, slug, story,
-                               {"type": "run_stage", "stage": "risk-triage",
-                                "slice": p.get("slice"), "pr": int(num_s)})
+                    if not engine_only:
+                        _run_stage(cfg, reg, ghc, slug, story,
+                                   {"type": "run_stage", "stage": "risk-triage",
+                                    "slice": p.get("slice"), "pr": int(num_s)})
                 except runs_mod.RunsBusy:
                     log(f"{slug}: risk-triage deferred for PR #{num_s} (run cap); use `surface hold` if urgent")
                 except Exception as e:
@@ -556,6 +623,11 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     cap/branch contention (callers requeue); duplicate targets drop silently.
     wait=True (CLI paths: start, trigger) blocks until the run reaps."""
     stage, slice_name, pr = action["stage"], action.get("slice"), action.get("pr")
+    # Engine seam: a spawn spec carries the node registry's pins, and the
+    # registry is authoritative at runtime. Legacy actions carry none of these
+    # and fall through to config exactly as before.
+    model = action.get("model") or cfg.model_for(stage)
+    effort = action.get("effort") or cfg.effort_for(stage)
     if runs_mod.key_active(story, stage, slice_name, pr):
         log(f"{slug}: {stage}"
             + (f" (slice {slice_name})" if slice_name else "")
@@ -598,11 +670,15 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         "build_branch": stage_branch(slug, "build", slice_name) if slice_name else "",
     }
     v |= action.get("extra_vars", {})
-    prompt = claude_run.render(stage, v)
+    # The node registry's ACTIVE prompt version when the engine drove this
+    # spawn; prompts/*.md when the legacy path did. Same $var substitution
+    # either way — the registry stores the template, not a rendered prompt.
+    prompt = (Template(action["prompt_template"]).safe_substitute(v)
+              if action.get("prompt_template") else claude_run.render(stage, v))
     run_dir = cfg.data_dir / "runs" / slug / rid
     session_id = str(uuid.uuid4())
-    pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, cfg.model_for(stage),
-                         cfg.effort_for(stage), cfg.claude["permission_mode"],
+    pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, model,
+                         effort, cfg.claude["permission_mode"],
                          cfg.claude["timeout_seconds"], run_dir, session_id=session_id,
                          # identity for `pipeline.py ask` — links a question to
                          # this session so an answer can revive it after exit.
@@ -622,8 +698,8 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                                        if stage == "risk-triage" else {})})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
-        "repo": story["repo"], "branch": branch, "model": cfg.model_for(stage),
-        "effort": cfg.effort_for(stage),
+        "repo": story["repo"], "branch": branch, "model": model,
+        "effort": effort,
         "worktree": str(wt), "run_dir": str(run_dir), "started": time.time(),
         "session_id": session_id, "action": action,
     }
@@ -721,6 +797,14 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         log(f"{slug}: stage {stage}"
             + (f" (slice {run.get('slice')})" if run.get("slice") else "")
             + f" {'done' if ok else 'FAILED'} — {result[:200]}")
+        # ---- ENGINE SEAM: stage completion is the event the graph hangs off.
+        # Written for both outcomes (the stage-failed action reads `failed`),
+        # and a no-op with the flag unset.
+        try:
+            engine_seam.stage_finished(cfg, slug, run, ok)
+        except Exception as e:
+            log(f"{slug}: engine completion write failed: {e}")
+        # ---- end engine seam
         if stage == "intake":
             _finish_intake(cfg, reg, ghc, slug, story, ok)
             continue

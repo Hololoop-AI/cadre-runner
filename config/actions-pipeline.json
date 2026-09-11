@@ -1,0 +1,258 @@
+{
+  "_comment": [
+    "The 7-stage PR-gated pipeline expressed as actions — workflow #1.",
+    "",
+    "There is no workflow file at runtime: the workflow IS this set of actions.",
+    "Nothing here knows about any other action; the coupling is the board.",
+    "",
+    "Two topics carry the story, and keeping them apart is the whole trick:",
+    "  cadre/stages/<story>  — SESSION lifecycle. A stage session (or the",
+    "                          daemon reaping it) writes `signal` finished/failed",
+    "                          with payload {story, stage, slice, pr}.",
+    "  cadre/github/<story>  — REPO state, put on the board by the gh-watch",
+    "                          action running `python -m runnerlib.gh_watch`.",
+    "                          GitHub is reached by an action running a CLI;",
+    "                          there is no adapter component.",
+    "A contracts SESSION finishing is not a contract PR MERGING — the first",
+    "opens the PR, the second advances the machine. pipeline.py conflates",
+    "neither, and neither does this file.",
+    "",
+    "Reproduces: dispatcher.dispatch (merge + summon routing), _poll_story's",
+    "all-built assembly check, _try_automerge's risk-high hold, and the reap-side",
+    "phase transitions in _reap_runs."
+  ],
+
+  "actions": [
+
+    {
+      "name": "gh-watch",
+      "_why": "The daemon writes one heartbeat per poll pass; this turns it into a repo read. The shim writes the pr-state, risk and summon events directly to the board — one command, many events, which no single emitter could express.",
+      "trigger": {"namespace": "cadre", "topic": "runner", "kind": "heartbeat"},
+      "body": {"type": "run_command", "argv": ["python3", "-m", "runnerlib.gh_watch"],
+               "timeout": 240},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "runner",
+                  "key": "gh-watch", "kind": "report",
+                  "payload": {"pointer": "{body[stdout]}"}},
+      "max_depth": 2
+    },
+
+    {
+      "name": "story-to-intake",
+      "_why": "S0. Reproduces _begin_intake: a registered story with no run yet gets an intake session. `no_event_for_key` on the stage signal is the once-only guard — pipeline.py gets the same effect from runs.key_active.",
+      "trigger": {"namespace": "cadre", "topic": "stories", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "stage:intake"},
+                            {"op": "no_event_for_key", "namespace": "cadre",
+                             "topic": "stages", "kind": "signal"}]},
+      "body": {"type": "spawn_node", "node": "intake"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "intake",
+                              "story": "{payload[story]}"}}
+    },
+
+    {
+      "name": "intake-finished-awaits-plan",
+      "_why": "Reproduces _finish_intake's tail: the planning PR now exists and the story sits in phase `interrogate` waiting for a human to merge it. No spawn — the next move belongs to the driver, and gh-watch is what notices when they make it.",
+      "trigger": {"namespace": "cadre", "topic": "stages", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "stage", "value": "intake"},
+                            {"op": "payload_eq", "field": "status", "value": "finished"}]},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "progress", "phase": "interrogate",
+                              "story": "{payload[story]}",
+                              "note": "planning PR open — awaiting driver merge"}}
+    },
+
+    {
+      "name": "planning-merged-to-contracts",
+      "_why": "dispatcher.dispatch, pr_merged/planning, legacy branch: the manifest declares a contract node, so the separate contracts stage still runs. gh_watch reads the manifest off the planning PR body and stamps `flow` — the closed `where` vocabulary cannot reach into a PR body, so the classification rides in the payload.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "planning"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"},
+                            {"op": "payload_eq", "field": "flow", "value": "contracts"}]},
+      "body": {"type": "spawn_node", "node": "contracts"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "contracts",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "planning-merged-to-slices",
+      "_why": "dispatcher.dispatch -> {type: phase_slices}: the unified-spec flow (2026-08-26). No slice's flow carries a contract node, so the approved spec IS the contract — flip the phase and let the slice actions fire.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "planning"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"},
+                            {"op": "payload_eq", "field": "flow", "value": "slices"}]},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "progress", "phase": "slices",
+                              "story": "{payload[story]}",
+                              "note": "spec approved (contract-less flow)"}}
+    },
+
+    {
+      "name": "contract-merged-to-tests",
+      "_why": "dispatcher.dispatch, pr_merged/contract -> run_stage tests for that slice.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "contract"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"}]},
+      "body": {"type": "spawn_node", "node": "tests"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "tests",
+                              "story": "{payload[story]}", "slice": "{payload[slice]}",
+                              "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "tests-merged-to-build",
+      "_why": "dispatcher.dispatch, pr_merged/tests -> run_stage build. The tests PR merging is what locks the tests; the builder is forbidden from touching them.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "tests"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"}]},
+      "body": {"type": "spawn_node", "node": "build"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "build",
+                              "story": "{payload[story]}", "slice": "{payload[slice]}",
+                              "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "build-merged-slice-done",
+      "_why": "dispatcher.dispatch, pr_merged/build -> {type: noop, built: slice}. The slice is done; whether the STORY is done is an aggregate over the manifest, which gh_watch evaluates (dispatcher.all_built) and reports as its own event.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "build"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"}]},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "notify",
+                  "payload": {"message": "slice {payload[slice]} built",
+                              "story": "{payload[story]}", "slice": "{payload[slice]}"}}
+    },
+
+    {
+      "name": "all-built-to-assembly",
+      "_why": "Reproduces _poll_story's tail: dispatcher.all_built(story, open_prs) and phase == slices -> run_stage assembly on the planning PR.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "all-built"},
+                            {"op": "no_event_for_key", "namespace": "cadre",
+                             "topic": "assembly", "kind": "signal"}]},
+      "body": {"type": "spawn_node", "node": "assembly"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "assembly",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "assembly",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "assembly-finished-to-final-review",
+      "_why": "Reproduces _reap_runs' assembly branch: phase -> final-review and the session's own briefing goes in front of the driver. Final review is the second legitimate surface (driver decision 2026-08-30) — the assembly session authored it; the pipeline only opens it.",
+      "trigger": {"namespace": "cadre", "topic": "stages", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "stage", "value": "assembly"},
+                            {"op": "payload_eq", "field": "status", "value": "finished"}]},
+      "emitter": [
+        {"type": "hitl",
+         "summary": "Final review: story {payload[story]} is assembled — merge the final PR to ship it",
+         "detail": {"story": "{payload[story]}", "pr": "{payload[pr]}",
+                    "artifact": "final-{payload[story]}.html", "channel": "final_review"}},
+        {"type": "write_event", "namespace": "cadre", "topic": "stages",
+         "kind": "signal",
+         "payload": {"status": "progress", "phase": "final-review",
+                     "story": "{payload[story]}"}}
+      ]
+    },
+
+    {
+      "name": "final-merged-story-done",
+      "_why": "dispatcher.dispatch, pr_merged/final -> {type: story_done}. The human merging the story PR is the act that ships it; nothing downstream fires.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "final"},
+                            {"op": "payload_eq", "field": "state", "value": "merged"}]},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "finished", "phase": "done", "stage": "story",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "risk-high-to-triage",
+      "_why": "_try_automerge's risk-high branch (cadre-context 2026-08-23: risk gates merge, confidence ranks). A hold is a DECISION to make, not a PR to read, so a second independent assessor audits the grade and authors the driver's brief. gh_watch stamps the grade off the PR body; the merge block itself stays in automerge.decide.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "risk", "value": "high"},
+                            {"op": "payload_eq", "field": "state", "value": "open"}]},
+      "body": {"type": "spawn_node", "node": "risk-triage"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "review",
+                  "kind": "notify",
+                  "payload": {"message": "review-requested",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}",
+                              "stage": "{payload[role]}", "slice": "{payload[slice]}",
+                              "risk": "high", "status": "awaiting-review",
+                              "url": "{payload[url]}"}}
+    },
+
+    {
+      "name": "conflict-to-reconcile",
+      "_why": "_maybe_reconcile: a conflicted pipeline PR gets a reconcile run rather than waiting for a human untangle. The rounds cap that escalates after N attempts is NOT expressible here — see the report; the engine's causal-depth cap is the only loop guard this action carries.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "mergeable", "value": "conflict"},
+                            {"op": "payload_eq", "field": "state", "value": "open"}]},
+      "body": {"type": "spawn_node", "node": "reconcile"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "reconcile",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}",
+                              "slice": "{payload[slice]}"}}
+    },
+
+    {
+      "name": "summon-to-interrogate",
+      "_why": "dispatcher.dispatch, summon on the planning PR -> run_stage interrogate. The round cap (limits.max_rounds_per_stage) lives in the daemon, not here.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "command",
+                  "where": {"op": "payload_eq", "field": "target",
+                            "value": "stage:interrogate"}},
+      "body": {"type": "spawn_node", "node": "interrogate"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "interrogate",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "summon-to-revise",
+      "_why": "dispatcher.dispatch, summon on a contract/tests/build/final PR -> run_stage revise. A summon on a CLOSED PR buys nothing (`Closing, superseded by X` is a normal thing to write) — gh_watch drops those before they reach the board.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "command",
+                  "where": {"op": "payload_eq", "field": "target", "value": "stage:revise"}},
+      "body": {"type": "spawn_node", "node": "revise"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "revise",
+                              "story": "{payload[story]}", "pr": "{payload[pr]}",
+                              "slice": "{payload[slice]}"}}
+    },
+
+    {
+      "name": "stage-failed-to-driver",
+      "_why": "_reap_runs' failure tail (the '⚠️ Stage run failed' comment) plus the engine's own failure-as-a-signal: a body or emitter that blows up writes `signal: failed`, and triage is an ordinary action (round 4). Both land here.",
+      "trigger": {"namespace": "cadre", "topic": "stages", "kind": "signal",
+                  "where": {"op": "payload_eq", "field": "status", "value": "failed"}},
+      "_note": "The summary reads only header fields. An engine-authored failure signal carries {status, action, error, trigger_event} and NOT {stage, story} — templating those here would fail the hitl emitter, which would write another failed signal, which is exactly the loop the depth cap exists to stop. Say less, always render.",
+      "emitter": {"type": "hitl",
+                  "summary": "A pipeline stage failed on {event[key]} — check the runner logs, then re-summon",
+                  "detail": {"key": "{event[key]}", "event_id": "{event[id]}",
+                             "topic": "{event[topic]}"}},
+      "max_depth": 2
+    },
+
+    {
+      "name": "escalated-to-driver",
+      "_why": "An escalation is a decision handed back to the driver. In engine-only mode the round caps are enforced at the spawn seam (engine_seam.refuse_past_cap) and refuse by writing `escalate` — without this action that write would sit on the board unread, which is the silent wedge the cap exists to prevent. Same summary discipline as stage-failed-to-driver: header fields only, so it always renders.",
+      "trigger": {"namespace": "cadre", "topic": "stages", "kind": "escalate"},
+      "emitter": {"type": "hitl",
+                  "summary": "Pipeline escalation on {event[key]}: {payload[reason]}",
+                  "detail": {"key": "{event[key]}", "event_id": "{event[id]}"}},
+      "max_depth": 2
+    }
+
+  ]
+}

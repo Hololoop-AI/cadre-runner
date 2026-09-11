@@ -1,0 +1,88 @@
+{
+  "_comment": [
+    "Workflow #2: an eval run, expressed as actions — and the proof that the",
+    "engine is workflow-agnostic.",
+    "",
+    "Nothing in runnerlib changed to make this file work. It is a different",
+    "shape of work entirely — no stories, no PRs, no stages, no GitHub, a body",
+    "that runs a python script and a node whose command is not `claude -p` —",
+    "and it runs on the same load_actions/tick path as",
+    "config/actions-pipeline.json, at the same time, over the same board.",
+    "tests/test_agnosticism.py is that claim, asserted.",
+    "",
+    "One topic carries an eval run:",
+    "  cadre/evals/eval:<fixture>  — the whole run. `command` target=eval opens",
+    "                                it; each step writes a `signal` naming the",
+    "                                stage it finished. As everywhere else, the",
+    "                                coupling is the board: run_fixture.py has",
+    "                                never heard of judge_spec.py.",
+    "",
+    "The trigger event carries the run's paths (story_path, out, board) because",
+    "the `where` vocabulary is closed and the engine resolves no paths of its",
+    "own — an eval run says where its own world is.",
+    "",
+    "Prototype scope (evals/PLAN-2026-09.md, re-cut 2026-09-08): judges are",
+    "plain ad-hoc scripts writing jsonl. There is no backend here on purpose.",
+    "",
+    "Relative argv paths, like actions-pipeline.json's `python3 -m",
+    "runnerlib.gh_watch`, resolve against the daemon's cwd — the repo."
+  ],
+
+  "actions": [
+
+    {
+      "name": "eval-requested",
+      "_why": "S0 of an eval run. A `command` on the evals topic is somebody asking for a fixture story to be built and judged; the body builds it. In the prototype the build is a replay of a stored artifact (run_fixture.py) — the engine path is what is being proved, not the inference. The artifact path comes back on stdout and rides the emitted signal, so the next action needs no filesystem convention.",
+      "trigger": {"namespace": "cadre", "topic": "evals", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "eval"},
+                            {"op": "no_event_for_key", "namespace": "cadre",
+                             "topic": "evals", "kind": "signal"}]},
+      "body": {"type": "run_command",
+               "argv": ["python3", "evals/run_fixture.py",
+                        "--story", "{payload[story]}", "--out", "{payload[out]}"],
+               "timeout": 600},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "evals",
+                  "kind": "signal",
+                  "payload": {"status": "finished", "stage": "eval-fixture",
+                              "story": "{payload[story]}",
+                              "story_path": "{payload[story_path]}",
+                              "artifact": "{body[stdout]}",
+                              "board": "{payload[board]}"}}
+    },
+
+    {
+      "name": "fixture-done-to-judge",
+      "_why": "The fixture's artifact exists, so judge it. `spawn_node` — the same body type that spawns a pipeline stage — resolves eval-judge-spec out of the same registry and formats the same kind of command template. That the resolved command turns out to be a python script rather than an agent CLI is invisible from here, which is the whole point (runnerlib/seed_eval_nodes.py).",
+      "trigger": {"namespace": "cadre", "topic": "evals", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "stage", "value": "eval-fixture"},
+                            {"op": "payload_eq", "field": "status", "value": "finished"}]},
+      "body": {"type": "spawn_node", "node": "eval-judge-spec"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "evals",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "eval-judge",
+                              "story": "{payload[story]}",
+                              "artifact": "{payload[artifact]}"}}
+    },
+
+    {
+      "name": "judge-done-to-report",
+      "_why": "A judged run is a thing a human reads, not a thing that fires more work — UNKNOWN counts as FAIL at the gate and a rejection is a question for the driver, not an automatic retry. The summary is the judge's own tally line (judge_spec.summary_line), which it put on the signal; the notify is for anything watching the board.",
+      "trigger": {"namespace": "cadre", "topic": "evals", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "stage", "value": "eval-judge"},
+                            {"op": "payload_eq", "field": "status", "value": "finished"}]},
+      "emitter": [
+        {"type": "hitl",
+         "summary": "Eval judged: {payload[story]} — {payload[summary]}",
+         "detail": {"story": "{payload[story]}", "artifact": "{payload[artifact]}",
+                    "results": "{payload[results]}", "channel": "eval_report"}},
+        {"type": "write_event", "namespace": "cadre", "topic": "evals",
+         "kind": "notify",
+         "payload": {"message": "eval judged: {payload[summary]}",
+                     "story": "{payload[story]}",
+                     "artifact": "{payload[artifact]}"}}
+      ],
+      "max_depth": 4
+    }
+
+  ]
+}
