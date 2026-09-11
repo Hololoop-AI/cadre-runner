@@ -15,6 +15,12 @@ Actions (dicts):
 
 AGENT_MARKER = "<!-- pipeline-run -->"  # every session-authored body carries this
 
+# Every comment the surface channel mirrors on the driver's behalf starts with
+# this. It counts as a summon in its own right: the driver speaking on a
+# pipeline PR IS the request to respond — asking them to also type @claude
+# broke the revise loop (found on the first engine-only run, 2026-09-11).
+DRIVER_PREFIX = "**Driver (via surface):**"
+
 
 def dispatch(story: dict, event: dict, limits: dict) -> dict:
     kind = event["kind"]

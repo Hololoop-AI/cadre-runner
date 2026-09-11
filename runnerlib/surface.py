@@ -31,7 +31,7 @@ import time
 from html import escape
 from pathlib import Path
 
-from . import board_events
+from . import board_events, dispatcher
 
 CLI = "review-surface"
 _DECISION_RE = re.compile(
@@ -393,7 +393,7 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
                 # They must count as human activity — blocking automerge and
                 # triggering revise rounds — exactly like a typed PR comment.
                 ghc.comment(meta["repo"], int(meta["pr"]),
-                            f"**Driver (via surface):** {text[:1500]}")
+                            f"{dispatcher.DRIVER_PREFIX} {text[:1500]}")
             except Exception as e:
                 log(f"surface: PR mirror failed: {e}")
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
@@ -525,7 +525,7 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
                 log(f"surface: {slug} PR #{pr} approved via surface — merged")
             elif item["verdict"] == "revise":  # spec gate: back to the agents
                 ghc.comment(repo, pr,
-                            "**Driver (via surface):** revise requested — my "
+                            f"{dispatcher.DRIVER_PREFIX} revise requested — my "
                             "annotations above say what to change.")
                 log(f"surface: {slug} planning PR #{pr} sent to revise via surface")
             else:  # reject (risk hold)

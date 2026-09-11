@@ -230,7 +230,14 @@ def _summons(board, ghc, seen, slug, story, prs, key) -> list[dict]:
             body = c.get("body") or ""
             if p is None or p["state"] != "open":
                 continue
-            if dispatcher.AGENT_MARKER in body or not poller.SUMMON_RE.search(body):
+            if dispatcher.AGENT_MARKER in body:
+                continue
+            # A summon is either the explicit token, or the driver speaking
+            # through the surface channel — the mirror deliberately carries no
+            # token (they're the driver's words), and requiring one anyway is
+            # what silently broke the revise loop.
+            if not (poller.SUMMON_RE.search(body)
+                    or body.startswith(dispatcher.DRIVER_PREFIX)):
                 continue
             target = SUMMON_STAGE.get(p["role"])
             if not target or not seen.take(f"summon:{repo}:{c['id']}"):

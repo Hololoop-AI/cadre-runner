@@ -5,6 +5,8 @@ import json
 import re
 import time
 
+from . import dispatcher
+
 from .dispatcher import AGENT_MARKER
 from .gh import NOT_MODIFIED
 from .registry import classify_branch
@@ -184,7 +186,9 @@ def _classify_body(body, actor, item_id, issue_num, prs, source):
     if m:
         return [{"kind": "command", "name": m.group(1), "actor": actor,
                  "id": item_id, "body": body}]
-    if SUMMON_RE.search(body):
+    # Surface-mirrored driver comments summon without the token — same rule as
+    # gh_watch._summons; see dispatcher.DRIVER_PREFIX for why.
+    if SUMMON_RE.search(body) or body.startswith(dispatcher.DRIVER_PREFIX):
         p = prs.get(str(issue_num))
         if p is None:
             return []  # summon on tracking issue / unowned PR — not routable

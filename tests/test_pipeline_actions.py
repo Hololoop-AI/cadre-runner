@@ -766,3 +766,32 @@ def test_first_run_is_a_silent_baseline():
         assert not second.baseline
         assert not second.take("merged:r:1")  # already known
         assert second.take("merged:r:2")      # genuinely new -> emit
+
+
+def test_surface_mirrored_driver_comment_is_a_summon():
+    """The surface mirror posts the driver's words with no summon token — that
+    comment must summon anyway, or the revise loop silently dead-ends (found
+    live on the first engine-only run, 2026-09-11: feedback mirrored to the
+    planning PR and nothing ever fired)."""
+    from runnerlib import dispatcher, poller
+    mirrored = f"{dispatcher.DRIVER_PREFIX} tighten slice 2's validation path"
+    plain = "looks interesting, following along"
+    tokened = "@claude please revisit the flow"
+    marked = f"{dispatcher.DRIVER_PREFIX} x {dispatcher.AGENT_MARKER}"
+
+    def summons(body):
+        if dispatcher.AGENT_MARKER in body:
+            return False
+        return bool(poller.SUMMON_RE.search(body)
+                    or body.startswith(dispatcher.DRIVER_PREFIX))
+
+    assert summons(mirrored)
+    assert summons(tokened)
+    assert not summons(plain)      # a bystander comment still needs the token
+    assert not summons(marked)     # agent-marked never summons
+
+    # legacy path takes the same rule
+    prs = {"7": {"role": "planning", "slice": None}}
+    got = poller._classify_body(mirrored, "driver", 1, 7, prs, "issue_comment")
+    assert got and got[0]["kind"] == "summon"
+    assert poller._classify_body(plain, "someone", 2, 7, prs, "issue_comment") == []
