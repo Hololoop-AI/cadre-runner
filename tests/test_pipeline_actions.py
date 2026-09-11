@@ -475,6 +475,7 @@ def test_gh_watch_seen_state_is_its_own():
     """The legacy poller and the watcher observe the same repo while the flag is
     a flag; sharing a seen-set would mean whichever ran first blinded the other."""
     d = scratch()
+    gh_watch.Seen(d / gh_watch.SEEN_FILE).save()  # baseline pass done
     seen = gh_watch.Seen(d / gh_watch.SEEN_FILE)
     assert seen.take("merged:o/r:7") is True
     assert seen.take("merged:o/r:7") is False
@@ -524,6 +525,7 @@ def test_gh_watch_reports_merges_and_summons():
         def stories(self, status="active"):
             return self.data["stories"]
 
+    gh_watch.Seen(d / "seen.json").save()  # baseline pass done
     events = gh_watch.watch(b, FakeGH(), FakeReg(), gh_watch.Seen(d / "seen.json"))
     kinds = [(e["kind"], e["payload"].get("target") or e["payload"].get("role"))
              for e in events]
@@ -539,6 +541,7 @@ def test_gh_watch_reports_merges_and_summons():
     assert sum(1 for k in kinds if k == ("command", "stage:revise")) == 1
 
     # and it is idempotent within one seen-file
+    gh_watch.Seen(d / "seen2.json").save()  # baseline pass done
     seen = gh_watch.Seen(d / "seen2.json")
     gh_watch.watch(b, FakeGH(), FakeReg(), seen)
     assert gh_watch.watch(b, FakeGH(), FakeReg(), seen) == []
@@ -746,3 +749,20 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("pipeline-as-actions tests: all passed")
+
+
+def test_first_run_is_a_silent_baseline():
+    """First gh_watch run must observe silently: a fresh seen-file records
+    history without emitting, so a redeploy can never replay old merges into
+    live stage spawns (the 2026-09-10 stray-spawn incident)."""
+    from runnerlib.gh_watch import Seen
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "gh-watch-seen.json"
+        first = Seen(p)
+        assert first.baseline
+        assert not first.take("merged:r:1")   # recorded, not emitted
+        first.save()
+        second = Seen(p)
+        assert not second.baseline
+        assert not second.take("merged:r:1")  # already known
+        assert second.take("merged:r:2")      # genuinely new -> emit

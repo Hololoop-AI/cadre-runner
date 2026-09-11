@@ -60,17 +60,23 @@ class Seen:
 
     def __init__(self, path: Path):
         self.path = path
+        # First run (no seen-file yet) is a BASELINE pass: record everything,
+        # emit nothing. Without this, a fresh deploy replays every historical
+        # merge as a fresh event and the engine fires real stage spawns on
+        # long-dead stories (observed 2026-09-10: $4.45 of stray sessions on
+        # the first engine-only pass).
+        self.baseline = not path.exists()
         try:
             self.marks = set(json.loads(path.read_text()))
         except (FileNotFoundError, json.JSONDecodeError):
             self.marks = set()
 
     def take(self, mark: str) -> bool:
-        """True the first time only."""
+        """True the first time only — and never during the baseline pass."""
         if mark in self.marks:
             return False
         self.marks.add(mark)
-        return True
+        return not self.baseline
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
