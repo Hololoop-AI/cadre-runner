@@ -18,6 +18,9 @@ Everything it emits lands on `cadre / github / story:<slug>`:
     signal  state=open     risk=high            — a PR whose reviewer graded it high
     signal  state=open     mergeable=conflict   — a PR git cannot merge
     signal  state=merged   role=all-built       — every planned slice is built
+    signal  state=ready    role=tests|build     — a stage whose predecessor is
+                                                  flow-exempt is unblocked (the
+                                                  merge chain cannot start it)
     command target=stage:revise|stage:interrogate  — a driver summon
 
 Deduplication is its own state file (`gh-watch-seen.json`), deliberately NOT the
@@ -185,7 +188,36 @@ def _watch_story(board, ghc, reg, seen, slug, story, cfg) -> list[dict]:
                                 "role": "all-built", "story": slug, "repo": repo,
                                 "slice": "", "pr": story.get("planning_pr") or ""}))
 
+    out += _ready(board, seen, slug, story, repo, key)
     out += _summons(board, ghc, seen, slug, story, prs, key)
+    return out
+
+
+# The merge chain's blind spot: a stage whose PREDECESSOR never gets a PR.
+# In the contract-less flow tests chain off a contract merge that will never
+# happen (the approved spec IS the contract), so nothing on the board could
+# start them — the first engine-only run stalled at phase->slices for exactly
+# this reason (2026-09-11). dispatcher.ready_actions already computes the
+# holes; only the ones whose predecessor is flow-EXEMPT (marked merged with no
+# PR recorded) are emitted, so every stage a real merge event can reach keeps
+# its fast path and nothing double-fires.
+_PREDECESSOR = {"tests": "contract", "build": "tests"}
+
+
+def _ready(board, seen, slug, story, repo, key) -> list[dict]:
+    out = []
+    for act in dispatcher.ready_actions(story):
+        stage = act["stage"]
+        rec = (story.get("slices") or {}).get(act["slice"]) or {}
+        pred = _PREDECESSOR.get(stage)
+        if pred and rec.get(f"{pred}_pr"):
+            continue  # a real predecessor PR exists — its merge event drives this
+        if not seen.take(f"ready:{repo}:{slug}:{act['slice']}:{stage}"):
+            continue
+        out.append(board.write(NAMESPACE, TOPIC, key, "signal",
+                               {"status": "progress", "state": "ready",
+                                "story": slug, "repo": repo, "role": stage,
+                                "slice": act["slice"], "pr": act["pr"] or ""}))
     return out
 
 

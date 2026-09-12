@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadre Eval Program &amp; Improvement Loop — Plan</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+  .cols > div { min-width: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .cols h3 { margin-top: 0; }
+  .num { font-family: var(--mono); color: var(--accent); }
+  .qcard button[type="submit"] { margin-top: 12px; }
+  .queued-note { display: none; font: 12px var(--mono); color: var(--good); margin-top: 8px; }
+  form.answered .queued-note { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Eval Program &amp; Improvement Loop</h1>
+<div class="meta">cadre-runner · plan for review · 2026-09-04 · sources:
+<code>~/research/agent-pipeline-evals-2026-09.md</code> · <code>~/research/prompt-optimization-loop-2026-09.md</code> ·
+draft doc <code>evals/PLAN-2026-09.md</code></div>
+<div>
+  <span class="chip">nothing built yet</span>
+  <span class="chip good">MLflow dropped</span>
+  <span class="chip good">prompts leave git — registry</span>
+  <span class="chip good">no PRs for prompt changes</span>
+</div>
+
+<section>
+  <h2>Goal &amp; current state</h2>
+  <p><strong>Goal:</strong> the pipeline works end-to-end; quality is now the constraint. Build the machinery to
+  <em>measure</em> stage and pipeline quality (deterministic checks + LLM judges), climb a graduated test ladder
+  from tiny fixtures to live projects, and close the loop with a meta-agent that reacts to eval failures by
+  proposing improved prompts — the first reflective skill-refinement tier of Cadre itself.</p>
+  <p><strong>Current state:</strong> <code>evals/</code> has fixture stories with deterministic expected-claims,
+  <code>scoring.py</code>, and Wilson-interval stats. It cannot judge artifact <em>quality</em> (is the spec briefing
+  grounded? is the risk grade justified? does the demonstration demonstrate?), has no calibration labels, no
+  observability backend, and no improvement loop. Prompts live as files in the repo with no versioning or provenance.</p>
+</section>
+
+<section>
+  <h2>1 · Plumbing (prerequisites — everything downstream is cheap once these exist)</h2>
+  <table>
+    <tr><th>Piece</th><th>What</th><th>Why it's load-bearing</th></tr>
+    <tr><td><strong>Artifact archive</strong></td>
+        <td>Persist every stage's artifacts keyed by run + stage</td>
+        <td>Judges and the optimizer run on <em>stored</em> artifacts — iteration costs judge tokens, not $25–35
+        pipeline runs. Also enables per-stage replay (freeze upstream, re-score one stage), which removes six
+        stages of variance from comparisons.</td></tr>
+    <tr><td><strong>OTel spans</strong></td>
+        <td>story → stage → claude call; attrs: run, story, stage, cost, tokens, verdicts. Env-gated, ships neutral.</td>
+        <td>Observability for our test environment without requiring it for anyone else; backend becomes swappable
+        config. Own attribute schema (OTel GenAI semconv still unstable).</td></tr>
+    <tr><td><strong>Backend</strong></td>
+        <td>Self-hosted Langfuse (Postgres + ClickHouse + Redis; CI deployment) — or Phoenix as the light fallback</td>
+        <td>Trace UI + a scores API that receives judge verdicts and driver labels, so observability and eval
+        history are one system. Langfuse also has prompt versioning/labels/rollback — an optional UI over our registry.</td></tr>
+    <tr><td><strong>Surface label toggle</strong></td>
+        <td>One control per gate surface: “would you have accepted this artifact unedited?”</td>
+        <td>One click per gate = the calibration label the whole judge program runs on. Annotations already flow;
+        only the writeback is new.</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>2 · Judges</h2>
+  <p>Per-criterion <strong>binary</strong> PASS/FAIL/UNKNOWN, isolated call per criterion group, and a
+  <strong>verbatim quote required as evidence</strong> — every criterion is extraction against a supplied reference
+  (story, diff, test output), never “is this good?”. That is the defense against generator and judge both being
+  Claude: reference-anchored extraction drops judge false-positive rates from 0.72 to ~0.01 in the published
+  measurement, and cross-tier judging (Sonnet judging Opus output) breaks self-recognition. Judged claims become a
+  second claim kind in the existing <code>expected.json</code> schema — scoring and stats interfaces unchanged.</p>
+  <table>
+    <tr><th></th><th>Judge</th><th>Why this order</th></tr>
+    <tr><td class="num">1</td><td><strong>Spec briefing groundedness &amp; sufficiency</strong> — 7 criteria</td>
+        <td>Upstream of everything; structure checks can never see whether the briefing describes the story it was
+        given. Cheapest to calibrate — you already read every one at gate 1.</td></tr>
+    <tr><td class="num">2</td><td><strong>Risk grade justification</strong> — 6 diff-anchored criteria</td>
+        <td>The only judgment with direct merge authority. Includes a criterion killing unverifiable self-praise and
+        one catching “low” beside an unaddressed migration. Risk-triage itself gets <em>no</em> judge — scored as
+        precision/recall against your adjudications.</td></tr>
+    <tr><td class="num">3</td><td><strong>Demonstration faithfulness</strong> — 6 criteria</td>
+        <td>Where your attention concentrates at gate 2; overstatement is the fastest trust-eroder. Every claimed
+        behavior must tie to a passing test or shown artifact; every done-criterion addressed or reported unmet.</td></tr>
+  </table>
+  <details><summary>Deliberately NOT judged (deterministic stays deterministic)</summary>
+    <p>Test pass / red-first (<code>pytest</code> exit codes) · locked-test-file modification (<code>git diff</code>) ·
+    spec structural claims · blast-radius detection (path globs feed the judge as <em>reference</em>) ·
+    cost/tokens/wall-clock · world-boundary leakage · anything about prose style — style criteria are exactly where
+    verbosity and self-preference bias live.</p>
+  </details>
+</section>
+
+<section>
+  <h2>3 · Calibration — ~30 minutes of your time, total</h2>
+  <div class="cols">
+    <div><h3>Manufactured negatives</h3><p>~20 <strong>seeded corruptions</strong> of accepted artifacts (delete a
+    story constraint, invent a file reference, downgrade a risk grade with a migration in the diff). Gives a real
+    true-negative rate — a working pipeline produces mostly passes, so a judge that always says PASS would otherwise
+    look excellent — and measures self-preference directly.</p></div>
+    <div><h3>The one ask</h3><p>One sitting: <strong>15 shuffled artifacts</strong>, pass/fail + a one-sentence
+    critique each. Critiques become the rubric language and few-shot examples. ~32 ground-truth items total —
+    under-powered by the literature's standard, and reported as such.</p></div>
+    <div><h3>Metrics &amp; upkeep</h3><p>Per criterion: <strong>Cohen's κ</strong> (headline — raw agreement
+    overstates judges by 30–40 points), TPR, TNR, UNKNOWN rate; ≥3 runs at temp 0. Kill any criterion with κ &lt; 0.4.
+    Every judge/driver disagreement at a gate auto-joins the calibration set. After any optimizer round: re-validate
+    the judge on fresh labels — a practice documented nowhere in the field, and the self-play result (judge pass
+    rate 0.72→0.94 while true accuracy stayed 0.20) is why.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>4 · The ladder</h2>
+  <table>
+    <tr><th>Rung</th><th>Shape</th><th>Repeats</th><th>Role</th></tr>
+    <tr><td class="num">0</td><td>tag-notes-class fixture, fresh-built repo</td><td>8</td><td>regression — kept near saturation</td></tr>
+    <tr><td class="num">1</td><td>fixture + seeded bug (fixture needs a dense test suite first — bug yield tracks coverage)</td><td>8</td><td>regression</td></tr>
+    <tr><td class="num">2</td><td>multi-file change + one blast-radius surface (migration / dep / auth)</td><td>4</td><td>regression</td></tr>
+    <tr><td class="num">3</td><td><strong>PR-mirror on a real internal repo</strong> — revert a merged PR, have the pipeline re-derive it; date-stamped</td><td>2–4</td><td>capability — permanent headroom</td></tr>
+    <tr><td class="num">4</td><td>live project story</td><td>1</td><td>capability; judges advisory only</td></tr>
+  </table>
+  <p>Fixture stories written SWE-bench-Pro style: a requirements list stating <em>expected behavior, not
+  implementation</em> (OpenAI retired SWE-bench Verified after finding 59% of audited problems defective — this is
+  their fix). Grading files never enter the agent's workspace: with a visible scorer, frontier models exploited label
+  information in 403 logged runs, and stronger models exploit <em>more</em>. Stats: single-run deltas of 2–3 points
+  are noise (it's the inference stack, not us) — hence n=8 at the cheap rungs, and <strong>paired McNemar's</strong>
+  for variant comparisons (~10× cheaper than independent arms; small addition to <code>stats.py</code>).</p>
+</section>
+
+<section>
+  <h2>5 · The improvement loop — prompt registry + meta-agent</h2>
+  <div class="mermaid">
+flowchart LR
+  A[eval run completes] --> B[verdicts land in store]
+  B --> C{delta vs baseline?}
+  C -- regression / new failure --> D[reflection stage spawned<br/>same mechanism as risk-triage]
+  D --> E[candidate prompt version<br/>written to registry]
+  E --> F{adoption gate}
+  F -- small delta, all checks pass --> G[auto-promote to active]
+  F -- bigger change --> H[promotion surface<br/>diff + scores + rationale]
+  H -- driver approves --> G
+  H -- driver rejects --> I[candidate archived,<br/>lineage kept]
+  G --> J[next runs use new version<br/>provenance recorded]
+  J --> A
+  </div>
+  <p><strong>Registry, not PRs</strong> (your call, and consistent with your standing state-not-in-VC position):
+  prompts move out of the codebase into a runner-owned registry — content-addressed versions with lineage (parent,
+  producer: hand edit / reflection / optimizer, eval scores, model pinning), plus a <strong>git-backed export</strong>
+  for portability: hand a prompt to a teammate or use it outside the system. Every stage run records its prompt
+  version, so A/B provenance is free. Long-term this registry <em>is</em> the skill-registry vision — entries with
+  attached eval evidence are what make skills addable, shareable, and eventually community-publishable; the same
+  machinery pointed at an empty slot is skill <em>creation</em>; a workflow entry is a manifest of stage-prompt
+  versions.</p>
+  <p><strong>Adoption gate</strong> (all must hold; “no adoption” is the normal outcome): beats the seed on a frozen
+  fixture split under paired McNemar · survives false-discovery correction across candidates · no judge TPR/TNR
+  degradation on fresh labels · survives one end-to-end run · diff contains no fixture-specific nouns · hard fail on
+  any deterministic-claim regression or any seeded-corruption pass · length penalty in the metric (measured exploit:
+  14.7× length inflation scoring <em>higher</em>).</p>
+  <table>
+    <tr><th>Phase</th><th>What</th><th>Cost</th><th>Gate to next phase</th></tr>
+    <tr><td class="num">0</td><td>Measure metric noise on repeated identical runs; measure seed headroom with one
+        hand-written variant</td><td>$20–60</td><td>If noise ≥ plausible effect: stop, no optimizer helps.
+        Gains track seed headroom, not search budget.</td></tr>
+    <tr><td class="num">1</td><td>Hand metaprompt loop: judge critique → prompt-editor → re-eval on replayed
+        artifacts, 3–5 iterations</td><td>$30–80</td><td>GEPA's own ablation: this gets ~half the lift for ~2% of
+        the cost. Escalate only if it plateaus below demonstrated headroom.</td></tr>
+    <tr><td class="num">2</td><td>Real GEPA (<code>optimize_anything</code>, drives <code>claude&nbsp;-p</code> as a
+        subprocess natively; skip DSPy). Generator haiku/sonnet, reflection opus — cheap-model-optimize-then-transfer
+        is now published (GEPA Obs. 6) and matches the July gskill result. First target: a fenced block of
+        <code>prompts/intake.md</code> — replay harness exists, no upstream to archive, spec errors are the most
+        expensive downstream.</td><td>$250–400 / round</td><td>—</td></tr>
+  </table>
+  <p><em>Why not end-to-end optimization: GEPA's published budgets are 1,800–7,000 rollouts — $55k–$212k at our run
+  cost. Per-stage replay against archived artifacts is the published escape hatch, and our archive enables it.</em></p>
+</section>
+
+<section>
+  <h2>6 · Build order &amp; your touchpoints</h2>
+  <p><span class="chip">1</span> archive + OTel/Langfuse + surface toggle
+     <span class="chip">2</span> prompt registry (minimal: versions table, data-dir files, export dir)
+     <span class="chip">3</span> Judge 1 + 20 corruptions
+     <span class="chip">4</span> your 30-min labeling sitting
+     <span class="chip">5</span> rungs 0–1 at n=8
+     <span class="chip">6</span> Judges 2–3, rung 2
+     <span class="chip">7</span> paired test in stats.py, Phase 0–1
+     <span class="chip">8</span> rung 3 PR-mirrors
+     <span class="chip">9</span> Phase 2 if warranted, meta-agent trigger wiring</p>
+  <p>Driver attention needed at exactly three points: this review, the labeling sitting, and each promotion surface.</p>
+</section>
+
+<section>
+  <h2>Risks &amp; open questions</h2>
+  <p><strong>Repo no longer self-contained.</strong> Prompts-in-registry means a bare checkout doesn't reproduce
+  behavior; the git-backed export mitigates but doesn't erase this. Eyes-open cost of the choice.</p>
+  <p><strong>Judge-hacking is the standing threat, not a tail risk.</strong> Measured: optimized prompts flagged as
+  prompt-hacking 86% of the time while <em>scoring higher</em>; strict rubrics (ours) overfit harder than lenient
+  ones. The adoption gate + post-round judge re-validation are the mitigations; the promotion surface keeps you in
+  the loop at human cadence until trust is earned.</p>
+  <p><strong>Expect a small accuracy prize.</strong> Where seed prompts are already strong, published gains are
+  mostly latency/length, not correctness. Phase 0 exists to find out before we spend.</p>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Observability backend</h2>
+  <form data-review-surface-question="backend">
+    <label><input type="radio" name="backend" value="Langfuse self-hosted (recommended)"> <strong>Langfuse self-hosted</strong> — fuller: scores API for judge verdicts + labels, prompt-management UI over the registry. Cost: Postgres + ClickHouse + Redis compose stack, the CI deployment you mentioned.</label>
+    <label><input type="radio" name="backend" value="Phoenix"> <strong>Phoenix</strong> — single container, OTel-native, lighter; no scores/prompt UI, so eval history lives only in our own store.</label>
+    <label><input type="radio" name="backend" value="Defer — OTel now, pick backend later"> <strong>Defer</strong> — ship OTel instrumentation now, choose the backend when the CI deployment happens. Swapping is config either way.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Promotion autonomy at the start</h2>
+  <form data-review-surface-question="promotion">
+    <label><input type="radio" name="promotion" value="Surface every promotion at first (recommended)"> <strong>Surface everything at first</strong> — every candidate→active promotion gets a surface until the loop earns trust; loosen to auto-promote-small-deltas later. Slower, safer while judges are uncalibrated.</label>
+    <label><input type="radio" name="promotion" value="Auto-promote small deltas from day one"> <strong>Auto-promote small deltas from day one</strong> — gate mechanically, surface only big changes. Faster loop, rests entirely on the adoption gate from the start.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Registry sequencing</h2>
+  <form data-review-surface-question="registry-when">
+    <label><input type="radio" name="registry-when" value="Registry early, step 2 (recommended)"> <strong>Registry early (build-order step 2)</strong> — provenance from the first eval run; every judged artifact knows its prompt version. Small: versions table + data-dir files + export dir.</label>
+    <label><input type="radio" name="registry-when" value="Prompts stay in repo until judges are calibrated"> <strong>Defer until judges are calibrated</strong> — less churn now; costs us version provenance on the early eval runs and a migration later.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Rung-3 PR-mirror source</h2>
+  <form data-review-surface-question="mirror-repo">
+    <label><input type="checkbox" name="mirror-repo" value="cadre-runner's own history"> <strong>cadre-runner's own history</strong> — richest context match; the pipeline re-derives its own past changes.</label>
+    <label><input type="checkbox" name="mirror-repo" value="arboreus-api"> <strong>arboreus-api</strong> — real project, different domain, tests exist.</label>
+    <label><input type="checkbox" name="mirror-repo" value="review-surface fork"> <strong>review-surface fork</strong> — JS/node diversity, 1000+ tests.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Verdict</h2>
+  <form data-review-surface-question="verdict">
+    <label><input type="radio" name="verdict" value="approve"> <strong>Approve</strong> — build in the order above.</label>
+    <label><input type="radio" name="verdict" value="approve-with-notes"> <strong>Approve with notes</strong> — proceed, incorporating my annotations and queued answers.</label>
+    <label><input type="radio" name="verdict" value="revise"> <strong>Revise</strong> — rework per annotations and bring the plan back.</label>
+    <textarea name="note" placeholder="Anything the radio doesn't capture…"></textarea>
+    <button type="submit">Queue verdict</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'Eval plan — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision',
+        text: q + ': ' + values.join('; '),
+        element: form,
+        queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  const diagrams = [...document.querySelectorAll(".mermaid")].map((el) => ({ el, src: el.innerHTML }));
+  async function render() {
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+    try { await mermaid.run({ nodes: diagrams.map((d) => d.el) }); }
+    catch (error) { console.error("Mermaid diagram render failed:", error); }
+  }
+  if (document.readyState === "complete") render();
+  else window.addEventListener("load", render, { once: true });
+</script>
+
+</body>
+</html>

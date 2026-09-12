@@ -547,6 +547,63 @@ def test_gh_watch_reports_merges_and_summons():
     assert gh_watch.watch(b, FakeGH(), FakeReg(), seen) == []
 
 
+def test_ready_events_fill_the_contract_less_hole():
+    """The first engine-only run stalled at phase->slices: no contract merge
+    exists in the contract-less flow, so nothing could spawn tests. gh_watch's
+    ready events fill exactly that hole — and ONLY that hole: a slice whose
+    predecessor has a real PR keeps the merge-event fast path."""
+    d = scratch()
+    b = board(d)
+
+    class FakeGH:
+        def pulls(self, repo, base=None, head=None, etag=True):
+            return []
+
+        def issue_comments_since(self, repo, since):
+            return []
+
+        def review_comments_since(self, repo, since):
+            return []
+
+    story = {
+        "repo": "o/r", "status": "active", "phase": "slices",
+        "feature_branch": "feat/nex-1", "since": "2026-01-01T00:00:00Z",
+        "planning_pr": 7,
+        "plan_slices": [{"name": "a", "nodes": ["tests", "build"]},
+                        {"name": "b", "nodes": ["tests", "build"]}],
+        # what _seed_manifest leaves behind: contract exempt, no contract PR
+        "slices": {"a": {"contract_merged": True},
+                   "b": {"contract_merged": True}},
+    }
+
+    class FakeReg:
+        data = {"stories": {"nex-1": story}}
+
+        def stories(self, status="active"):
+            return self.data["stories"]
+
+    gh_watch.Seen(d / "seen.json").save()  # baseline pass done
+    seen = gh_watch.Seen(d / "seen.json")
+    events = gh_watch.watch(b, FakeGH(), FakeReg(), seen)
+    ready = [e for e in events if e["payload"].get("state") == "ready"]
+    assert {(e["payload"]["role"], e["payload"]["slice"]) for e in ready} \
+        == {("tests", "a"), ("tests", "b")}
+
+    # the engine turns each ready event into a tests spawn
+    spawns, _ = engine.tick(b, actions(), seeded(d), d)
+    assert [s["node"] for s in spawns].count("tests") == 2
+
+    # idempotent: the next pass emits nothing new
+    again = gh_watch.watch(b, FakeGH(), FakeReg(), seen)
+    assert [e for e in again if e["payload"].get("state") == "ready"] == []
+
+    # a slice with a REAL contract PR is the merge chain's business, not ours
+    story["slices"]["c"] = {"contract_merged": True, "contract_pr": 5}
+    story["plan_slices"].append({"name": "c", "nodes": ["tests", "build"]})
+    more = gh_watch.watch(b, FakeGH(), FakeReg(), seen)
+    assert [e for e in more if e["payload"].get("state") == "ready"] == []
+
+
 # --------------------------------------------------------------------------- engine-only
 
 

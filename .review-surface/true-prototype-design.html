@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadre True Prototype — De-hardcoding Design</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+  .cols > div { min-width: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .cols h3 { margin-top: 0; }
+  .queued-note { display: none; font: 12px var(--mono); color: var(--good); margin-top: 8px; }
+  form.answered .queued-note { display: block; }
+</style>
+</head>
+<body>
+
+<h1>True Prototype: De-hardcoding Cadre</h1>
+<div class="meta">cadre-runner · design for review · 2026-09-09 · grounded in
+<code>cadre-context/blackboard/decisions/*</code> (read-only — nothing added) · plan doc <code>evals/PLAN-2026-09.md</code></div>
+<div>
+  <span class="chip">design — nothing built</span>
+  <span class="chip good">follows decided blackboard vocabulary</span>
+</div>
+
+<section>
+  <h2>The claim to prove</h2>
+  <p>Today the prototype proves “this specific 7-stage pipeline works.” The system claim is
+  <strong>“agnostic skill/agent/workflow nodes, connected via the board”</strong> — and the falsifiable test is:
+  <em>define a second, different workflow in config only, and the same engine runs it with zero code changes.</em></p>
+  <p>The blackboard design is already decided through five HITL rounds — event (namespace · topic · key · kind ·
+  provenance), eight communication kinds, <strong>action = trigger → body → emitter</strong>, observed vs claimed
+  reads with board-owned cursors, leases, in-tray, firing log, failure = signal → triage action. The Rust crate is a
+  184-line stub (Event + JSONL store), so the decisions are finished; the code isn't. The prototype should
+  <strong>consume the decided semantics, not reinvent them</strong> — and this also delivers blackboard acceptance
+  scenario #1 (“Cadre stage→stage”, NEX-217).</p>
+</section>
+
+<section>
+  <h2>Current vs target</h2>
+  <div class="mermaid">
+flowchart TB
+  subgraph NOW["Today — hardcoded"]
+    A1[pipeline.py stage graph<br/>transitions as code] --> A2[claude -p stages<br/>prompts/*.md files]
+    A3[implicit blackboard:<br/>registry.json + PR state + board events]
+  end
+  subgraph TARGET["True prototype"]
+    B1[board<br/>events: namespace/topic/key/kind] --> B2[engine<br/>match triggers, run actions]
+    B2 --> B3[node sessions<br/>claude -p from registry defs]
+    B3 -- emit --> B1
+    B4[workflow = config file<br/>a list of actions] --> B2
+    B5[node registry<br/>prompt version + model + IO] --> B3
+    B6[GitHub adapter<br/>polls, writes events] --> B1
+  end
+  </div>
+</section>
+
+<section>
+  <h2>The four pieces</h2>
+  <div class="cols">
+    <div><h3>1 · Board (semblance)</h3>
+      <p>One SQLite file in the data dir implementing the decided semantics faithfully: typed events with the fixed
+      header (namespace, topic, key, kind, provenance-from-env), the eight kinds validated at write, observed reads
+      with board-owned cursors, claimed reads with lease + deadline, in-tray as consumed-once read on own key,
+      separate firing log, <code>correlation_id</code> / <code>visible_after</code> headers. Nothing invented —
+      schema transcribed from the decision entries.</p></div>
+    <div><h3>2 · Node registry</h3>
+      <p>The registry from the approved plan, holding <strong>node definitions</strong>: name, versioned prompt,
+      model pin, what it reads (trigger shape), what it emits (kinds). Content-addressed versions + lineage;
+      git-backed export dir. Stage sessions get their prompt by version id, and every run records it.</p></div>
+    <div><h3>3 · Workflow as config</h3>
+      <p>A workflow file is a <strong>list of actions</strong> — trigger (topic/key/kind/condition, may read board
+      state) → optional body (spawn a node session) → emitter (in-tray, new event, webhook, HITL surface). The
+      7-stage pipeline becomes ~a dozen actions: <code>signal:finished kind from intake → spawn planning</code>,
+      <code>risk:high event → spawn risk-triage</code>, <code>ask event → HITL emitter</code>. The daemon's tick
+      becomes a generic engine: read new events, match triggers, fire, log.</p></div>
+    <div><h3>4 · GitHub adapter</h3>
+      <p>The existing poller shrinks to an adapter: it watches PRs/checks and <strong>writes board events</strong>
+      (pr-opened, checks-green, merged). Automerge and surface gates become actions like everything else. GitHub
+      stops being half the state store.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>What stays untouched</h2>
+  <p>The Rust blackboard crate and its Linear project (the board schema here is a faithful consumer, and swapping
+  SQLite-in-Python for the crate via PyO3 later is mechanical because the vocabulary matches). The blackboard
+  context — referenced only. The stage prompts' content. Surfaces, ask/park/revive, worktrees — they become
+  emitters/actions but keep their behavior. Evals: fixture stories + deterministic claims are the regression net
+  run before and after the refactor.</p>
+</section>
+
+<section>
+  <h2>Proof workflows</h2>
+  <p><strong>Workflow #1</strong>: the existing 7-stage pipeline, expressed purely as config, passes a rung-0
+  fixture story end-to-end with both gates on surfaces — same behavior, zero stage logic in engine code.</p>
+  <p><strong>Workflow #2 (the agnosticism proof)</strong>: a genuinely different shape defined in config only.
+  Recommended: a 3-node <em>eval workflow</em> — run-fixture → judge-artifacts → report-to-HITL — because it proves
+  the claim <em>and</em> is the eval runner we want anyway, giving “evaluate individual nodes / e2e workflows”
+  its first real form. Alternative: a trivial 2-node demo (cheaper, proves less).</p>
+</section>
+
+<section>
+  <h2>Risks</h2>
+  <p><strong>Transition messiness</strong> — two mechanisms coexisting if we migrate stage-by-stage. Proposal:
+  convert the whole graph in one pass on a branch, with the fixture suite as the gate to swap over.</p>
+  <p><strong>Semantics drift</strong> — a Python semblance that quietly diverges from the decided design would
+  poison the later crate swap. Mitigation: the board module's docstrings cite the decision entries per feature, and
+  anything the decisions don't cover gets flagged to you rather than improvised.</p>
+  <p><strong>Scope creep</strong> — the engine only needs what workflow #1 and #2 use. Kinds or delivery modes
+  nothing exercises yet stay unimplemented (typed but rejected as “not in v0-proto”).</p>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Board implementation for the prototype</h2>
+  <form data-review-surface-question="board-impl">
+    <label><input type="radio" name="board-impl" value="Python semblance in cadre-runner (recommended)"> <strong>Python semblance inside cadre-runner</strong> — faithful to decided semantics, days not weeks, Rust project untouched; crate swap later is mechanical.</label>
+    <label><input type="radio" name="board-impl" value="Extend Rust crate + PyO3 now"> <strong>Extend the Rust crate to v0 + PyO3 now</strong> — the intended end state ("Cadre consumes the same implementation"), but it's the Blackboard project's own work queue and much heavier.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Migration strategy</h2>
+  <form data-review-surface-question="migration">
+    <label><input type="radio" name="migration" value="Full conversion on a branch, fixture-gated (recommended)"> <strong>Full conversion in one pass</strong> — whole stage graph becomes config on a branch; fixture suite green before swap. No dual mechanisms.</label>
+    <label><input type="radio" name="migration" value="Incremental, stage by stage"> <strong>Incremental</strong> — wire one transition (intake→planning) through the board first, expand outward. Earlier signal, longer messy middle.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Second workflow (the agnosticism proof)</h2>
+  <form data-review-surface-question="workflow2">
+    <label><input type="radio" name="workflow2" value="Eval workflow: run-fixture, judge, report (recommended)"> <strong>Eval workflow</strong> — run-fixture → judge → HITL report. Proves the claim and is the eval runner we want anyway.</label>
+    <label><input type="radio" name="workflow2" value="Trivial 2-node demo"> <strong>Trivial 2-node demo</strong> — cheapest possible proof, no reuse value.</label>
+    <label><input type="radio" name="workflow2" value="Something else (annotate)"> <strong>Something else</strong> — annotate what you'd rather see.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Verdict</h2>
+  <form data-review-surface-question="verdict">
+    <label><input type="radio" name="verdict" value="approve"> <strong>Approve</strong> — build it as designed.</label>
+    <label><input type="radio" name="verdict" value="approve-with-notes"> <strong>Approve with notes</strong> — proceed incorporating my annotations and answers.</label>
+    <label><input type="radio" name="verdict" value="revise"> <strong>Revise</strong> — rework per annotations and bring it back.</label>
+    <textarea name="note" placeholder="Anything the radios don't capture…"></textarea>
+    <button type="submit">Queue verdict</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'Prototype design — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision',
+        text: q + ': ' + values.join('; '),
+        element: form,
+        queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  const diagrams = [...document.querySelectorAll(".mermaid")].map((el) => ({ el, src: el.innerHTML }));
+  async function render() {
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+    try { await mermaid.run({ nodes: diagrams.map((d) => d.el) }); }
+    catch (error) { console.error("Mermaid diagram render failed:", error); }
+  }
+  if (document.readyState === "complete") render();
+  else window.addEventListener("load", render, { once: true });
+</script>
+
+</body>
+</html>

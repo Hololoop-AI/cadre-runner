@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine E2E Test — Real Ticket Run</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>
+  .queued-note { display: none; font: 12px var(--mono); color: var(--good); margin-top: 8px; }
+  form.answered .queued-note { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Engine E2E: First Real Ticket</h1>
+<div class="meta">true-prototype branch · test plan for review · 2026-09-10 · suite at 61 green + engine-only seams in flight</div>
+<div>
+  <span class="chip">plan — awaiting your call</span>
+  <span class="chip good">agnosticism proof passed</span>
+  <span class="chip good">judge live-validated</span>
+</div>
+
+<section>
+  <h2>Where the build stands</h2>
+  <p>The conversion is complete and green: board (SQLite, decided semantics) · node registry (versioned prompts,
+  agent command as data) · engine (16 pipeline actions + 3 eval actions from config) · Judge 1 live-validated
+  (caught exactly the 3 seeded corruptions, 7/7 on the clean briefing). Being finished right now:
+  <strong>engine-only mode</strong> (<code>CADRE_ENGINE=only</code> — engine drives, legacy dispatch off, round
+  caps enforced at spawn from the firing log), the <strong>story-text seam</strong> (story text rides the intake
+  command event), and a <strong>preflight script</strong> (nodes seeded, configs valid, gh/claude available).</p>
+</section>
+
+<section>
+  <h2>The test</h2>
+  <div class="mermaid">
+flowchart LR
+  A[deploy true-prototype<br/>to fedora-1] --> B[preflight PASS] --> C[seed nodes<br/>CADRE_ENGINE=only]
+  C --> D[start ticket] --> E[engine drives stages<br/>via board events]
+  E --> F[gates on surfaces<br/>as usual: spec + final]
+  E --> G[firing log = the record<br/>every transition auditable]
+  </div>
+  <p>Target repo stays the abandoned v1 (<code>Hololoop-AI/cadre</code>) — throwaway, zero risk. Your interaction
+  is unchanged: spec review and final review arrive as surfaces; approve/annotate there. What's new underneath:
+  every stage transition is an action firing on the board, and the firing log gives us a complete audit trail we
+  never had — including for the eval program later. I'll watch the run and report anomalies; deviations from the
+  legacy path's behavior are findings, not failures.</p>
+  <p><strong>Known gaps going in (accepted for this test):</strong> surfaces/ask-park-revive/automerge internals
+  still run their existing code paths (they were scoped out of the conversion); manifest routing is computed in
+  gh_watch; if the engine path wedges, flipping <code>CADRE_ENGINE</code> off restores legacy behavior on the same
+  state — that's the rollback.</p>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Which ticket</h2>
+  <form data-review-surface-question="ticket">
+    <label><input type="radio" name="ticket" value="NEX-166 report-grade comms (recommended)"> <strong>NEX-166 — report-grade comms</strong> (Todo): BLUF/pyramid output + title grammar. Self-contained, multi-slice-able, easy for you to judge quality at the gates.</label>
+    <label><input type="radio" name="ticket" value="NEX-173 usage-limit pause/resume"> <strong>NEX-173 — usage-limit pause/resume</strong> (Todo): meatier, touches session infra; a harder honest test.</label>
+    <label><input type="radio" name="ticket" value="NEX-151 restart under engine"> <strong>NEX-151 — restart the parked story</strong>: also exercises the untested revise loop, but drags mid-flight legacy state into the first engine run.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Mode for the first run</h2>
+  <form data-review-surface-question="mode">
+    <label><input type="radio" name="mode" value="engine-only (recommended)"> <strong>Engine-only</strong> — the honest test; legacy dispatch off, rollback is flipping the env var.</label>
+    <label><input type="radio" name="mode" value="shadow first, then engine-only"> <strong>Shadow first</strong> — one run with legacy driving + engine mirroring, diff the firing log against legacy behavior, then rerun engine-only. Safer, costs one extra story run (~$25–35).</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Go / hold</h2>
+  <form data-review-surface-question="go">
+    <label><input type="radio" name="go" value="go"> <strong>Go</strong> — deploy to fedora-1 and start as soon as seams + preflight are green.</label>
+    <label><input type="radio" name="go" value="hold"> <strong>Hold</strong> — wait for my note before deploying.</label>
+    <textarea name="note" placeholder="Anything else…"></textarea>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'Engine e2e — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision', text: q + ': ' + values.join('; '), element: form, queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  const diagrams = [...document.querySelectorAll(".mermaid")].map((el) => ({ el, src: el.innerHTML }));
+  async function render() {
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+    try { await mermaid.run({ nodes: diagrams.map((d) => d.el) }); }
+    catch (error) { console.error("Mermaid render failed:", error); }
+  }
+  if (document.readyState === "complete") render();
+  else window.addEventListener("load", render, { once: true });
+</script>
+
+</body>
+</html>

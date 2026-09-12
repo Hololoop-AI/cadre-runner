@@ -92,6 +92,34 @@
     },
 
     {
+      "name": "slice-ready-to-tests",
+      "_why": "dispatcher.ready_actions' hole-filler: in the contract-less flow there is no contract merge for tests to chain off (the spec IS the contract), so gh_watch emits `ready` for a stage whose predecessor is flow-exempt. First engine-only run stalled at phase->slices without this (2026-09-11).",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "tests"},
+                            {"op": "payload_eq", "field": "state", "value": "ready"}]},
+      "body": {"type": "spawn_node", "node": "tests"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "tests",
+                              "story": "{payload[story]}", "slice": "{payload[slice]}",
+                              "pr": "{payload[pr]}"}}
+    },
+
+    {
+      "name": "slice-ready-to-build",
+      "_why": "Same hole-filler as slice-ready-to-tests, for a flow whose slice skips the tests node — build would otherwise wait on a tests merge that can never happen.",
+      "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
+                  "where": [{"op": "payload_eq", "field": "role", "value": "build"},
+                            {"op": "payload_eq", "field": "state", "value": "ready"}]},
+      "body": {"type": "spawn_node", "node": "build"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "stages",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "build",
+                              "story": "{payload[story]}", "slice": "{payload[slice]}",
+                              "pr": "{payload[pr]}"}}
+    },
+
+    {
       "name": "contract-merged-to-tests",
       "_why": "dispatcher.dispatch, pr_merged/contract -> run_stage tests for that slice.",
       "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
