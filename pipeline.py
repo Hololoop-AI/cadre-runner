@@ -541,6 +541,13 @@ def _try_automerge(cfg, reg, ghc, slug, story, engine_only=False):
                 log(f"{slug}: title lint blocked auto-merge on PR #{num_s}: {detail.get('title')!r}")
             elif "driver gate" in reason or "human" in reason:
                 pass  # expected waits — don't spam the log
+            elif not reg.seen(story, "merge_block", f"{num_s}:{reason}"):
+                # Any OTHER hold logs once per (PR, reason). A tests PR with no
+                # Risk line and a by-design-red suite blocked here for 13 hours
+                # with zero output (first engine e2e run, 2026-09-12) — a merge
+                # gate that says nothing is an invisible wedge.
+                reg.mark_seen(story, "merge_block", f"{num_s}:{reason}")
+                log(f"{slug}: auto-merge blocked on {p['role']} PR #{num_s}: {reason}")
         except runs_mod.RunsBusy as e:
             log(f"{slug}: reconcile deferred for PR #{num_s} ({e})")
         except Exception as e:

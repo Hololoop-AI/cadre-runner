@@ -11,6 +11,7 @@ The driver approved the spec: slice `$slice`'s contract is locked with it (unifi
 4. Push; open the Tests PR (base `$feature_branch`) titled "[$story_slug][tests][<o>/<N>] $slice" — `<o>/<N>` from the slice's `review_order` in the planning artifact's slice list (omit the token if the plan carries no ordering). Body:
    - per test: the contract case it proves + its captured failure reason (evidence it's red for the right reason)
    - the line: "**Merging locks these tests.** Build implements against them and may not modify them."
+   - a `Risk: <low|medium|high> — <why>` line. REQUIRED: the red-tests tolerance in the merge gate only applies to a PR that carries this line — without it, auto-merge blocks on the by-design-red suite and the pipeline stalls (observed on the first engine e2e run, 2026-09-12).
 
 Tests define done — write them from the contract, not from any implementation ideas. Never merge anything.
 
