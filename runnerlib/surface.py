@@ -436,7 +436,11 @@ def _sweep_stale(cfg, reg, log) -> None:
             st = stories.get(meta["story"])
             if st is None:
                 stale = True  # story record deleted (reset/re-plan)
-            elif st.get("status") != "active":
+            elif st.get("status") not in ("active", "intaking"):
+                # "intaking" is live: S0 asks questions too, and treating it
+                # as dead closed an ask surface 56s after it opened — the
+                # driver was left a form that posts into nothing (observed on
+                # the nex-151 clean run, 2026-09-12).
                 stale = True
             elif (meta.get("kind") == "spec_review" and meta.get("pr")
                   and st.get("planning_pr")
@@ -470,11 +474,19 @@ def _tick(cfg, reg, ghc, log) -> None:
                 _consume(cfg, reg, ghc, log, hit[0], hit[1])
         sess = sessions(cfg)  # consuming may close sessions
 
-    # 2) new pending questions get artifacts
-    open_tickets = {m.get("ticket") for m in sess.values() if m.get("kind") == "ask"}
+    # 2) new pending questions get artifacts. Only OPEN sessions suppress
+    # re-authoring — counting closed ones meant a question whose surface got
+    # swept could never come back, leaving a parked session waiting on an
+    # answer the driver had no way to give.
+    open_tickets = {m.get("ticket") for m in sess.values()
+                    if m.get("kind") == "ask" and m.get("open")}
+    stories = (reg.data.get("stories") or {}) if reg is not None else {}
     for msg in messages.pending(cfg.data_dir):
         if msg["ticket"] in open_tickets:
             continue
+        st = stories.get(msg.get("story") or "")
+        if st is None or st.get("status") not in ("active", "intaking"):
+            continue  # same liveness rule as the sweep, or the two would churn
         path = author_question(cfg, msg)
         open_session(cfg, path, "ask", log, ticket=msg["ticket"],
                      story=msg.get("story"), pr=msg.get("pr"))
