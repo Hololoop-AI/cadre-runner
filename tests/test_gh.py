@@ -1,101 +1,80 @@
-"""Offline tests for the GitHub client's auth-refresh behavior: a 401 from a
-rotated keyring token must trigger one `gh auth token` re-read + retry, never
-a permanent replay of the dead credential."""
+"""Offline tests for the gh-CLI transport: the client shells out to `gh api
+--include` and must parse status/headers itself, because gh treats a 304 as
+an error exit while the runner treats it as the cheap, rate-limit-free
+answer it is. No network, no gh binary — subprocess.run is faked."""
 
-import io
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import runnerlib.gh as gh_mod
-from runnerlib.gh import GitHub
+from runnerlib.gh import NOT_MODIFIED, GitHub
 
 
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.github.com/x", code, "err", {}, io.BytesIO(b"{}"))
+class _Proc:
+    def __init__(self, stdout, returncode=0, stderr=""):
+        self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
 
 
-class FakeResp:
-    headers = {}
-
-    def read(self):
-        return b'{"ok": true}'
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
+def _resp(status="200 OK", headers=None, body="{}", code=0):
+    head = "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items())
+    return _Proc(f"HTTP/2.0 {status}\r\n{head}\r\n{body}", code)
 
 
-def run(tmp: Path):
-    tokens = iter(["stale-token", "fresh-token"])
-    calls = []
+class _Fake:
+    """Queue of canned responses; records every argv."""
 
-    class FakeProc:
-        def __init__(self):
-            self.stdout = next(tokens) + "\n"
+    def __init__(self, *procs):
+        self.procs, self.calls = list(procs), []
 
-    gh_mod.subprocess.run, real_sub = (lambda *a, **k: FakeProc()), gh_mod.subprocess.run
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        return self.procs.pop(0)
 
-    def fake_urlopen(req, timeout=None):
-        calls.append(req.headers["Authorization"])
-        if "stale-token" in req.headers["Authorization"]:
-            raise _http_error(401)
-        return FakeResp()
 
-    urllib.request.urlopen, real_open = fake_urlopen, urllib.request.urlopen
+def test_get_parses_body_and_stores_etag(monkeypatch, tmp_path):
+    fake = _Fake(_resp(headers={"ETag": 'W/"abc"'}, body='{"ok": true}'))
+    monkeypatch.setattr(gh_mod.subprocess, "run", fake)
+    gh = GitHub(tmp_path / "etags.json")
+    assert gh.get("/repos/o/r/pulls", etag=True) == {"ok": True}
+    assert gh.etags["/repos/o/r/pulls"] == 'W/"abc"'
+    assert fake.calls[0][:3] == ["gh", "api", "--include"]
+
+
+def test_304_returns_not_modified_and_sends_the_etag(monkeypatch, tmp_path):
+    fake = _Fake(_resp(headers={"ETag": 'W/"abc"'}, body="[]"),
+                 _resp(status="304 Not Modified", body="", code=1))
+    monkeypatch.setattr(gh_mod.subprocess, "run", fake)
+    gh = GitHub(tmp_path / "etags.json")
+    assert gh.get("/repos/o/r/pulls", etag=True) == []
+    assert gh.get("/repos/o/r/pulls", etag=True) is NOT_MODIFIED
+    assert 'If-None-Match: W/"abc"' in fake.calls[1]
+
+
+def test_http_error_raises_with_status(monkeypatch, tmp_path):
+    fake = _Fake(_resp(status="404 Not Found", body='{"message": "gone"}', code=1))
+    monkeypatch.setattr(gh_mod.subprocess, "run", fake)
+    gh = GitHub(tmp_path / "etags.json")
     try:
-        # 401 on the cached token -> re-read -> retried with the fresh one
-        gh = GitHub(tmp / "etags.json")
-        assert gh.get("/repos/o/r/pulls") == {"ok": True}
-        assert calls == ["Bearer stale-token", "Bearer fresh-token"]
-
-        # a 401 on the SECOND attempt raises (no infinite retry loop)
-        calls.clear()
-        gh2 = GitHub(tmp / "etags2.json")
-        gh2._token = "stale-token"
-        tokens_dead = iter(["stale-token"])
-
-        class DeadProc:
-            def __init__(self):
-                self.stdout = next(tokens_dead) + "\n"
-
-        gh_mod.subprocess.run = lambda *a, **k: DeadProc()
-        try:
-            gh2.get("/repos/o/r/pulls")
-            raise AssertionError("expected RuntimeError on persistent 401")
-        except RuntimeError as e:
-            assert "401" in str(e)
-        assert calls == ["Bearer stale-token", "Bearer stale-token"]
-
-        # non-auth errors are untouched: a 404 raises immediately, one attempt
-        calls.clear()
-
-        def urlopen_404(req, timeout=None):
-            calls.append(1)
-            raise _http_error(404)
-
-        urllib.request.urlopen = urlopen_404
-        gh3 = GitHub(tmp / "etags3.json")
-        gh3._token = "fresh-token"
-        try:
-            gh3.get("/repos/o/r/missing")
-            raise AssertionError("expected RuntimeError on 404")
-        except RuntimeError as e:
-            assert "404" in str(e)
-        assert calls == [1]
-    finally:
-        urllib.request.urlopen = real_open
-        gh_mod.subprocess.run = real_sub
-    print("gh auth-refresh tests: all passed")
+        gh.get("/repos/o/r/missing")
+        raise AssertionError("expected RuntimeError on 404")
+    except RuntimeError as e:
+        assert "404" in str(e) and "gone" in str(e)
 
 
-if __name__ == "__main__":
-    import tempfile
+def test_pagination_follows_the_absolute_next_link(monkeypatch, tmp_path):
+    nxt = "https://api.github.com/repos/o/r/pulls?page=2"
+    fake = _Fake(_resp(headers={"Link": f'<{nxt}>; rel="next"'}, body='[1]'),
+                 _resp(body='[2]'))
+    monkeypatch.setattr(gh_mod.subprocess, "run", fake)
+    gh = GitHub(tmp_path / "etags.json")
+    assert gh.get("/repos/o/r/pulls") == [1, 2]
+    assert fake.calls[1][-1] == nxt  # gh api accepts the absolute URL verbatim
 
-    with tempfile.TemporaryDirectory() as td:
-        run(Path(td))
+
+def test_web_url_follows_gh_host(monkeypatch):
+    monkeypatch.delenv("GH_HOST", raising=False)
+    assert gh_mod.web_url("o/r", 7) == "https://github.com/o/r/pull/7"
+    monkeypatch.setenv("GH_HOST", "github.corp.example")
+    assert gh_mod.web_url("o/r", 7) == "https://github.corp.example/o/r/pull/7"

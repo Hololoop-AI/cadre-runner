@@ -31,7 +31,7 @@ import time
 from html import escape
 from pathlib import Path
 
-from . import board_events, dispatcher
+from . import board_events, dispatcher, gh
 
 CLI = "review-surface"
 _DECISION_RE = re.compile(
@@ -118,7 +118,7 @@ def author_risk_hold(cfg, slug: str, pr: int, detail: dict, stage: str,
                      files: list | None = None) -> Path:
     """A decision brief, not a body dump: what the change is, what it touches,
     why it held — with the full report collapsed for when it's needed."""
-    url = f"https://github.com/{detail.get('base', {}).get('repo', {}).get('full_name') or ''}/pull/{pr}"
+    url = gh.web_url(detail.get('base', {}).get('repo', {}).get('full_name') or '', pr)
     html_url = detail.get("html_url") or url
     token = f"CADRE_DECISION gate=risk_hold story={slug} pr={pr} verdict="
     body_text = detail.get("body") or ""

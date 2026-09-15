@@ -31,6 +31,8 @@ import json
 import os
 import urllib.request
 
+from . import gh
+
 LINEAR_API = "https://api.linear.app/graphql"
 
 
@@ -166,7 +168,7 @@ def status_text(story: dict, max_rounds: int) -> str:
             "done": "Done"}.get(phase, phase)
     repo = story["repo"]
     pr = story.get("planning_pr")
-    lines.append(f"**{head}** · [planning PR #{pr}](https://github.com/{repo}/pull/{pr})"
+    lines.append(f"**{head}** · [planning PR #{pr}]({gh.web_url(repo, pr)})"
                  if pr else f"**{head}**")
     if phase == "interrogate" and story["iterations"]["interrogate"]:
         lines.append(f"interrogation rounds: {story['iterations']['interrogate']}/{max_rounds}")
@@ -176,7 +178,7 @@ def status_text(story: dict, max_rounds: int) -> str:
             if s.get(f"{r}_merged"):
                 cells.append(f"{r} ✅")
             elif s.get(f"{r}_pr"):
-                cells.append(f"[{r} #{s[f'{r}_pr']}](https://github.com/{repo}/pull/{s[f'{r}_pr']})")
+                cells.append(f"[{r} #{s[f'{r}_pr']}]({gh.web_url(repo, s[f'{r}_pr'])})")
             else:
                 cells.append(f"{r} —")
         lines.append(f"- `{name}`: " + " · ".join(cells))

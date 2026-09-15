@@ -31,6 +31,7 @@ from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib.dispatcher import AGENT_MARKER
+from runnerlib import gh
 from runnerlib.gh import NOT_MODIFIED, GitHub
 from runnerlib.registry import Registry, classify_branch, feature_branch, slugify, stage_branch
 
@@ -178,7 +179,7 @@ def _finish_intake(cfg, reg, ghc, slug, story, ok):
         try:
             if planning:
                 board.attach(story["board"]["issue_id"],
-                             f"https://github.com/{story['repo']}/pull/{planning['number']}",
+                             gh.web_url(story['repo'], planning['number']),
                              f"Planning PR #{planning['number']}")
         except Exception as e:
             log(f"{slug}: board attach failed: {e}")
@@ -514,7 +515,7 @@ def _try_automerge(cfg, reg, ghc, slug, story, engine_only=False):
                                   slice=p.get("slice"), risk="high",
                                   title=detail.get("title"),
                                   status="awaiting-review",
-                                  url=f"https://github.com/{story['repo']}/pull/{num_s}")
+                                  url=gh.web_url(story['repo'], num_s))
                 log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
                 # Risk triage (driver decision 2026-08-30): a hold spawns a
                 # second independent assessor that audits the grade — it may

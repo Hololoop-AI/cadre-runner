@@ -41,7 +41,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import automerge, config as config_mod, dispatcher, poller
+from . import automerge, config as config_mod, dispatcher, gh as gh_mod, poller
 from .blackboard import Board
 from .gh import NOT_MODIFIED, GitHub
 from .registry import Registry, classify_branch, feature_branch
@@ -139,7 +139,7 @@ def _watch_story(board, ghc, reg, seen, slug, story, cfg) -> list[dict]:
         payload = {"status": "finished", "state": "merged", "story": slug,
                    "repo": repo, "role": p["role"], "slice": p["slice"] or "",
                    "pr": p["number"],
-                   "url": f"https://github.com/{repo}/pull/{num_s}"}
+                   "url": gh_mod.web_url(repo, num_s)}
         if p["role"] == "planning":
             payload["flow"] = _plan_flow(ghc, repo, p["number"])
         out.append(board.write(NAMESPACE, TOPIC, key, "signal", payload))
@@ -159,7 +159,7 @@ def _watch_story(board, ghc, reg, seen, slug, story, cfg) -> list[dict]:
             continue
         base = {"status": "blocked", "state": "open", "story": slug, "repo": repo,
                 "role": p["role"], "slice": p["slice"] or "", "pr": p["number"],
-                "url": f"https://github.com/{repo}/pull/{num_s}"}
+                "url": gh_mod.web_url(repo, num_s)}
         if detail.get("mergeable") is False:
             if seen.take(f"conflict:{repo}:{num_s}:{detail.get('head', {}).get('sha')}"):
                 # The branch reconcile merges from — same rule as _maybe_reconcile:
