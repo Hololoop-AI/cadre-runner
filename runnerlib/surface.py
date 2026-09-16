@@ -272,6 +272,39 @@ def end_session(cfg, path: str, log) -> None:
     log(f"surface: ended session for {Path(path).name}")
 
 
+def agent_reply(cfg, reg, ghc, log, path: Path, message: str) -> bool:
+    """Answer the driver where they asked (audit 2026-09-15: feedback was
+    one-way — annotations went out to GitHub and nothing ever came back on the
+    surface). Posts into the session's conversation panel; no-ops when the CLI
+    is absent or the session is closed, and never raises.
+
+    --agent-reply rides a poll, and poll delivery CONSUMES: anything the driver
+    had queued comes back in this call's response and is handled here rather
+    than dropped. --timeout-ms 0 keeps the daemon tick from blocking on the
+    long poll this command would otherwise become."""
+    if not available():
+        return False
+    key = str(path)
+    meta = sessions(cfg).get(key) or {}
+    if not meta.get("open"):
+        return False
+    text = (message or "").strip()
+    if not text:
+        return False
+    try:
+        raw = _run_cli(["poll", key, "--agent-reply", text[:1000],
+                        "--timeout-ms", "0", "--json"], timeout=30)
+    except Exception as e:
+        log(f"surface: agent reply failed for {path.name}: {e}")
+        return False
+    try:
+        _handle_poll(cfg, reg, ghc, log, key, meta, raw)
+    except Exception as e:
+        log(f"surface: agent reply poll response unhandled for {path.name}: {e}")
+    log(f"surface: replied into {path.name}: {text[:120]}")
+    return True
+
+
 def _cursor_path(cfg) -> Path:
     return _dir(cfg) / "outbox.cursor"
 
@@ -304,28 +337,55 @@ def _read_outbox(cfg) -> list[dict]:
     return out
 
 
-def _classify_prompts(texts: list[str]) -> tuple[list[dict], list[str]]:
-    """(decisions/answers, free-text prompts). Tokens are authoritative; every
-    non-token prompt string is driver feedback worth recording."""
+ANCHOR_LIMIT = 200
+
+
+def _quote(anchor: str) -> str:
+    """The anchored text as a markdown blockquote above the driver's words. It
+    gets its own budget — an anchor must never eat into the driver's text."""
+    if not anchor:
+        return ""
+    text = anchor[:ANCHOR_LIMIT] + ("…" if len(anchor) > ANCHOR_LIMIT else "")
+    return "> " + text.replace("\n", "\n> ") + "\n\n"
+
+
+def _anchor(p: dict) -> dict:
+    """What the driver attached their words TO. The payload's own `text` is the
+    selected/annotated element's text — without it the agent receives a floating
+    sentence and has to guess the target (audit 2026-09-15)."""
+    return {"uid": str(p.get("uid") or ""),
+            "selector": str(p.get("selector") or ""),
+            "tag": str(p.get("tag") or ""),
+            "anchor": str(p.get("text") or "").strip()}
+
+
+def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(decisions/answers, free-text feedback). Tokens are authoritative; every
+    non-token prompt is driver feedback worth recording. Both kinds carry the
+    annotation anchor they arrived with."""
     structured, free = [], []
-    for text in texts:
+    for p in prompts:
+        if not isinstance(p, dict):
+            p = {"prompt": str(p)}
+        text = str(p.get("prompt") or "")
+        anchor = _anchor(p)
         d = _DECISION_RE.search(text)
         if d:
             structured.append({"type": "decision", "gate": d.group(1),
                                "story": d.group(2), "pr": int(d.group(3)),
-                               "verdict": d.group(4)})
+                               "verdict": d.group(4), **anchor})
             continue
         a = _ANSWER_RE.search(text)
         if a:
             structured.append({"type": "answer", "ticket": a.group(1),
-                               "text": a.group(2).strip()})
+                               "text": a.group(2).strip(), **anchor})
             continue
         if text.strip():
-            free.append(text.strip())
+            free.append({"text": text.strip(), **anchor})
     return structured, free
 
 
-def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[str]]:
+def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[dict]]:
     """Parse `poll --json` output: (payload, structured, free). payload is
     None when the line isn't JSON (old CLI on PATH, or an error banner)."""
     line = next((l for l in raw.splitlines() if l.startswith("{")), "")
@@ -333,10 +393,7 @@ def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[str]]:
         payload = json.loads(line)
     except json.JSONDecodeError:
         return None, [], []
-    prompts = payload.get("prompts") or []
-    texts = [str(p.get("prompt") or "") for p in prompts
-             if isinstance(p, dict)]
-    structured, free = _classify_prompts(texts)
+    structured, free = _classify_prompts(payload.get("prompts") or [])
     return payload, structured, free
 
 
@@ -358,6 +415,14 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
     except Exception as e:
         log(f"surface: consume poll failed for {Path(path).name}: {e}")
         return
+    _handle_poll(cfg, reg, ghc, log, path, meta, raw)
+
+
+def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
+    """Everything a poll response means: session-ended bookkeeping, structured
+    decisions, and the driver's free-text annotations. Shared by the feedback
+    consume pass and by agent replies, which poll the same session and would
+    otherwise CONSUME queued feedback into the void."""
     payload, structured, free = _parse_feedback(raw)
     status = (payload or {}).get("status") or ""
     had_prompts = bool((payload or {}).get("prompts"))
@@ -383,17 +448,21 @@ def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
         return
     for item in structured:
         _apply(cfg, reg, ghc, log, path, meta, item)
-    for text in free:
+    for item in free:
+        text, anchor = item["text"], item.get("anchor") or ""
         board_events.emit("surface_feedback", artifact=path,
                           story=meta.get("story"), pr=meta.get("pr"),
-                          text=text[:2000])
+                          text=text[:2000], anchor=anchor[:ANCHOR_LIMIT],
+                          selector=item.get("selector") or "",
+                          tag=item.get("tag") or "", uid=item.get("uid") or "")
         if meta.get("pr") and meta.get("repo"):
             try:
                 # Deliberately NO agent marker: these are the driver's words.
                 # They must count as human activity — blocking automerge and
                 # triggering revise rounds — exactly like a typed PR comment.
                 ghc.comment(meta["repo"], int(meta["pr"]),
-                            f"{dispatcher.DRIVER_PREFIX} {text[:1500]}")
+                            f"{dispatcher.DRIVER_PREFIX}\n\n"
+                            f"{_quote(anchor)}{text[:1500]}")
             except Exception as e:
                 log(f"surface: PR mirror failed: {e}")
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
@@ -498,7 +567,10 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
     if item["type"] == "answer":
         m = messages.answer(cfg.data_dir, item["ticket"], item["text"])
         board_events.emit("surface_answer", ticket=item["ticket"],
-                          story=(m or {}).get("story"), text=item["text"][:2000])
+                          story=(m or {}).get("story"), text=item["text"][:2000],
+                          anchor=(item.get("anchor") or "")[:ANCHOR_LIMIT],
+                          selector=item.get("selector") or "",
+                          tag=item.get("tag") or "", uid=item.get("uid") or "")
         if m and m.get("pr") and meta.get("repo"):
             try:  # the PR is still the record
                 ghc.comment(meta["repo"], int(m["pr"]),

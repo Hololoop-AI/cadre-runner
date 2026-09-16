@@ -852,3 +852,200 @@ def test_surface_mirrored_driver_comment_is_a_summon():
     got = poller._classify_body(mirrored, "driver", 1, 7, prs, "issue_comment")
     assert got and got[0]["kind"] == "summon"
     assert poller._classify_body(plain, "someone", 2, 7, prs, "issue_comment") == []
+
+
+# --------------------------------------------------------------------------- spec surface
+
+
+def _spec_story(**kw):
+    return {"repo": "o/r", "status": "active", "phase": "planning",
+            "feature_branch": "feat/nex-1", "planning_pr": 7,
+            "prs_cache": {"7": {"role": "planning", "state": "open",
+                                "head": "cadre/nex-1/planning"}},
+            "slices": {}, "plan_slices": [], "active_runs": {}, "retry_events": [],
+            "iterations": {"interrogate": 0, "revise": {}}, **kw}
+
+
+def _surface_file(cfg, slug, mtime):
+    import pipeline
+    p = pipeline.surface_mod._dir(cfg) / f"spec-{slug}.html"
+    p.write_text("<html>round</html>")
+    os.utime(p, (mtime, mtime))
+    return p
+
+
+def test_each_round_is_archived_and_handed_to_the_next_session():
+    """intake/interrogate/revise share one out-path, so round N−1 only exists
+    if the reap copied it aside before the next round overwrote it."""
+    import pipeline
+
+    d = scratch()
+    cfg, story = FakeCfg(d), _spec_story()
+    art = _surface_file(cfg, "nex-1", mtime=200)
+
+    first = pipeline._archive_spec_round(cfg, "nex-1", story, {"started": 100})
+    assert first.name == "spec-nex-1-r1.html"
+    assert first.read_text() == "<html>round</html>"
+    assert story["spec_surface_round"] == 1
+    assert story["spec_surface_prev"] == str(first)
+    assert story["spec_surface_run"] == 100   # the freshness clock is the run's start
+
+    # the next round overwrites the shared path; r1 must survive untouched
+    art.write_text("<html>round two</html>")
+    os.utime(art, (400, 400))
+    second = pipeline._archive_spec_round(cfg, "nex-1", story, {"started": 300})
+    assert second.name == "spec-nex-1-r2.html"
+    assert first.read_text() == "<html>round</html>"
+    assert story["spec_surface_round"] == 2
+    assert story["spec_surface_prev"] == str(second)
+
+
+def test_a_stage_that_wrote_nothing_does_not_burn_a_round():
+    """Only a run that authored the surface advances the counter — otherwise a
+    silent stage would republish round N−1 as round N."""
+    import pipeline
+
+    d = scratch()
+    cfg, story = FakeCfg(d), _spec_story()
+    _surface_file(cfg, "nex-1", mtime=100)
+    assert pipeline._archive_spec_round(cfg, "nex-1", story, {"started": 500}) is None
+    assert story.get("spec_surface_round") is None
+    assert story["spec_surface_run"] == 500     # the clock still advances
+
+
+def test_missing_surface_is_not_an_archive_failure():
+    import pipeline
+
+    d = scratch()
+    cfg, story = FakeCfg(d), _spec_story()
+    pipeline.surface_mod._dir(cfg)
+    assert pipeline._archive_spec_round(cfg, "nex-1", story, {"started": 10}) is None
+
+
+def test_stale_authored_surface_is_not_reopened():
+    """The audit's finding: the authored-spec reopen path had no freshness
+    check, so the driver could be shown round 1's briefing as current."""
+    import pipeline
+
+    d = scratch()
+    cfg = FakeCfg(d)
+    story = _spec_story(spec_surface_run=500)
+    _surface_file(cfg, "nex-1", mtime=100)          # older than the last spec run
+    assert not pipeline._spec_surface_fresh(
+        pipeline.surface_mod._dir(cfg) / "spec-nex-1.html", story)
+
+    opened, authored = [], []
+
+    class FakeGH:
+        def pr(self, repo, num):
+            return {"state": "open", "title": "plan", "body": "b",
+                    "head": {"sha": "deadbeef", "ref": "cadre/nex-1/planning"}}
+
+        def get(self, *a, **kw):
+            return []
+
+    orig_avail, orig_open = pipeline.surface_mod.available, pipeline.surface_mod.open_session
+    pipeline.surface_mod.available = lambda: True
+    pipeline.surface_mod.open_session = lambda cfg_, path, kind, log_, **m: opened.append(path)
+    try:
+        pipeline._ensure_spec_surface(cfg, FakeReg({"nex-1": story}), FakeGH(),
+                                      "nex-1", story)
+    finally:
+        pipeline.surface_mod.available = orig_avail
+        pipeline.surface_mod.open_session = orig_open
+
+    assert [Path(p).name for p in opened] == ["spec-nex-1-pr7.html"], \
+        "a stale briefing must fall back to the templated author path"
+
+    # ...and a surface written since that run is current again
+    _surface_file(cfg, "nex-1", mtime=900)
+    assert pipeline._spec_surface_fresh(
+        pipeline.surface_mod._dir(cfg) / "spec-nex-1.html", story)
+
+
+def test_no_recorded_spec_run_keeps_the_authored_surface():
+    """Legacy stories have no clock to fail against — absence is not staleness."""
+    import pipeline
+
+    d = scratch()
+    cfg, story = FakeCfg(d), _spec_story()
+    _surface_file(cfg, "nex-1", mtime=1)
+    assert pipeline._spec_surface_fresh(
+        pipeline.surface_mod._dir(cfg) / "spec-nex-1.html", story)
+
+
+def test_surface_prev_reaches_the_next_spec_session():
+    """$surface_prev is what lets round N say what changed since round N−1."""
+    import pipeline
+    from runnerlib import runs as runs_mod
+
+    d = scratch()
+    cfg = FakeCfg(d)
+    cfg.commit_identity = {"name": "cadre", "email": "c@x"}
+    cfg.skills_source = d / "skills"
+    cfg.workflow_skills_dir = None
+    cfg.workflows_dir = ""
+    cfg.claude = {"bin": "claude", "permission_mode": "bypassPermissions",
+                  "timeout_seconds": 60}
+    story = _spec_story(spec_surface_prev=str(d / "surfaces" / "spec-nex-1-r1.html"),
+                        title="t", variant="change-spec", story_id="NEX-1", board={})
+    prompts = []
+
+    class FakeRuns:
+        RunsBusy = runs_mod.RunsBusy
+
+        @staticmethod
+        def key_active(*a):
+            return False
+
+        @staticmethod
+        def all_active(*a):
+            return []
+
+        @staticmethod
+        def branch_held(*a):
+            return False
+
+        @staticmethod
+        def add_worktree(*a):
+            return None
+
+        @staticmethod
+        def remove_worktree(*a):
+            return True, ""
+
+        @staticmethod
+        def spawn(bin_, prompt, *a, **kw):
+            prompts.append(prompt)
+            return 4242
+
+    saved = (pipeline.runs_mod, pipeline.claude_run.ensure_checkout,
+             pipeline.claude_run.install_skills, pipeline._run_branch)
+    pipeline.runs_mod = FakeRuns
+    pipeline.claude_run.ensure_checkout = lambda *a, **kw: None
+    pipeline.claude_run.install_skills = lambda *a, **kw: None
+    pipeline._run_branch = lambda *a, **kw: ("cadre/nex-1/planning", "origin/main")
+    try:
+        for stage, expected in (("interrogate", story["spec_surface_prev"]),
+                                ("build", "")):
+            prompts.clear()
+            pipeline._run_stage(cfg, FakeReg({"nex-1": story}), None, "nex-1", story,
+                                {"type": "run_stage", "stage": stage,
+                                 "prompt_template": "prev=[$surface_prev]"})
+            assert prompts == [f"prev=[{expected}]"], stage
+    finally:
+        (pipeline.runs_mod, pipeline.claude_run.ensure_checkout,
+         pipeline.claude_run.install_skills, pipeline._run_branch) = saved
+
+
+def test_diff_primitive_is_in_the_theme_and_the_allowed_vocabulary():
+    """Sessions may not style anything, so a diff is unauthorable unless the
+    theme carries it AND _common.md names it as permitted."""
+    css = (ROOT / "surface-theme.css").read_text()
+    for rule in ("pre.diff", ".add", ".del", ".diff-caption"):
+        assert rule in css, rule
+    common = (PROMPTS / "_common.md").read_text()
+    for token in ('<pre class="diff">', 'class="add"', 'class="del"', "diff-caption"):
+        assert token in common, token
+    # the deployed copy statusd serves must not drift from the source
+    assert (ROOT / ".review-surface" / "surface-theme.css").read_text() == css

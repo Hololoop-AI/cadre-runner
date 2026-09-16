@@ -70,6 +70,9 @@ pre-built sections — you do NOT design it. The platform themes it.
 - Build from these blocks only, with plain semantic HTML inside:
   `<section>` with an `<h2>` title · prose `<p>`/`<ul>` · `<table>` ·
   `<pre>` for code/transcripts/file-trees (`<pre class="code">` for code) ·
+  `<pre class="diff">` for a unified diff, each changed line wrapped whole in
+  `<span class="add">` or `<span class="del">` (context lines bare), with a
+  `<p class="diff-caption">path/to/file.py:120-148</p>` above it ·
   `<div class="mermaid">` for diagrams/whiteboards · `<details><summary>` for
   collapsed depth · `<span class="chip">` for small labels · the verdict
   `<form>` exactly as given in your stage instructions.

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System audit &amp; iteration plan — 2026-09</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>.tldr{border-left:3px solid #8fc7ff;padding:10px 14px;background:#11141a;border-radius:0 8px 8px 0;margin:14px 0}</style>
+</head>
+<body>
+<main class="wrap">
+
+<h1>System audit &amp; iteration plan</h1>
+<p class="meta">cadre-runner · true-prototype · two audits (portability + driver-surface quality) · 2026-09-16</p>
+
+<div class="tldr">
+<p><strong>TLDR:</strong> The system ports to GHES+Jira with 2 real fixes and a config pass — nothing structural.
+The driver surfaces have one near-solid gate (spec review) and one broken one (iteration/interrogation:
+rounds overwrite each other, your annotation anchors are discarded, replies never come back to the page).
+<strong>4 decisions below</strong>; the fix work itself is small and ordered.</p>
+</div>
+
+<section>
+  <h2>Audit 1 — portability (GHES + Jira)</h2>
+  <p><strong>Done already:</strong> GitHub transport rides the <code>gh</code> CLI; host is <code>GH_HOST</code>. Repo is public.</p>
+  <p><strong>Two real gaps:</strong></p>
+  <ul>
+    <li><strong>Board seam is a facade.</strong> No provider interface — pipeline.py consumes raw Linear payloads and hardcodes state names ("In Progress"). A Jira provider would have to impersonate Linear. Fix: neutral issue dict + state maps to config, then JiraBoard is one clean module.</li>
+    <li><strong>"Agent command is node data" is false at the spawn seam.</strong> The engine computes the node's argv from the registry — and <code>runs.py</code> discards it, re-deriving hardcoded <code>claude</code> flags. Swapping in codex today silently wouldn't work. Fix: spawn executes the node's argv.</li>
+  </ul>
+  <details><summary>Config-ify list (each small)</summary>
+    <ul>
+      <li><code>@claude</code> summon token (poller.py) — corporate bot account will differ</li>
+      <li>skills-source path hard-fails if the private dev-config tree is absent — install blocker on a fresh laptop</li>
+      <li>statusd binds 0.0.0.0:8181 and ignores configured data_dir; board_events same drift</li>
+      <li>surface health URL hardcodes 127.0.0.1:4387 while statusd honors the env var — they can disagree</li>
+      <li>no systemd/service files ship; branch + PR-title grammar not configurable (fine until a repo policy objects)</li>
+    </ul>
+  </details>
+</section>
+
+<section>
+  <h2>Audit 2 — driver-surface quality</h2>
+  <p>Graded against your bar: full understanding, minimum reading time, good iteration, risk stops that explain the risk, PR review that shows the code.</p>
+  <ul>
+    <li><strong>Spec review (gate a): closest to the bar.</strong> The prompt already demands a briefing-not-a-copy with an annotated file tree. Gaps: driver calls buried 5th of 6, never says what approval commits to, no length budget, alternatives-rejected only implicit.</li>
+    <li><strong>Interrogation (gate b): broken, structurally.</strong> All spec-stage sessions share <em>one</em> artifact path, so round N destroys round N−1 — "what changed since your feedback" is unimplementable. The interrogate/revise prompts never mention the surface at all. Your annotations lose their anchors (selector discarded, text kept). Replies go to GitHub only — the surface collects your feedback and never shows the response.</li>
+    <li><strong>Risk hold (gate c): best-specified prompt</strong> (decision brief with evidence and recommendation) but shows zero code, never says what approving commits to, and its "Reject — send back" button actually just parks the PR (label + comment, no revise round).</li>
+    <li><strong>Final review (gate d): ambitious, wrong center of gravity.</strong> Demands proof and curated hotspots, but no review order, residual risks dead last, and it <em>cannot render diffs</em> — the theme has no add/remove styling and sessions are banned from own CSS. Final-state snippets hide the change under review.</li>
+    <li><strong>Measurement gap:</strong> the briefing judge covers gate (a) only, and scores groundedness, not decision-brief shape. The three weakest gates are the three unmeasured ones.</li>
+  </ul>
+  <details><summary>Where each fix lands</summary>
+    <p>Structural (pipeline.py/surface.py): versioned round artifacts (<code>spec-&lt;slug&gt;-r&lt;N&gt;.html</code>), staleness guard on reopen, anchor preservation, replies rendered back onto the page, a diff primitive in the theme.
+    Prompt-level (registry versions, promotable/revertible): BLUF ordering + "what approval commits to" on spec review; what-changed-first pages with quoted driver points on interrogate/revise; evidence hunks + likelihood×impact scale + honest button copy on risk; review order + before/after hunks + risks-after-demo on final review. Judge rubrics for gates b/c/d ride the existing harness.</p>
+  </details>
+</section>
+
+<section>
+  <h2>Proposed order</h2>
+  <ol>
+    <li><strong>Pack 1 — surface structure</strong>: round versioning, staleness guard, anchors, replies-on-page, diff styling in the theme. Unblocks everything prompt-level.</li>
+    <li><strong>Pack 2 — prompt pack</strong>: the four gates' instruction edits, shipped as new registry versions; judge rubrics for the unmeasured gates.</li>
+    <li><strong>Pack 3 — portability</strong>: spawn-seam argv fix, board normalization + JiraBoard seam, the config-ify list.</li>
+    <li><strong>Testbed loop</strong>: run real tickets, you grade surfaces, edits fold back via the registry.</li>
+  </ol>
+  <p>Both audit reports get committed under <code>docs/audits/</code> as part of pack execution.</p>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Fix-pack order</h2>
+  <form data-review-surface-question="pack-order">
+    <label><input type="radio" name="pack-order" value="Surfaces first: 1-2-3 (recommended)"> <strong>Surfaces first (1 → 2 → 3)</strong> — iteration quality is the current bottleneck; portability isn't blocking until the work-laptop trial actually starts.</label>
+    <label><input type="radio" name="pack-order" value="Portability first: 3-1-2"> <strong>Portability first (3 → 1 → 2)</strong> — if you want to trial on the work laptop this week, the spawn-seam + config work moves up.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Testbed sequence</h2>
+  <form data-review-surface-question="testbed">
+    <label><input type="radio" name="testbed" value="Blackboard -> HITL -> real Cadre (recommended)"> <strong>Blackboard → HITL → real Cadre</strong> — Blackboard's small live tickets (NEX-176/178) drive the first grading cycles; HITL next as the Cadre subcomponent it is; real Cadre once surfaces are trustworthy.</label>
+    <label><input type="radio" name="testbed" value="HITL first"> <strong>HITL first</strong> — start on the subcomponent immediately; accept that surface-tool failures and pipeline failures couple during the roughest iterations.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · nex-151 clean run</h2>
+  <form data-review-surface-question="nex-151">
+    <label><input type="radio" name="nex-151" value="Finish it (answer the parked question)"> <strong>Finish it</strong> — it's parked on your flow-storage answer; completing it keeps the zero-intervention e2e proof on the throwaway repo.</label>
+    <label><input type="radio" name="nex-151" value="Abandon; clean-run proof moves to Blackboard tickets"> <strong>Abandon</strong> — retire it; the clean-run proof happens on real Blackboard tickets after the fix packs.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Surface-designer subagent</h2>
+  <p>Your call to stand up a specialist that designs/builds review surfaces (they come out disorganized too often). Where it lands matters: it can serve both this conversation's surfaces and the pipeline's stage sessions.</p>
+  <form data-review-surface-question="surface-designer">
+    <label><input type="radio" name="surface-designer" value="Build with Pack 1 (recommended)"> <strong>Build alongside Pack 1</strong> — a skill + subagent definition with the theme, layout rules (one question per card, capped measure, BLUF), and the diff primitive; Pack 2's prompts then route surface authoring through it.</label>
+    <label><input type="radio" name="surface-designer" value="Later, after one grading cycle"> <strong>Later</strong> — collect your gradings from one Blackboard cycle first, so the designer encodes observed failures rather than guesses.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Verdict</h2>
+  <form data-review-surface-question="verdict">
+    <label><input type="radio" name="verdict" value="approve"> <strong>Approve</strong> — proceed per my queued answers.</label>
+    <label><input type="radio" name="verdict" value="approve-with-notes"> <strong>Approve with notes</strong> — proceed, incorporating annotations.</label>
+    <label><input type="radio" name="verdict" value="revise"> <strong>Revise</strong> — rework the plan and bring it back.</label>
+    <textarea name="note" placeholder="Anything the radios don't capture…"></textarea>
+    <button type="submit">Queue verdict</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'System audit — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision',
+        text: q + ': ' + values.join('; '),
+        element: form,
+        queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+</main>
+</body>
+</html>

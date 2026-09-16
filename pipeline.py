@@ -13,6 +13,7 @@ Commands:
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -434,6 +435,49 @@ def _spec_files_for_pr(ghc, repo: str, pr_detail: dict, pr: int) -> list[dict]:
     return out
 
 
+# intake/interrogate/revise all write the ONE spec surface path, so they share
+# its round counter and its freshness clock.
+SPEC_STAGES = ("intake", "interrogate", "revise")
+
+
+def _spec_surface_fresh(artifact: Path, story: dict) -> bool:
+    """False when the spec artifact predates the newest finished spec-stage run
+    — the same mtime test the risk-hold path makes before reopening a hold
+    brief. Stories with no recorded spec run (legacy, or a hand-authored
+    artifact) have no clock to fail against and stay fresh."""
+    try:
+        return artifact.stat().st_mtime >= (story.get("spec_surface_run") or 0)
+    except OSError:
+        return False
+
+
+def _archive_spec_round(cfg, slug, story, run):
+    """Keep each round's briefing instead of letting the next one overwrite it.
+    Round N−1 is what "what changed since your feedback" is checked against, and
+    a single shared path made that unverifiable (audit 2026-09-15). Only a run
+    that actually WROTE the surface advances the counter; a stage that authored
+    nothing leaves the previous round standing as the previous round."""
+    artifact = surface_mod._dir(cfg) / f"spec-{slug}.html"
+    story["spec_surface_run"] = max(story.get("spec_surface_run") or 0, run["started"])
+    try:
+        if artifact.stat().st_mtime < run["started"]:
+            return None
+    except OSError:
+        return None
+    n = (story.get("spec_surface_round") or 0) + 1
+    archived = artifact.with_name(f"spec-{slug}-r{n}.html")
+    try:
+        shutil.copy2(artifact, archived)
+    except OSError as e:
+        log(f"{slug}: round {n} surface archive failed: {e}")
+        return None
+    story["spec_surface_round"] = n
+    # The NEXT spec session reads this one as $surface_prev.
+    story["spec_surface_prev"] = str(archived)
+    log(f"{slug}: archived spec surface round {n} -> {archived.name}")
+    return archived
+
+
 def _ensure_spec_surface(cfg, reg, ghc, slug, story):
     """The unified spec gate lives on the surface: every open planning PR gets
     a spec-review artifact, re-authored when the branch head moves (a revise
@@ -445,9 +489,13 @@ def _ensure_spec_surface(cfg, reg, ghc, slug, story):
         if p.get("role") != "planning" or p.get("state") != "open":
             continue
         # Session-authored briefing wins outright: the spec session wrote its
-        # own review surface (stable path, live-reloads on revise rewrites).
+        # own review surface (stable path, live-reloads on revise rewrites) —
+        # but only while it is CURRENT. intake/interrogate/revise all share the
+        # one path, so an artifact older than the latest spec-stage run is
+        # round N−1's briefing being re-shown as today's (audit 2026-09-15).
+        # The templated fallback below is at least about the PR as it stands.
         authored = surface_mod._dir(cfg) / f"spec-{slug}.html"
-        if authored.exists():
+        if authored.exists() and _spec_surface_fresh(authored, story):
             asess = surface_mod.sessions(cfg).get(str(authored))
             if not (asess and asess.get("open")):
                 surface_mod.open_session(cfg, authored, "spec_review", log,
@@ -674,6 +722,9 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         "iteration": story["iterations"]["interrogate"] + 1 if stage == "interrogate"
         else story["iterations"]["revise"].get(str(pr), 0) + 1,
         "max_rounds": cfg.limits["max_rounds_per_stage"],
+        # Last round's archived briefing — what this session diffs itself
+        # against when it writes "what changed in round N".
+        "surface_prev": (story.get("spec_surface_prev") or "") if stage in SPEC_STAGES else "",
         "tests_branch": stage_branch(slug, "tests", slice_name) if slice_name else "",
         "build_branch": stage_branch(slug, "build", slice_name) if slice_name else "",
     }
@@ -697,7 +748,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                                     "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid,
                                     **({"CADRE_SURFACE_OUT":
                                         str(surface_mod._dir(cfg) / f"spec-{slug}.html")}
-                                       if stage in ("intake", "interrogate", "revise")
+                                       if stage in SPEC_STAGES
                                        else {"CADRE_SURFACE_OUT":
                                              str(surface_mod._dir(cfg) / f"final-{slug}.html")}
                                        if stage == "assembly"
@@ -813,6 +864,15 @@ def _reap_runs(cfg, reg, ghc, slug, story):
         except Exception as e:
             log(f"{slug}: engine completion write failed: {e}")
         # ---- end engine seam
+        if stage in SPEC_STAGES:
+            _archive_spec_round(cfg, slug, story, run)
+            if ok and stage in ("interrogate", "revise"):
+                # The driver's own question deserves an answer where they asked
+                # it. The run's closing summary is that answer; the surface,
+                # not GitHub, is the primary channel (audit 2026-09-15).
+                surface_mod.agent_reply(
+                    cfg, reg, ghc, log, surface_mod._dir(cfg) / f"spec-{slug}.html",
+                    f"Round complete — {stage}: {result[:600]}")
         if stage == "intake":
             _finish_intake(cfg, reg, ghc, slug, story, ok)
             continue
