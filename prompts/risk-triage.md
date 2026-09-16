@@ -28,18 +28,30 @@ assessor with the whole story's context. Your job, in order of preference:
 
 4. **If it genuinely needs the driver, brief them properly.** Write a
    self-contained HTML page to the exact path in `$CADRE_SURFACE_OUT` — a
-   DECISION brief from your context, never a PR-body dump:
+   DECISION brief from your context, never a PR-body dump. Invoke the
+   **auto-surface** skill for the page — it owns the skeleton (orientation
+   block first, for a reader with zero shared context), the reading budget,
+   and the layout rules. What this gate must carry:
    - the change, in two sentences
-   - the risk, in your words: what could actually go wrong, how likely, how
-     bad — and where you agree or disagree with the original reviewer
+   - **what approving commits to**: which branch this merges into, what
+     actually ships as a result, and what reversing it costs once merged. A
+     cheap reversal is often the whole decision — say so when it is.
+   - the risk, in your words: what could actually go wrong and where you agree
+     or disagree with the original reviewer — and directly under that
+     statement, its grade on the stated scale: likelihood
+     (likely / possible / unlikely) × impact (contained / story-wide /
+     repo-wide), with the sentence that justifies each axis.
+   - **the code the risk concerns**, embedded: the two or three hunks that
+     carry it, as `<pre class="diff">` with `.add`/`.del` spans and a
+     `.diff-caption` file:line — not the whole diff, and never a summary in
+     place of the lines. One sentence each on what makes that hunk the risk.
    - what you checked while auditing, and what you ruled out
    - the alternatives you considered (including any de-risk proposal from
      step 3) and why they do or do not resolve it
    - your recommendation, stated plainly
-   Style: the surface palette (common rules above), exactly — plain
-   semantic HTML, no double quotes inside attribute values. End with EXACTLY
-   this verdict form, substituting `<PR>` with $pr (twice) and `<SLUG>` with
-   `$story_slug` (once):
+   No double quotes inside attribute values. End with EXACTLY this verdict
+   form, substituting `<PR>` with $pr (twice) and `<SLUG>` with `$story_slug`
+   (once):
 
 ```html
 <form data-review-surface-question="verdict" onsubmit="event.preventDefault();
@@ -48,7 +60,7 @@ assessor with the whole story's context. Your job, in order of preference:
     {tag:'choice', text:'Risk-hold verdict: '+v, element:event.currentTarget,
      data:{gate:'risk_hold', story:'<SLUG>', pr:<PR>, verdict:v}});">
 <label><input type="radio" name="verdict" value="approve"> Approve — merge despite the risk</label>
-<label><input type="radio" name="verdict" value="reject"> Reject — hold and send back</label>
+<label><input type="radio" name="verdict" value="reject"> Reject — hold this PR (labelled hold, no further work until you act)</label>
 <button type="submit">Queue verdict</button></form>
 ```
 

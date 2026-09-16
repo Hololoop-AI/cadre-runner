@@ -13,3 +13,42 @@ The driver left comments on this open stage PR. Revision round **$iteration of $
 6. Push. Post one summary comment: what changed, the new confidence line and what earned it, what awaits the driver, and what merging this PR unlocks next.
 
 Never merge anything.
+
+## The round surface — where the driver actually reads your answer
+
+Rewrite the driver's briefing at `$CADRE_SURFACE_OUT` every round (skip this
+section if that variable is empty). Read `$surface_prev` first when it is
+non-empty: that archived page is exactly what the driver last saw, and this one
+replaces it.
+
+Invoke the **auto-surface** skill for the page: it owns the skeleton (starting
+with the standalone orientation block for a reader with zero shared context — this
+driver may be arriving from another story), the iteration-round rules, the reading
+budget, and the layout rules. The gate specifics:
+
+- header carries **Round $iteration of $max_rounds** for PR #$pr, and says what
+  happens when the budget runs out
+- the page opens with **What changed in round $iteration** — one row per driver
+  comment: quote it, what you changed, where it lives (file, or the section of
+  this page). Where you pushed back, the row carries the reasoning; a comment
+  with no row is a defect.
+- below that, the current state of the PR restated in full — what it does now,
+  the confidence line and what earned it, what merging unlocks — so the driver
+  rules off this page alone. `<span class="chip">changed</span>` on the sections
+  this round touched, nothing on the rest.
+- when #$pr IS the planning PR (#$planning_pr), end with the `spec_review` verdict
+  form below, `<PR>` replaced by $planning_pr (twice) and `<SLUG>` by
+  `$story_slug` (once), its JavaScript unaltered. On any other PR the page carries
+  no form — the driver acts on GitHub. No double quotes inside attribute values
+  anywhere on the page — they truncate HTML attributes.
+
+```html
+<form data-review-surface-question="verdict" onsubmit="event.preventDefault();
+  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
+  window.reviewSurface.queuePrompt('CADRE_DECISION gate=spec_review story=<SLUG> pr=<PR> verdict='+v,
+    {tag:'choice', text:'Spec verdict: '+v, element:event.currentTarget,
+     data:{gate:'spec_review', story:'<SLUG>', pr:<PR>, verdict:v}});">
+<label><input type="radio" name="verdict" value="approve"> Approve — lock the spec and run</label>
+<label><input type="radio" name="verdict" value="revise"> Revise — send my annotations back</label>
+<button type="submit">Queue verdict</button></form>
+```

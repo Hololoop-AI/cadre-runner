@@ -34,9 +34,27 @@ After the planning PR exists, write a self-contained HTML page to the exact path
 in `$CADRE_SURFACE_OUT` (an absolute path in your environment; skip this section
 entirely if that variable is empty).
 
-This page is YOUR briefing, written from your full context — never a copy of the
-files. The driver can read the raw spec on GitHub any time; the surface exists to
-give them what the diff cannot:
+Invoke the **auto-surface** skill for the page itself: it owns the skeleton
+(standalone orientation block for a reader with zero shared context, decision-first
+opening, driver calls, support, verdict form last), the ~3-min/~6-min reading
+budget, and the layout rules. Below is only what THIS gate must carry inside it.
+
+Open with the decision in three lines: what you propose to build, the biggest
+judgement call inside it, and what merging the planning PR locks — the spec prose
+and every slice's contract lock; the footprint does not. Say plainly what approval
+commits them to: the manifest's slices dispatch, tests and build run per slice,
+and the driver is asked again at any risk hold and at the final gate.
+
+**Driver calls come second**, directly under that — ranked, one card each, per
+auto-surface: the question in a line, the options you weighed, the one you took,
+what it costs to change later. What your self-interrogation killed or changed
+belongs here as the rejected option, not as a separate section. A doubt you have
+not done the option work on is not ready to ship as a driver call — do the work
+or leave it out.
+
+Everything below is support. It is YOUR briefing, written from your full context —
+never a copy of the files. The driver can read the raw spec on GitHub any time;
+the surface exists to give them what the diff cannot:
 
 - what the story asks and how you understood it (2-3 sentences)
 - the shape of your solution: the slices, why you cut them there, what depends on what
@@ -47,21 +65,13 @@ give them what the diff cannot:
   `~ runner/dispatch.py          gate after actor_allowed`). Untouched areas
   collapse to a bare directory line. Loose by design: caption it as the
   expected footprint, NOT a lock — builds may land differently and that is
-  fine (only the spec prose and contracts lock at approval). No pseudocode.
-  This is the map the driver glances at to see the blast radius; a Mermaid
-  diagram is the wrong tool here (that belongs to true system-architecture
-  views, which live upstream in the context repo).
-- each slice: one paragraph of intent + **its full test contract, shown** —
-  render the contract (or embed it in a collapsed `<details>`) so the driver
-  can review it on the surface without opening the spec files; name the
-  slice's flow (its `nodes`) beside it
-- what you were unsure about: decisions you made that the driver might make
-  differently, ranked — these are the things worth annotating
-- what your self-interrogation killed or changed
-
-Style: the surface palette (common rules above), exactly — readable
-sections, no external assets except the Mermaid CDN if you use a diagram. Every
-section annotatable (plain semantic HTML — the surface handles annotation).
+  fine. No pseudocode. This is the map the driver glances at to see the blast
+  radius; a Mermaid diagram is the wrong tool here (that belongs to true
+  system-architecture views, which live upstream in the context repo).
+- each slice: one paragraph of intent, its flow (its `nodes`) beside it, and
+  **its full test contract, shown** — inside a collapsed `<details>`, so the
+  driver can review contracts on the surface without opening the spec files and
+  without spending the page's reading budget on them
 
 End the page with EXACTLY this verdict form, substituting `<PR>` with the real
 planning PR number (twice) and `<SLUG>` with `$story_slug` (once):

@@ -11,11 +11,20 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
 7. **Final-review surface** — the driver reviews on a Review Surface artifact,
    not the PR diff (GitHub stays available; the surface is primary). Write a
    self-contained HTML page to the exact path in `$CADRE_SURFACE_OUT` (skip if
-   that env var is empty). This is YOUR briefing from full context, never a
-   diff copy — and its stance is a DEMONSTRATION: you are the engineer
-   showing the boss a finished assignment. Prove it works, explain why it
-   works, name what might still be wrong. The driver approves a working
-   solution to the story, not a diff:
+   that env var is empty). Compose this briefing **before** step 5's PR body —
+   it comes out of your working context, and the body is the short version of
+   it, never its source (only the verdict form needs the PR number, so the file
+   lands after step 5 opens the PR). Invoke the **auto-surface** skill for the
+   page: it owns the skeleton (orientation block first, for a reader with zero
+   shared context), showing code as change, the reading budget, and the layout
+   rules. This is YOUR briefing from full context, never a diff copy — and its
+   stance is a DEMONSTRATION: you are the engineer showing the boss a finished
+   assignment. Prove it works, explain why it works, name what might still be
+   wrong. The driver approves a working solution to the story, not a diff:
+   - **the verdict case, first, in five lines**: what shipped in the story's
+     own terms, the one piece of evidence to look at, the one or two residual
+     risks, and your recommendation. The driver should be able to rule from
+     this box alone and treat the rest as verification.
    - the story's problems restated, and per problem the demonstration that
      it is now solved: the actual behavior, in the modality the change is
      experienced in. CLI/daemon → real command transcripts of the story's own
@@ -26,22 +35,27 @@ Every slice of `$story_id` is built and merged into `$feature_branch`. Assemble 
      repro failing before and passing after; performance → measured
      numbers, both sides. The passing locked tests are standing evidence
      under all of it. Never describe behavior you could show.
-   - what shipped, in the story's own terms (2-3 sentences)
+   - **What might still be wrong** — immediately after the demonstration, while
+     the driver is still looking at the evidence: the residual risks ranked,
+     each with what you would look at first if it bit.
    - per slice: what it does now and how the locked tests prove it
-   - **the code itself, curated**: the surface must be sufficient to review
-     WITHOUT opening GitHub. Embed the hotspots — the handful of hunks a
+   - **the code itself, curated, in a numbered review order**: the surface must
+     be sufficient to review WITHOUT opening GitHub. The path is the planning
+     artifact's slice `review_order` (the same ordering the stage PR titles
+     carry), hotspots numbered within it — each with a line on why it sits at
+     that position and what specifically to check there. A hotspot is a hunk a
      reviewer would actually scrutinize (new public surfaces, the trickiest
-     logic, anything security- or data-touching) — as `<pre>` snippets with
-     file:line captions and one sentence each on WHY it is written that way.
-     Skim-level code (boilerplate, mechanical edits) gets a one-line mention,
-     not a snippet. Every snippet is annotatable; a GitHub link per file is
-     the escape hatch, not the venue.
+     logic, anything security- or data-touching), shown as CHANGE and not as
+     final state: a unified hunk in `<pre class="diff">` with `.add`/`.del`
+     spans and a `.diff-caption` file:line, or a before/after pair; a wholly new
+     file may be one plain block. One sentence each on WHY it is written that
+     way. Skim-level code (boilerplate, mechanical edits) gets a one-line
+     mention, not a hunk. Every snippet is annotatable; a GitHub link per file
+     is the escape hatch, not the venue.
    - what changed between plan and build: deviations, refactors, anything the
      spec reader would not expect
    - the spec-review verdict and any findings, plain
-   - what you would look at first if something breaks — ranked residual risks
-   Style: the surface palette (common rules above), exactly — plain
-   semantic HTML, no double quotes inside attribute values. End with EXACTLY
+   No double quotes inside attribute values. End with EXACTLY
    this verdict form, substituting `<PR>` with the final PR number (twice) and
    `<SLUG>` with `$story_slug` (once):
 
