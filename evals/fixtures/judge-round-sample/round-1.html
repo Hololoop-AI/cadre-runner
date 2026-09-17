@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- The previous round's archived page (spec-tag-notes-r1.html): what the
+     driver was looking at when they left the four annotations in feedback.json.
+     It is a reference, never the graded artifact. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Spec review — tag notes (round 1)</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · spec review · Round 1 of 3</p>
+
+<h1>Tag notes, and filter the list by tag</h1>
+
+<h2 id="scope">What this builds</h2>
+<p>Notes gain optional tags at add time, and <code>notes list</code> gains a
+<code>--tag</code> filter so a user can see only the notes carrying a given tag.
+Nothing else about the CLI changes.</p>
+
+<h2 id="slice-1">Slice 1 — tags travel with a note through storage</h2>
+<p><code>notes add "buy milk" --tag errand</code> accepts a repeatable
+<code>--tag</code> option and persists the tags alongside the note in the
+existing single JSON storage file. Tag normalization lives in a new module.</p>
+
+<h2 id="slice-2">Slice 2 — listing filtered by tag</h2>
+<p><code>notes list --tag errand</code> prints only the notes carrying
+<code>errand</code>, in id order. <code>notes list</code> with no
+<code>--tag</code> is unchanged.</p>
+
+<h2 id="risks">Risks</h2>
+<p>Slice 1 — the backwards-compatible load is the risky half: a record with no
+tag field must not become a record with an empty tag list on rewrite.</p>
+
+</div></body></html>

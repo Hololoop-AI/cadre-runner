@@ -15,6 +15,16 @@ process changes stops being necessary.
 - `score_spec.py` — deterministic scorer for spec-writer output against an
   expected file. Scorers judge STRUCTURE (slice shape, validation paths, flow
   choices, question discipline) — never prose style.
+- Judges — one plain script per driver gate, binary criteria, isolated call per
+  criterion group, verbatim-quote evidence verified in Python, results appended
+  to `results/*.jsonl`. `judge_spec.py` is gate (a); `judge_round.py` (b),
+  `judge_risk.py` (c) and `judge_final.py` (d) share `judge_core.py`, which also
+  appends a mechanically-derived RENDERED STRUCTURE inventory (diff hunks,
+  chips, embedded media) to the graded text so page structure is judgeable
+  without the judge reading markup. Criteria come from
+  `docs/audits/2026-09-surface-quality.md` and the `auto-surface` skill; each
+  judge has a good/corrupt fixture pair under `fixtures/`, and
+  `tests/test_eval_judges.py` covers everything that is not the model call.
 - `run_spec_eval.sh` — builds the fixture, runs the spec-writer node headless,
   scores. Each run costs real inference (one intake-scale run); run evals
   deliberately, not in CI-on-every-commit.

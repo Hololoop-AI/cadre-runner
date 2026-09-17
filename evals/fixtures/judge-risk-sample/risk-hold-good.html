@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- The accepted sample for judge_risk: a risk hold written as a DECISION —
+     what approving commits to, a likelihood x impact grade on the stated scale
+     with a reason per axis, the two hunks the risk concerns embedded and
+     captioned, the alternatives weighed, and a plain recommendation, all ahead
+     of the supporting detail. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Risk hold — tag-notes storage rewrite</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · risk hold · run 41 · build paused</p>
+
+<h1>The new writer rewrites every existing notes store on first save</h1>
+
+<h2>Where you are</h2>
+<p><b>Story:</b> tag-notes — the notes CLI gains optional tags and a
+<code>notes list --tag</code> filter. <b>Where this stands:</b> the build is
+done and paused at a risk hold; nothing merges until you answer this page.</p>
+
+<h2>What I recommend</h2>
+<p><b>Approve with the guard commit included</b> — the one-line change in hunk 2
+that makes the writer emit <code>tags</code> only when a record has them. With
+that line, the rewrite becomes a no-op for existing stores and this stops being
+a data risk. Without it I would hold.</p>
+
+<h2>What approving commits to</h2>
+<p>It merges run 41 into <b>main</b>, which is the branch the <code>notes</code>
+release tag is cut from — so the next release carries the new writer, and anyone
+installing from main gets it immediately.</p>
+<p><b>Reversal cost:</b> reverting the code is one <code>git revert</code>, but
+it does not un-rewrite user data. Any store already saved by the new writer has
+been rewritten in place (single JSON file, overwritten, no backup); a revert
+leaves those files carrying <code>tags</code> keys that the old reader ignores
+but the old writer will not reproduce. Reverting after a user has saved is
+therefore cheap for us and not quite free for them.</p>
+
+<h2>The risk, in my words</h2>
+<p><code>save_all()</code> now serialises every record through
+<code>_record_to_json()</code>, which writes a <code>tags</code> key whether or
+not the record has tags. The store is one JSON file replaced in place, so the
+first save after upgrade rewrites every record a user owns — including records
+this change never touched. The load path tolerates the new key, so nothing
+breaks loudly; what breaks quietly is the promise in the done-criteria that a
+pre-change store keeps its byte-identical <code>notes list</code> output, since
+that store's bytes are no longer the bytes it was written with.</p>
+
+<h2>Grade</h2>
+<p><b>Likelihood: likely</b> (scale: likely / possible / unlikely). It is not a
+race or an edge case — every user who runs any command that saves hits it on the
+first save after upgrade, and <code>notes add</code> saves. The only users who
+escape are those who never write again.</p>
+<p><b>Impact: story-wide</b> (scale: contained / story-wide / repo-wide). It
+rewrites the whole store file rather than the changed record, so it reaches
+every note a user has, and it falsifies this story's own compatibility
+done-criterion. It stops short of repo-wide because nothing outside
+<code>notes/store.py</code>'s format is affected — other commands read through
+the same loader, which is tolerant.</p>
+
+<h2>The code</h2>
+<p class="diff-caption">notes/store.py:118-131 — every save now goes through the
+new serialiser</p>
+<pre class="diff"> def save_all(path, records):
+<span class="del">-    payload = [dict(r) for r in records]</span>
+<span class="add">+    payload = [_record_to_json(r) for r in records]</span>
+     tmp = path.with_suffix(".tmp")
+     tmp.write_text(json.dumps(payload, indent=2))
+     tmp.replace(path)
+</pre>
+
+<p class="diff-caption">notes/store.py:96-104 — the serialiser, and the guard
+line I am recommending</p>
+<pre class="diff"><span class="add">+def _record_to_json(r):</span>
+<span class="add">+    out = {"id": r.id, "text": r.text}</span>
+<span class="add">+    if r.tags:            # the guard: no tags, no key, no rewrite</span>
+<span class="add">+        out["tags"] = sorted(r.tags)</span>
+<span class="add">+    return out</span>
+</pre>
+
+<h2>Alternatives I weighed</h2>
+<p><b>Guard the key (recommended).</b> Emit <code>tags</code> only for records
+that have them. Untagged records serialise to the same bytes as before, so an
+untouched store round-trips unchanged. Cost: the reader must keep tolerating a
+missing key forever — it already does.</p>
+<p><b>Migrate explicitly:</b> write a versioned store header and a one-shot
+migration. Rejected: it makes the format versioned, which is a decision far
+larger than this story, and it still rewrites the file — it just announces it.</p>
+<p><b>Back up before first save:</b> copy the store to <code>.bak</code> on the
+first new-format write. Rejected: it makes the rewrite survivable rather than
+unnecessary, and leaves a stale file on disk that nothing ever cleans up.</p>
+<p><b>Hold the whole story:</b> rejected — the feature is sound; one line of
+serialiser makes the risk disappear, and holding buys nothing we cannot get by
+merging the guard.</p>
+
+<details>
+<summary>What I checked before grading</summary>
+<p><code>load_all()</code> already tolerates a missing <code>tags</code> key, so
+old stores load either way. The slice's validation path asserts byte-identical
+<em>read</em> output, which is why this passed the build gate: no test exercises
+save-after-load against a pre-change store. That gap is why the flag is worth
+your attention rather than an auto-clear.</p>
+</details>
+
+<h2>Your call</h2>
+<p><b>Approve — merge run 41 to main, guard commit included.</b>
+<b>Hold — label this PR held and leave a comment; no further work happens on
+this story until you come back to it.</b></p>
+
+</div></body></html>

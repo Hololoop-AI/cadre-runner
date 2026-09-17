@@ -1,0 +1,34 @@
+{
+  "_comment": "Driver annotations from round 1, in the payload shape the surface plumbing carries (uid/selector/tag/text/prompt — see docs/audits/2026-09-surface-quality.md, gate b). judge_round.read_feedback renders this to the numbered list the judge counts rows against.",
+  "round": 1,
+  "points": [
+    {
+      "uid": "a1",
+      "selector": "#slice-1",
+      "tag": "question",
+      "text": "tags travel with a note through storage",
+      "prompt": "Slice 1 and slice 2 both touch storage. Why is this two slices and not one?"
+    },
+    {
+      "uid": "a2",
+      "selector": "#risks",
+      "tag": "concern",
+      "text": "the backwards-compatible load is the risky half",
+      "prompt": "The byte-identical guarantee is carrying a lot of weight. What actually happens when an old untagged record gets rewritten?"
+    },
+    {
+      "uid": "a3",
+      "selector": "#scope",
+      "tag": "request",
+      "text": "Nothing else about the CLI changes",
+      "prompt": "While you're in there, add the --tag filter to `notes search` as well."
+    },
+    {
+      "uid": "a4",
+      "selector": "#slice-1",
+      "tag": "direction",
+      "text": "Tag normalization lives in a new module",
+      "prompt": "Don't add a new module for normalization. Keep it in notes/store.py."
+    }
+  ]
+}

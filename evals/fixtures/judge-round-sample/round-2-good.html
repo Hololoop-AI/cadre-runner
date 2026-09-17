@@ -1,0 +1,106 @@
+<!doctype html>
+<!-- The accepted sample for judge_round: the round-2 page as the auto-surface
+     skill's iteration-round section asks for it. Every point in feedback.json
+     has a row that quotes the driver, the declined point carries its reasoning,
+     changed sections are chipped, and the full briefing is restated below. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Spec review — tag notes (round 2)</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · spec review · Round 2 of 3</p>
+
+<h1>Tag notes, and filter the list by tag</h1>
+
+<h2>Where you are</h2>
+<p><b>Story:</b> tag-notes — a CLI notes tool gains optional tags at add time
+and a <code>notes list --tag</code> filter, so a pile of notes can be sliced.</p>
+<p><b>Where this stands:</b> spec review, round 2 of 3. Nothing has been built;
+this page is the plan, and approving it locks the spec and starts the build.</p>
+<p><b>Since you last looked:</b> you left four annotations on round 1. Three
+changed the plan — slice 1 and slice 2 merged, the rewrite rule made explicit,
+normalization moved into <code>notes/store.py</code> — and one, adding the
+filter to <code>notes search</code>, I pushed back on. Details below; the full
+briefing follows underneath.</p>
+
+<h2>What changed in round 2</h2>
+
+<h3>1. Slicing — merged, as you asked</h3>
+<blockquote>"Slice 1 and slice 2 both touch storage. Why is this two slices and
+not one?"</blockquote>
+<p><b>Done.</b> They are now one slice, <a href="#slice-1">Slice 1 — tags in,
+filter out</a>. You were right that the split was artificial: the write path and
+the read path share the record shape, so splitting them meant slice 1 shipped a
+storage format no command could read.</p>
+
+<h3>2. The rewrite rule — now stated, and it is a contract</h3>
+<blockquote>"The byte-identical guarantee is carrying a lot of weight. What
+actually happens when an old untagged record gets rewritten?"</blockquote>
+<p><b>Done.</b> It now has a written rule in <a href="#compat">Compatibility</a>
+and a line in the validation path: a record loaded without a tag field is
+rewritten without one. We never add an empty list on save. Round 1 left this
+implicit, which is what your question found.</p>
+
+<h3>3. <code>notes search --tag</code> — not doing it, and why</h3>
+<blockquote>"While you're in there, add the --tag filter to <code>notes
+search</code> as well."</blockquote>
+<p><b>Declined, for this change.</b> <code>notes search</code> has its own
+matcher and its own output format, and a <code>--tag</code> there would need a
+rule for how tag filtering and text matching combine (AND? OR? does an empty
+match still print?) — that is a second decision, not a second line of code.
+Folding it in here doubles the surface of a change whose whole point is the
+storage format, and it would make the byte-identical guarantee in point 2 span
+two commands instead of one. It is a good next story and I would take it
+immediately after this one; say the word and I will file it.</p>
+
+<h3>4. Normalization — moved into <code>notes/store.py</code></h3>
+<blockquote>"Don't add a new module for normalization. Keep it in
+notes/store.py."</blockquote>
+<p><b>Done.</b> <code>normalize_tag()</code> is a function in
+<code>notes/store.py</code> next to the record writer; the new module is gone
+from the plan. See <a href="#slice-1">Slice 1</a>.</p>
+
+<h2 id="scope">What this builds <span class="chip">changed</span></h2>
+<p>Notes gain optional tags at add time, and <code>notes list</code> gains a
+<code>--tag</code> filter so a user can see only the notes carrying a given tag.
+Nothing else about the CLI changes — in particular <code>notes search</code> is
+untouched, per driver call 3 above.</p>
+
+<h2 id="slice-1">Slice 1 — tags in, filter out <span class="chip">changed</span></h2>
+<p>One vertical slice, top to bottom: <code>notes add "buy milk" --tag errand
+--tag home</code> accepts a repeatable <code>--tag</code> and persists the tags
+alongside the note in the existing single JSON storage file;
+<code>notes list --tag errand</code> prints only the notes carrying
+<code>errand</code>, in id order. <code>notes list</code> with no
+<code>--tag</code> is unchanged. <code>normalize_tag()</code> lives in
+<code>notes/store.py</code>.</p>
+<p><b>Validation path</b> — run the add with two tags, read the JSON storage
+file back, assert the stored record carries exactly <code>errand</code> and
+<code>home</code> in the order given; then seed a store written before this
+change, run <code>notes list</code>, and assert the output is byte-identical to
+what the current code prints for that store; then run
+<code>notes list --tag errand</code> and assert the printed lines are exactly
+the errand-tagged notes ordered by id.</p>
+<p><b>Flow</b> — vertical-tdd.</p>
+
+<h2 id="compat">Compatibility <span class="chip">changed</span></h2>
+<p>Storage stays one JSON file. No second file, no index, no database.</p>
+<p>A record loaded with no tag field is rewritten with no tag field. Tags are
+added to a record only when a command sets them. This is the rule your round-1
+question was aiming at, and it is asserted directly in the validation path.</p>
+
+<h2 id="non-goals">What this does NOT build</h2>
+<p>No renaming or deleting of tags, no tag autocomplete, no multi-tag boolean
+queries, and no <code>--tag</code> on <code>notes search</code>.</p>
+
+<h2 id="risks">Risks</h2>
+<p>Id ordering is asserted by the story but is a property of the existing
+listing code; if today's listing is insertion-ordered rather than id-ordered,
+the slice must sort explicitly rather than inherit.</p>
+
+<h2>Your call</h2>
+<p>Approve and the spec locks and the build starts. Leave another annotation and
+we go to round 3 — the last one in the budget; after that the story parks for
+you to re-scope rather than looping.</p>
+
+</div></body></html>

@@ -1,0 +1,96 @@
+<!doctype html>
+<!--
+Seeded corruption fixture for judge_risk. Ground truth for the calibration set
+(evals/PLAN-2026-09.md §3). This is risk-hold-good.html with exactly three
+defects introduced, each marked below. The markers are HTML comments and never
+reach the judge (judge_core.read_artifact drops comments), so a judge that could
+read them would be grading the marker, not the page.
+
+  1. corruption: missing-approval-commitment -> criterion `approval_commits_to`
+  2. corruption: blended-grade-justification -> criterion `per_axis_justification`
+  3. corruption: no-code-hunks               -> criterion `code_embedded_as_hunks`
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Risk hold — tag-notes storage rewrite</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · risk hold · run 41 · build paused</p>
+
+<h1>The new writer rewrites every existing notes store on first save</h1>
+
+<h2>Where you are</h2>
+<p><b>Story:</b> tag-notes — the notes CLI gains optional tags and a
+<code>notes list --tag</code> filter. <b>Where this stands:</b> the build is
+done and paused at a risk hold; nothing merges until you answer this page.</p>
+
+<h2>What I recommend</h2>
+<p><b>Approve with the guard commit included</b> — the one-line change that
+makes the writer emit <code>tags</code> only when a record has them. With that
+line, the rewrite becomes a no-op for existing stores and this stops being a
+data risk. Without it I would hold.</p>
+
+<!-- corruption: missing-approval-commitment — the good page has a "What
+     approving commits to" section naming the merge target (main, the branch the
+     release tag is cut from) and the reversal cost (revert does not un-rewrite
+     user data). Both are gone; the only thing telling the driver what yes means
+     is the button copy at the bottom. -->
+
+<h2>The risk, in my words</h2>
+<p><code>save_all()</code> now serialises every record through
+<code>_record_to_json()</code>, which writes a <code>tags</code> key whether or
+not the record has tags. The store is one JSON file replaced in place, so the
+first save after upgrade rewrites every record a user owns — including records
+this change never touched. The load path tolerates the new key, so nothing
+breaks loudly; what breaks quietly is the promise in the done-criteria that a
+pre-change store keeps its byte-identical <code>notes list</code> output.</p>
+
+<h2>Grade</h2>
+<p><b>Likelihood: likely. Impact: story-wide.</b> This is a serious one — the
+rewrite is broad and it will be hit, so the combination puts it high on the
+scale and well past the threshold where I would want your eyes on it rather
+than an auto-clear.</p>
+<!-- corruption: blended-grade-justification — both grades are still named on
+     the stated scale, but the two axes share one hand-waving sentence. The good
+     page argues likelihood (every user who saves hits it on the first save) and
+     impact (whole store file, falsifies this story's compatibility criterion,
+     stops short of repo-wide) separately. -->
+
+<h2>The code</h2>
+<p>The change is two edits in <code>notes/store.py</code>:
+<code>save_all()</code> now maps records through a new
+<code>_record_to_json()</code> helper instead of <code>dict(r)</code>, and that
+helper writes <code>id</code>, <code>text</code> and an always-present sorted
+<code>tags</code> list. The guard I am recommending wraps the
+<code>tags</code> line in <code>if r.tags:</code>. The full diff is on the PR.</p>
+<!-- corruption: no-code-hunks — the good page embeds the two hunks as
+     `<pre class="diff">` with `.diff-caption` file:line captions, so the
+     structure digest reports two diff blocks. Here there are none: the code is
+     described in prose and the reader is sent to the PR. -->
+
+<h2>Alternatives I weighed</h2>
+<p><b>Guard the key (recommended).</b> Emit <code>tags</code> only for records
+that have them. Untagged records serialise to the same bytes as before, so an
+untouched store round-trips unchanged. Cost: the reader must keep tolerating a
+missing key forever — it already does.</p>
+<p><b>Migrate explicitly:</b> write a versioned store header and a one-shot
+migration. Rejected: it makes the format versioned, which is a decision far
+larger than this story, and it still rewrites the file — it just announces it.</p>
+<p><b>Back up before first save:</b> copy the store to <code>.bak</code> on the
+first new-format write. Rejected: it makes the rewrite survivable rather than
+unnecessary, and leaves a stale file on disk that nothing ever cleans up.</p>
+
+<details>
+<summary>What I checked before grading</summary>
+<p><code>load_all()</code> already tolerates a missing <code>tags</code> key, so
+old stores load either way. The slice's validation path asserts byte-identical
+<em>read</em> output, which is why this passed the build gate: no test exercises
+save-after-load against a pre-change store.</p>
+</details>
+
+<h2>Your call</h2>
+<p><b>Approve — merge run 41 to main, guard commit included.</b>
+<b>Hold — label this PR held and leave a comment; no further work happens on
+this story until you come back to it.</b></p>
+
+</div></body></html>

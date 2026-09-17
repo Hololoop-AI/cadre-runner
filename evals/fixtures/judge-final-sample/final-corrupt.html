@@ -1,0 +1,132 @@
+<!doctype html>
+<!--
+Seeded corruption fixture for judge_final. Ground truth for the calibration set
+(evals/PLAN-2026-09.md §3). This is final-good.html with exactly three defects
+introduced, each marked below. The markers are HTML comments and never reach the
+judge (judge_core.read_artifact drops comments), so a judge that could read them
+would be grading the marker, not the page.
+
+  1. corruption: context-first-opening       -> criterion `verdict_case_first`
+  2. corruption: described-only-demonstration-> criterion `demonstration_in_modality`
+  3. corruption: final-state-code            -> criterion `code_shown_as_change`
+
+The numbered review order, the per-hotspot instructions, the orientation block
+and the manifest's done-criteria survive intact, so those criteria stay PASS and
+each defect is independently visible.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Final review — tag-notes (notes#88)</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · final review · run 41 · PR notes#88 ·
+branch <code>run-41/tag-notes</code> → <code>main</code></p>
+
+<h1>Tags ship: stored on add, filtered on list, old stores untouched</h1>
+
+<h2>How this run went</h2>
+<p>The story arrived as two slices and came out as one: round 2 of spec review
+merged them at your request, and <code>notes search --tag</code> was declined in
+the same round. The build ran vertical-tdd against the merged slice, tripped the
+storage-format flag on the first save path, and paused at a risk hold, which you
+approved with the guard commit. After that the remaining work was the CLI
+option plumbing and the regression test the hold asked for. Four commits, one
+paused gate, no plan deviations beyond the two above.</p>
+<!-- corruption: context-first-opening — the good page opens with "The case for
+     merging": what shipped, an evidence pointer, the residual risk, and a
+     recommendation, in five lines. Here the page opens with a narrative of the
+     run and the verdict never appears in the opening at all. -->
+
+<h2>Where you are</h2>
+<p><b>Story:</b> tag-notes — a CLI notes tool gains optional tags at add time
+and a <code>--tag</code> filter on <code>list</code>. <b>Where this stands:</b>
+the build is finished and the PR is open; this page is the last gate before
+merge. Since you last looked, you approved the risk hold on the storage rewrite
+with the guard commit, and that is what landed.</p>
+
+<h2>Demonstration</h2>
+<p>I ran the whole thing end to end against a store written by the released
+version and everything works: the old store loads, the listing comes out
+byte-identical, adding a note with two tags stores both in order, and the
+filtered listing prints only the errand-tagged notes. Criterion 4 holds too —
+storage is still one JSON file. The full test suite passes, including the new
+save-after-load regression.</p>
+<!-- corruption: described-only-demonstration — the good page carries a real
+     terminal transcript (the IDENTICAL diff, the stored ['errand','home'], the
+     `False` proving no tags key was added to old records) and a screenshot of
+     the filtered list. Both are gone, replaced by prose asserting the same
+     claims. Nothing is shown; the reader is asked to take it. -->
+
+<h2>Residual risks</h2>
+<p><b>1. Tag case is normalised on write but not on read.</b>
+<code>normalize_tag()</code> lowercases on add, so <code>--tag Errand</code>
+stores <code>errand</code>; but <code>notes list --tag Errand</code> compares
+raw and prints nothing. It is a two-line fix and I did not take it: it is
+behaviour this story never specified, and it belongs in the follow-up that also
+settles <code>notes search --tag</code>.</p>
+<p><b>2. Ordering is inherited, not asserted at the boundary.</b> The filtered
+list is id-ordered because the underlying listing is; nothing in
+<code>cli.py</code> sorts. If the listing ever changes its order, criterion 2
+breaks silently.</p>
+
+<h2>Review order</h2>
+<p>Three hotspots, highest blast radius first. Reading them in this order takes
+about four minutes; the PR carries the rest.</p>
+
+<h3>1. <code>notes/store.py:96-131</code> — the writer, and the guard you approved</h3>
+<p>First because it is the only code in this change that can touch data a user
+already has. <b>Check:</b> that the <code>if r.tags:</code> guard cannot be
+bypassed — that no other call site builds the record dict itself.</p>
+<pre>def _record_to_json(r):
+    out = {"id": r.id, "text": r.text}
+    if r.tags:
+        out["tags"] = sorted(r.tags)
+    return out
+
+def save_all(path, records):
+    payload = [_record_to_json(r) for r in records]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+</pre>
+<!-- corruption: final-state-code — the good page renders each hotspot as a
+     captioned `<pre class="diff">` hunk with `.add`/`.del` line spans, so the
+     structure digest reports three diff blocks with removed lines. Here every
+     hotspot is a plain final-state listing: the reader cannot see that
+     `payload = [dict(r) for r in records]` is what used to be there. -->
+
+<h3>2. <code>notes/cli.py:40-72</code> — <code>--tag</code> on add and list</h3>
+<p>Second because it is where the two commands' behaviour is decided, including
+the read-side comparison behind residual risk 1. <b>Check:</b> the filter
+comparison — it is a raw <code>in</code> against stored tags, and that is
+exactly the asymmetry called out above.</p>
+<pre>def cmd_list(args):
+    records = store.load_all(args.path)
+    if args.tag:
+        records = [r for r in records if args.tag in r.tags]
+    for r in records:
+        print(format_row(r))
+</pre>
+
+<h3>3. <code>tests/test_store.py:210-248</code> — the save-after-load test</h3>
+<p>Last because it is the cheapest to verify and it exists only to keep hotspot
+1 honest. <b>Check:</b> that it asserts bytes, not a parsed structure — a
+round-trip through <code>json.load</code> would pass even if the guard were
+removed.</p>
+<pre>def test_old_store_survives_a_save():
+    before = FIXTURE.read_bytes()
+    recs = store.load_all(FIXTURE)
+    store.save_all(FIXTURE, recs)
+    assert FIXTURE.read_bytes() == before
+</pre>
+
+<h2>Plan deviations</h2>
+<p>Slices 1 and 2 merged into one after round 2 of spec review, at your
+request. <code>notes search --tag</code> was declined in that round and is not
+in this PR.</p>
+
+<h2>Your call</h2>
+<p><b>Merge — squash notes#88 into main.</b> <b>Send back — reopen the story
+with your comment as the next round's driver feedback.</b></p>
+
+</div></body></html>

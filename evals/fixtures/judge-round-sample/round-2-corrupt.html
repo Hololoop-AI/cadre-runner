@@ -1,0 +1,101 @@
+<!doctype html>
+<!--
+Seeded corruption fixture for judge_round. Ground truth for the calibration set
+(evals/PLAN-2026-09.md §3: "~20 seeded corruptions of accepted artifacts").
+This is round-2-good.html with exactly three defects introduced, each marked
+below. The markers are HTML comments and never reach the judge — the parser
+drops comments (judge_core.read_artifact), so a judge that could read them
+would be grading the marker, not the page.
+
+  1. corruption: missing-orientation    -> criterion `orientation_standalone`
+  2. corruption: unreasoned-decline     -> criterion `declined_points_reasoned`
+  3. corruption: silent-driver-point    -> criterion `every_point_has_a_row`
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Spec review — tag notes (round 2)</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · spec review · Round 2 of 3</p>
+
+<h1>Tag notes, and filter the list by tag</h1>
+
+<!-- corruption: missing-orientation — the good page opens with a "Where you
+     are" block (story, one sentence of what it is about, where in the pipeline,
+     what happened since the driver last looked). It is gone; the page drops the
+     reader straight into a delta list that only parses if you remember round 1. -->
+
+<h2>What changed in round 2</h2>
+
+<h3>1. Slicing — merged, as you asked</h3>
+<blockquote>"Slice 1 and slice 2 both touch storage. Why is this two slices and
+not one?"</blockquote>
+<p><b>Done.</b> They are now one slice, <a href="#slice-1">Slice 1 — tags in,
+filter out</a>. You were right that the split was artificial: the write path and
+the read path share the record shape, so splitting them meant slice 1 shipped a
+storage format no command could read.</p>
+
+<h3>2. The rewrite rule — now stated, and it is a contract</h3>
+<blockquote>"The byte-identical guarantee is carrying a lot of weight. What
+actually happens when an old untagged record gets rewritten?"</blockquote>
+<p><b>Done.</b> It now has a written rule in <a href="#compat">Compatibility</a>
+and a line in the validation path: a record loaded without a tag field is
+rewritten without one. We never add an empty list on save.</p>
+
+<h3>3. <code>notes search --tag</code></h3>
+<blockquote>"While you're in there, add the --tag filter to <code>notes
+search</code> as well."</blockquote>
+<p><b>Not doing this.</b> Out of scope.</p>
+<!-- corruption: unreasoned-decline — the good page argues the pushback (a
+     second combination rule to decide, doubled surface, the guarantee spanning
+     two commands) and offers to file the follow-up. Here the decline is
+     recorded with no reasoning at all. -->
+
+<!-- corruption: silent-driver-point — driver point 4 ("Don't add a new module
+     for normalization. Keep it in notes/store.py.") has no row anywhere on this
+     page, and the briefing below still plans the new module. Silence on a
+     driver point is the defect the criterion `every_point_has_a_row` exists to
+     catch. -->
+
+<h2 id="scope">What this builds <span class="chip">changed</span></h2>
+<p>Notes gain optional tags at add time, and <code>notes list</code> gains a
+<code>--tag</code> filter so a user can see only the notes carrying a given tag.
+Nothing else about the CLI changes.</p>
+
+<h2 id="slice-1">Slice 1 — tags in, filter out <span class="chip">changed</span></h2>
+<p>One vertical slice, top to bottom: <code>notes add "buy milk" --tag errand
+--tag home</code> accepts a repeatable <code>--tag</code> and persists the tags
+alongside the note in the existing single JSON storage file;
+<code>notes list --tag errand</code> prints only the notes carrying
+<code>errand</code>, in id order. <code>notes list</code> with no
+<code>--tag</code> is unchanged. Tag normalization lives in a new
+<code>notes/taxonomy.py</code> module.</p>
+<p><b>Validation path</b> — run the add with two tags, read the JSON storage
+file back, assert the stored record carries exactly <code>errand</code> and
+<code>home</code> in the order given; then seed a store written before this
+change, run <code>notes list</code>, and assert the output is byte-identical to
+what the current code prints for that store; then run
+<code>notes list --tag errand</code> and assert the printed lines are exactly
+the errand-tagged notes ordered by id.</p>
+<p><b>Flow</b> — vertical-tdd.</p>
+
+<h2 id="compat">Compatibility <span class="chip">changed</span></h2>
+<p>Storage stays one JSON file. No second file, no index, no database.</p>
+<p>A record loaded with no tag field is rewritten with no tag field. Tags are
+added to a record only when a command sets them.</p>
+
+<h2 id="non-goals">What this does NOT build</h2>
+<p>No renaming or deleting of tags, no tag autocomplete, no multi-tag boolean
+queries, and no <code>--tag</code> on <code>notes search</code>.</p>
+
+<h2 id="risks">Risks</h2>
+<p>Id ordering is asserted by the story but is a property of the existing
+listing code; if today's listing is insertion-ordered rather than id-ordered,
+the slice must sort explicitly rather than inherit.</p>
+
+<h2>Your call</h2>
+<p>Approve and the spec locks and the build starts. Leave another annotation and
+we go to round 3 — the last one in the budget; after that the story parks for
+you to re-scope rather than looping.</p>
+
+</div></body></html>

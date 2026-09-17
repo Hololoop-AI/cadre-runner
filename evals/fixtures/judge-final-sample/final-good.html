@@ -1,0 +1,142 @@
+<!doctype html>
+<!-- The accepted sample for judge_final: verdict case in the opening lines, the
+     change demonstrated in its own modality (a real terminal transcript plus a
+     screenshot of the filtered list), residual risks sitting right after the
+     demonstration, a numbered review order with per-hotspot instructions, and
+     code shown as diff rather than final state. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Final review — tag-notes (notes#88)</title>
+<link rel="stylesheet" href="../surface-theme.css"></head>
+<body><div class="wrap">
+
+<p class="meta">Story <b>tag-notes</b> · final review · run 41 · PR notes#88 ·
+branch <code>run-41/tag-notes</code> → <code>main</code></p>
+
+<h1>Tags ship: stored on add, filtered on list, old stores untouched</h1>
+
+<h2>The case for merging</h2>
+<p><b>What shipped:</b> <code>notes add --tag</code> persists tags and
+<code>notes list --tag</code> filters by one, in a single vertical slice across
+<code>notes/store.py</code> and <code>notes/cli.py</code>.</p>
+<p><b>Evidence:</b> the transcript below shows a pre-change store loading,
+listing byte-identically, and then filtering — the compatibility criterion and
+the feature criterion in one run.</p>
+<p><b>Residual risks:</b> one — tag case is normalised on write but not on read
+(see below).</p>
+<p><b>Recommendation: merge.</b> All four done-criteria are met; the storage
+rewrite that triggered the risk hold is closed by the guard in hotspot 1 and has
+a test.</p>
+
+<h2>Where you are</h2>
+<p><b>Story:</b> tag-notes — a CLI notes tool gains optional tags at add time
+and a <code>--tag</code> filter on <code>list</code>. <b>Where this stands:</b>
+the build is finished and the PR is open; this page is the last gate before
+merge. Since you last looked, you approved the risk hold on the storage rewrite
+with the guard commit, and that is what landed.</p>
+
+<h2>Demonstration</h2>
+<p>A CLI change, so the demonstration is a terminal transcript: a store written
+by the released version, then the new binary against it.</p>
+<pre>$ cp fixtures/store-v0.json ~/.notes/store.json     # written by notes 0.4, no tag fields
+$ notes list > /tmp/before.txt
+$ notes --version
+notes 0.5.0-run41
+$ notes list > /tmp/after.txt && diff /tmp/before.txt /tmp/after.txt && echo IDENTICAL
+IDENTICAL
+$ notes add "buy milk" --tag errand --tag home
+added #7
+$ python3 -c "import json;print(json.load(open('/home/j/.notes/store.json'))[6]['tags'])"
+['errand', 'home']
+$ python3 -c "import json;print('tags' in json.load(open('/home/j/.notes/store.json'))[0])"
+False
+$ notes list --tag errand
+#3  call the plumber      [errand]
+#7  buy milk              [errand home]
+</pre>
+<p>Criterion 3 is the <code>IDENTICAL</code> line plus the <code>False</code>
+line: the old records neither changed format nor gained a <code>tags</code> key
+on the save that added note #7. Criteria 1 and 2 are the last two commands.
+Criterion 4 holds by construction — no new path is opened anywhere in the diff;
+the store is still the one JSON file the transcript reads.</p>
+<p>The same store in the TUI listing, filtered:</p>
+<img src="evidence/list-filtered.png" alt="notes list --tag errand showing two
+rows, #3 call the plumber and #7 buy milk, each with its tags in the right
+column">
+
+<h2>Residual risks</h2>
+<p><b>1. Tag case is normalised on write but not on read.</b>
+<code>normalize_tag()</code> lowercases on add, so <code>--tag Errand</code>
+stores <code>errand</code>; but <code>notes list --tag Errand</code> compares
+raw and prints nothing. Nobody hits this in the transcript because every command
+there used lowercase. It is a two-line fix and I did not take it: it is behaviour
+this story never specified, and it belongs in the follow-up that also settles
+<code>notes search --tag</code>.</p>
+<p><b>2. Ordering is inherited, not asserted at the boundary.</b> The filtered
+list is id-ordered because the underlying listing is; nothing in
+<code>cli.py</code> sorts. If the listing ever changes its order, criterion 2
+breaks silently — the test asserts the filtered rows, not their order relative
+to a reordered store.</p>
+
+<h2>Review order</h2>
+<p>Three hotspots, highest blast radius first. Reading them in this order takes
+about four minutes; the PR carries the rest.</p>
+
+<h3>1. <code>notes/store.py:96-131</code> — the writer, and the guard you approved</h3>
+<p>First because it is the only code in this change that can touch data a user
+already has. <b>Check:</b> that the <code>if r.tags:</code> guard cannot be
+bypassed — that no other call site builds the record dict itself.</p>
+<p class="diff-caption">notes/store.py:96-131 — serialiser added, writer routed
+through it</p>
+<pre class="diff"><span class="add">+def _record_to_json(r):</span>
+<span class="add">+    out = {"id": r.id, "text": r.text}</span>
+<span class="add">+    if r.tags:            # no tags, no key: an old record round-trips unchanged</span>
+<span class="add">+        out["tags"] = sorted(r.tags)</span>
+<span class="add">+    return out</span>
+
+ def save_all(path, records):
+<span class="del">-    payload = [dict(r) for r in records]</span>
+<span class="add">+    payload = [_record_to_json(r) for r in records]</span>
+     tmp = path.with_suffix(".tmp")
+     tmp.write_text(json.dumps(payload, indent=2))
+     tmp.replace(path)
+</pre>
+
+<h3>2. <code>notes/cli.py:40-72</code> — <code>--tag</code> on add and list</h3>
+<p>Second because it is where the two commands' behaviour is decided, including
+the read-side comparison behind residual risk 1. <b>Check:</b> the filter
+comparison — it is a raw <code>in</code> against stored tags, and that is
+exactly the asymmetry called out above.</p>
+<p class="diff-caption">notes/cli.py:40-72 — repeatable option, and the filter</p>
+<pre class="diff"> def cmd_list(args):
+     records = store.load_all(args.path)
+<span class="del">-    for r in records:</span>
+<span class="add">+    if args.tag:</span>
+<span class="add">+        records = [r for r in records if args.tag in r.tags]</span>
+<span class="add">+    for r in records:</span>
+         print(format_row(r))
+</pre>
+
+<h3>3. <code>tests/test_store.py:210-248</code> — the save-after-load test</h3>
+<p>Last because it is the cheapest to verify and it exists only to keep hotspot
+1 honest. <b>Check:</b> that it asserts bytes, not a parsed structure — a
+round-trip through <code>json.load</code> would pass even if the guard were
+removed.</p>
+<p class="diff-caption">tests/test_store.py:210-248 — the regression the risk
+hold asked for</p>
+<pre class="diff"><span class="add">+def test_old_store_survives_a_save():</span>
+<span class="add">+    before = FIXTURE.read_bytes()</span>
+<span class="add">+    recs = store.load_all(FIXTURE)</span>
+<span class="add">+    store.save_all(FIXTURE, recs)</span>
+<span class="add">+    assert FIXTURE.read_bytes() == before</span>
+</pre>
+
+<h2>Plan deviations</h2>
+<p>Slices 1 and 2 merged into one after round 2 of spec review, at your
+request. <code>notes search --tag</code> was declined in that round and is not
+in this PR.</p>
+
+<h2>Your call</h2>
+<p><b>Merge — squash notes#88 into main.</b> <b>Send back — reopen the story
+with your comment as the next round's driver feedback.</b></p>
+
+</div></body></html>
