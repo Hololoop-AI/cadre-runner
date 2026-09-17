@@ -74,7 +74,7 @@ class LinearBoard:
         # is empty, and asking the PROVIDER is how that stays true for the next
         # provider (whose key may not be an API key at all).
         self.api_key_env = cfg.get("api_key_env", "LINEAR_API_KEY")
-        key_env = self.api_key_env
+        self.api_key = os.environ.get(self.api_key_env, "")
         self.team = cfg["team"]
         self.trigger_state = cfg["trigger_state"]
         self._states = None  # name(lower) -> id, resolved lazily

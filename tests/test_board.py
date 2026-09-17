@@ -31,6 +31,18 @@ def board_with(cfg):
     return b
 
 
+def test_api_key_read_from_env(monkeypatch):
+    # Regression: the provider must actually read its key env at construction —
+    # dropping this line crashed the daemon at startup (`enabled` had nothing
+    # to look at).
+    monkeypatch.setenv("MY_KEY", "sekrit")
+    b = LinearBoard({"team": "T", "trigger_state": "cadre", "api_key_env": "MY_KEY"})
+    assert b.api_key == "sekrit" and b.enabled
+    monkeypatch.delenv("MY_KEY")
+    b = LinearBoard({"team": "T", "trigger_state": "cadre", "api_key_env": "MY_KEY"})
+    assert not b.enabled
+
+
 def test_predicate():
     b = board_with({})
     assert b._passes(issue())  # no conditions -> everything in the column passes
