@@ -11,6 +11,12 @@ Config:
     provider = "linear"                      # omit section to disable
     repo = "owner/name"                      # repo triggered stories run against
     variant = "change-spec"                  # optional; else the repo's default
+    pickup_state = "In Progress"             # where a picked-up card is moved
+    [intake.phase_states]                    # pipeline phase -> tracker state
+    slices = "In Progress"
+    "assembly-pending" = "In Review"
+    "final-review" = "In Review"
+    done = "Done"
 
     [intake.linear]
     api_key_env = "LINEAR_API_KEY"
@@ -22,18 +28,40 @@ Config:
 
 Status mirroring: one comment per issue, edited in place (the card is the UI).
 The runner recomputes the status text each poll pass and PATCHes only on change,
-so every phase transition shows up without per-site hooks. State moves: pickup →
-In Progress, assembly-pending → In Review. All board errors are non-fatal — the
-pipeline never stalls because the tracker is down.
+so every phase transition shows up without per-site hooks. Which tracker state a
+pickup or a phase means is CONFIG (`pickup_state`, `[intake.phase_states]`), not
+source: state names are workspace vocabulary. All board errors are non-fatal —
+the pipeline never stalls because the tracker is down.
+
+The provider contract is the neutral issue dict (`issue_record`): every provider
+returns those keys from `candidates()` and every caller reads only those keys.
+No Linear field name leaves this module, which is what makes a second provider
+an addition here rather than an edit everywhere.
 """
 
 import json
 import os
 import urllib.request
 
-from . import gh
+from . import config, gh
 
 LINEAR_API = "https://api.linear.app/graphql"
+
+
+# --------------------------------------------------------------------------- the neutral issue
+
+
+def issue_record(id: str, key: str, title: str, body: str = "", url: str = "",
+                 labels=(), assignee=None) -> dict:
+    """One tracker issue, in the only shape the rest of the runner knows.
+
+    `id` is whatever the provider needs to address the issue again (Linear's
+    UUID, a Jira issue id); `key` is what a human says out loud and what the
+    story slug is made from (NEX-123, PROJ-45).
+    """
+    return {"id": id, "key": key, "title": title, "body": body or "",
+            "url": url or "", "labels": [str(l) for l in labels],
+            "assignee": dict(assignee) if assignee else None}
 
 
 # --------------------------------------------------------------------------- provider: Linear
@@ -42,8 +70,11 @@ LINEAR_API = "https://api.linear.app/graphql"
 class LinearBoard:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        key_env = cfg.get("api_key_env", "LINEAR_API_KEY")
-        self.api_key = os.environ.get(key_env, "")
+        # Kept as an attribute, not a local: `board-check` reports which env var
+        # is empty, and asking the PROVIDER is how that stays true for the next
+        # provider (whose key may not be an API key at all).
+        self.api_key_env = cfg.get("api_key_env", "LINEAR_API_KEY")
+        key_env = self.api_key_env
         self.team = cfg["team"]
         self.trigger_state = cfg["trigger_state"]
         self._states = None  # name(lower) -> id, resolved lazily
@@ -82,7 +113,8 @@ class LinearBoard:
         return self._states
 
     def candidates(self) -> list[dict]:
-        """Issues currently in the trigger column that pass every condition."""
+        """Neutral issue records for the trigger column, filtered by the
+        configured conditions. Linear's field names stop here."""
         states = self.states()
         if self.trigger_state.lower() not in states:
             self._states = None  # don't cache-poison: the column may be created later
@@ -95,10 +127,22 @@ class LinearBoard:
                  id identifier title description url
                  labels { nodes { name } } assignee { name email } } } }""",
             {"team": self._team_id, "state": states[self.trigger_state.lower()]})
-        return [i for i in data["issues"]["nodes"] if self._passes(i)]
+        issues = [self._normalize(i) for i in data["issues"]["nodes"]]
+        return [i for i in issues if self._passes(i)]
+
+    @staticmethod
+    def _normalize(node: dict) -> dict:
+        """One raw Linear GraphQL node -> the neutral issue record."""
+        return issue_record(
+            id=node["id"], key=node["identifier"], title=node["title"],
+            body=node.get("description") or "", url=node.get("url") or "",
+            labels=[l["name"] for l in (node.get("labels") or {}).get("nodes", [])],
+            assignee=node.get("assignee"))
 
     def _passes(self, issue: dict) -> bool:
-        labels = {l["name"].lower() for l in issue["labels"]["nodes"]}
+        """The trigger predicate, over the neutral record — so the conditions
+        are the same sentence whatever the tracker is."""
+        labels = {l.lower() for l in issue["labels"]}
         for req in self.cfg.get("require_labels", []):
             if req.lower() not in labels:
                 return False
@@ -140,16 +184,26 @@ class LinearBoard:
                   {"id": issue_id, "url": url, "title": title})
 
 
+# provider name -> class. A table, not a branch: adding a tracker is one entry
+# plus the class, and the `[intake.<name>]` sub-section is found by the same
+# name the operator typed.
+PROVIDERS = {"linear": LinearBoard}
+
+
 def make_board(intake_cfg: dict):
     provider = intake_cfg.get("provider")
-    if provider == "linear":
-        return LinearBoard(intake_cfg.get("linear", {}))
-    if provider:
-        raise SystemExit(f"config: unknown intake provider {provider!r} (have: linear)")
-    return None
+    if not provider:
+        return None
+    if provider not in PROVIDERS:
+        raise SystemExit(f"config: unknown intake provider {provider!r} "
+                         f"(have: {', '.join(sorted(PROVIDERS))})")
+    return PROVIDERS[provider](intake_cfg.get(provider, {}))
 
 
 # --------------------------------------------------------------------------- status mirroring
+
+# config.py owns the defaults; this is the same dict, not a second copy of it.
+DEFAULT_PHASE_STATES = config.DEFAULTS["intake"]["phase_states"]
 
 
 def known_issue_ids(reg) -> set:
@@ -185,8 +239,14 @@ def status_text(story: dict, max_rounds: int) -> str:
     return "\n".join(lines)
 
 
-def mirror_status(board, story: dict, max_rounds: int, log=print):
-    """Recompute the status comment; write only on change. Non-fatal."""
+def mirror_status(board, story: dict, max_rounds: int, log=print,
+                  phase_states: dict | None = None):
+    """Recompute the status comment; write only on change. Non-fatal.
+
+    `phase_states` is the operator's phase -> tracker-state map (`cfg.intake`).
+    Omitting it keeps the historical Linear-board names, so a caller that has no
+    config at hand still mirrors something sensible."""
+    phase_states = DEFAULT_PHASE_STATES if phase_states is None else phase_states
     b = story.get("board")
     if not (board and board.enabled and b):
         return
@@ -199,8 +259,7 @@ def mirror_status(board, story: dict, max_rounds: int, log=print):
         else:
             b["status_comment_id"] = board.comment(b["issue_id"], text)
         b["last_status"] = text
-        phase_state = {"slices": "In Progress", "assembly-pending": "In Review",
-                       "final-review": "In Review", "done": "Done"}.get(story["phase"])
+        phase_state = phase_states.get(story["phase"])
         if phase_state and b.get("last_state") != phase_state:
             board.move(b["issue_id"], phase_state)
             b["last_state"] = phase_state

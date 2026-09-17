@@ -20,6 +20,7 @@ from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from runnerlib import config as config_mod
 from runnerlib import engine, engine_seam, gh_watch, preflight, seed_nodes
 from runnerlib.blackboard import Board
 from runnerlib.nodes import Nodes, version_id
@@ -88,8 +89,10 @@ class FakeCfg:
         self.data_dir = Path(d)
         self.limits = {"max_rounds_per_stage": max_rounds,
                        "allowed_actors": ["driver"]}
-        self.runner = {"max_concurrent_runs": 4}
-        self.claude = {"bin": "claude"}
+        # the real defaults, so a new config dial does not silently read as
+        # absent in every seam test
+        self.runner = {**config_mod.DEFAULTS["runner"], "max_concurrent_runs": 4}
+        self.claude = {**config_mod.DEFAULTS["claude"]}
 
     def model_for(self, stage):
         return "opus"
@@ -139,7 +142,7 @@ def test_seed_registers_every_stage_prompt():
     assert all(v == "registered" for v in result.values())
 
     node = n.active("build")
-    assert node["model"] and node["command"].startswith("claude -p @")
+    assert node["model"] and node["command"].startswith("claude -p {prompt}")
     # the seed is _common.md + the stage file, exactly as claude_run.render joins
     assert node["prompt"] == (PROMPTS / "_common.md").read_text() + "\n\n" + \
         (PROMPTS / "build.md").read_text()
@@ -178,6 +181,8 @@ def test_seed_is_idempotent_and_never_demotes():
 
 def test_seed_takes_model_and_effort_pins_from_config():
     class FakeCfg:
+        claude = {"bin": "agent-cli"}
+
         def model_for(self, stage):
             return "sonnet" if stage == "build" else "opus"
 
@@ -191,11 +196,25 @@ def test_seed_takes_model_and_effort_pins_from_config():
     assert "--effort low" in n.active("build")["command"]
     assert n.active("intake")["model"] == "opus"
     assert "--effort high" in n.active("intake")["command"]
+    # the binary is a config dial too: an exported node card must name the
+    # program that will actually run, not a literal `claude`
+    assert n.active("build")["command"].startswith("agent-cli -p ")
+    assert "agent-cli" in n.export_path("build").read_text()
 
     # a re-seed re-pins the operator dials without touching the prompt version
     v = n.active("build")["version"]
     seed_nodes.seed(d, FakeCfg())
     assert Nodes(d).active("build")["version"] == v
+
+    # ...and the re-pin reaches the export card: a handoff copy still naming the
+    # binary the node was FIRST seeded with is the drift the seed exists to stop
+    class Switched(FakeCfg):
+        claude = {"bin": "other-agent"}
+
+    seed_nodes.seed(d, Switched())
+    card = Nodes(d).export_path("build").read_text()
+    assert "command: other-agent -p " in card and "agent-cli" not in card
+    assert Nodes(d).active("build")["version"] == v      # still not a promotion
 
 
 # --------------------------------------------------------------------------- config
@@ -410,6 +429,7 @@ def test_spawn_spec_becomes_a_stage_run():
 
     class FakeCfg:
         data_dir = d
+        claude = {"bin": "claude"}
 
         def model_for(self, stage):
             return "opus"
@@ -442,6 +462,7 @@ def test_stage_finished_is_a_noop_without_the_flag():
 
     class FakeCfg:
         data_dir = d
+        claude = {"bin": "claude"}
 
         def model_for(self, stage):
             return "opus"
@@ -1049,3 +1070,131 @@ def test_diff_primitive_is_in_the_theme_and_the_allowed_vocabulary():
         assert token in common, token
     # the deployed copy statusd serves must not drift from the source
     assert (ROOT / ".review-surface" / "surface-theme.css").read_text() == css
+
+
+# --------------------------------------------------------------------------- agent command
+
+
+def _spawn_harness(d, executed):
+    """pipeline._run_stage with everything but the spawn stubbed out, and the
+    real `runs.spawn` running against a recording Popen. What lands in
+    `executed` is the argv the operating system would have been handed."""
+    import pipeline
+    from runnerlib import runs as runs_mod
+
+    class RecordingPopen:
+        pid = 4242
+
+        def __init__(self, args, **kw):
+            executed.append(args)
+
+    class Runs:
+        RunsBusy = runs_mod.RunsBusy
+        key_active = staticmethod(lambda *a: False)
+        all_active = staticmethod(lambda *a: [])
+        branch_held = staticmethod(lambda *a: False)
+        add_worktree = staticmethod(lambda *a: None)
+        remove_worktree = staticmethod(lambda *a: (True, ""))
+        spawn = staticmethod(runs_mod.spawn)
+
+    cfg = FakeCfg(d)
+    cfg.commit_identity = {}
+    cfg.skills_source = d / "skills"
+    cfg.workflow_skills_dir = None
+    cfg.workflows_dir = ""
+    saved = (pipeline.runs_mod, pipeline.claude_run.ensure_checkout,
+             pipeline.claude_run.install_skills, pipeline._run_branch,
+             runs_mod.subprocess.Popen)
+    pipeline.runs_mod = Runs
+    pipeline.claude_run.ensure_checkout = lambda *a, **kw: None
+    pipeline.claude_run.install_skills = lambda *a, **kw: None
+    pipeline._run_branch = lambda *a, **kw: ("cadre/nex-1/build-core", "origin/main")
+    runs_mod.subprocess.Popen = RecordingPopen
+
+    def restore():
+        (pipeline.runs_mod, pipeline.claude_run.ensure_checkout,
+         pipeline.claude_run.install_skills, pipeline._run_branch,
+         runs_mod.subprocess.Popen) = saved
+
+    return pipeline, cfg, restore
+
+
+def test_the_nodes_command_is_the_command_that_runs():
+    """The portability claim: swap the agent CLI by editing the node.
+
+    A node whose command names `my-agent` is followed all the way to the
+    process — engine body -> spawn spec -> _run_stage -> runs.spawn — with no
+    Claude Code flag surviving anywhere on the way. The legacy path (no node
+    spec) still composes the flags it always did.
+    """
+    d = scratch()
+    b, n = board(d), seeded(d)
+    # the ONE edit: this node is invoked by another CLI, with its own grammar
+    n.register("build", n.active("build")["prompt"], "opus",
+               "my-agent --file {prompt} {session} {permission} "
+               "--task {payload[story]}", replace=True)
+
+    gh_signal(b, role="tests", state="merged", slice="core", pr=9)
+    spawns, _ = engine.tick(b, [by_name("tests-merged-to-build")], n, d)
+    # the registry's command is in the spec, with the spawn-time placeholders
+    # still unresolved — they name values that do not exist until a process does
+    assert spawns[0]["argv"][:3] == ["my-agent", "--file", "{prompt}"]
+    assert "{session}" in spawns[0]["argv"] and "{permission}" in spawns[0]["argv"]
+
+    story = _spec_story(title="t", variant="change-spec", story_id="NEX-1", board={})
+    reg = FakeReg({"nex-1": story})
+    executed = []
+    pipeline, cfg, restore = _spawn_harness(d, executed)
+    try:
+        engine_seam.run_spawn_spec(cfg, reg, None, b, lambda *a: None,
+                                   pipeline._run_stage, spawns[0])
+        run = list(story["active_runs"].values())[0]
+        # the wrapper shell that captures stdout/stderr/exit is the daemon's,
+        # not the node's — the node's command starts after it
+        assert executed[0][:2] == ["/bin/sh", "-c"] and executed[0][3] == "sh"
+        argv = executed[0][4:]
+
+        assert argv[:2] == ["timeout", str(cfg.claude["timeout_seconds"])]
+        assert argv[2:4] == ["my-agent", "--file"]
+        # the rendered prompt travels as ONE argument, whatever is in it
+        assert argv[4] == (Path(run["run_dir"]) / "prompt.txt").read_text()
+        # {session} became the flag pair this run's session needs, {permission}
+        # the config's permission mode — expansions, not one token each
+        assert argv[5:7] == ["--session-id", run["session_id"]]
+        assert argv[7:] == ["--dangerously-skip-permissions", "--task", "nex-1"]
+        # nothing Claude Code-shaped survives in the invocation itself (the
+        # prompt is prose and may say anything)
+        assert not any("claude" in a for a in argv[:4] + argv[5:]), argv
+
+        # ...and the legacy path — no node spec — is untouched
+        executed.clear()
+        story["active_runs"] = {}
+        pipeline._run_stage(cfg, reg, None, "nex-1", story,
+                            {"type": "run_stage", "stage": "build", "slice": "core"})
+        legacy = executed[0][4:]
+        assert legacy[:4] == ["timeout", "7200", "claude", "-p"]
+        assert legacy[5:11] == ["--model", "opus", "--effort", "high",
+                                "--output-format", "json"]
+        assert legacy[-1] == "--dangerously-skip-permissions"
+    finally:
+        restore()
+
+
+def test_a_revived_session_re_enters_through_the_same_command():
+    """Revival is the other half of the contract: the node's command carries
+    `{session}`, so resuming a stopped session is the same command with
+    `--resume` instead of `--session-id` — not a second, claude-shaped argv."""
+    from runnerlib import runs as runs_mod
+
+    argv = ["my-agent", "--file", "{prompt}", "{session}", "{permission}"]
+    fresh = runs_mod.expand_spawn_argv(argv, {
+        "prompt": "do the thing", "session": runs_mod.session_args("sid-1", False),
+        "permission": runs_mod.permission_args("bypass")})
+    revived = runs_mod.expand_spawn_argv(argv, {
+        "prompt": "carry on", "session": runs_mod.session_args("sid-1", True),
+        "permission": runs_mod.permission_args("acceptEdits")})
+
+    assert fresh == ["my-agent", "--file", "do the thing",
+                     "--session-id", "sid-1", "--dangerously-skip-permissions"]
+    assert revived == ["my-agent", "--file", "carry on",
+                       "--resume", "sid-1", "--permission-mode", "acceptEdits"]

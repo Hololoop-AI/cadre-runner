@@ -191,7 +191,7 @@ def intake_command(cfg, slug: str, story: dict, story_text: str,
 
     This is the write `adopt_story` cannot make. Adoption reconstructs a command
     from the registry, and the registry has never held the story text — it lives
-    in the Linear card or in `start --story`, so an adopted story's intake prompt
+    in the tracker card or in `start --story`, so an adopted story's intake prompt
     renders with an empty `$story_text`. Writing the command at the point the
     story ENTERS (cmd_start / _board_intake) is what closes that gap, and it also
     shuts `adopt_story` for this story: the command already exists.
@@ -220,10 +220,12 @@ def run_spawn_spec(cfg, reg, ghc, board: Board, log, run_stage, spec: dict):
     """Execute one engine spawn spec through `_run_stage`.
 
     The spec names the node and the version; the triggering event carries the
-    story, slice and PR. `prompt_template` is what makes the registry
+    story, slice and PR. `prompt_template` and `argv` are what make the registry
     authoritative at runtime: `_run_stage` renders THAT text with the run's
-    variables instead of re-reading prompts/*.md, so a promoted prompt version
-    reaches the session and the firing can be traced back to the exact text.
+    variables instead of re-reading prompts/*.md, and runs THAT command instead
+    of composing one, so a promoted prompt version reaches the session, the
+    firing can be traced back to the exact text, and the agent CLI is the node's
+    business rather than the runner's.
     """
     event = board.get(spec["event_id"]) or {}
     payload = event.get("payload") or {}
@@ -243,11 +245,16 @@ def run_spawn_spec(cfg, reg, ghc, board: Board, log, run_stage, spec: dict):
         "model": spec["model"],
         "effort": None,          # the node's command carries it; config still wins
         "prompt_template": Path(spec["prompt_path"]).read_text(),
+        # The node's own command, formatted by the registry. `_run_stage` hands
+        # it to `runs.spawn` as the argv to execute, so what the registry says
+        # invokes this node is what invokes it — swapping the agent CLI is an
+        # edit to the node, not to this repo.
+        "argv": spec.get("argv"),
         "node_version": spec["version"],
         "firing_id": spec.get("firing_id"),
         # Whatever prompt variables the triggering event chose to carry. NOTE:
         # `story_text` is one the registry cannot supply — it lives in the
-        # Linear card or the `start --story` argument, never in the story
+        # tracker card or the `start --story` argument, never in the story
         # record — so an ADOPTED story's intake prompt would render without it.
         # Only a story whose intake command was written with the text attached
         # gets a complete S0 prompt on this path.

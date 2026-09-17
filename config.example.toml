@@ -5,6 +5,12 @@
 poll_interval = 45                                  # seconds between poll passes
 data_dir = "~/.local/state/pipeline-runner"         # registry, etags, checkouts, logs
 skills_source = "~/dev-config/ai-workflow-config/skills"  # where `install` links skills from
+require_skills = true              # false: warn about missing skills instead of refusing
+summon_token = "@claude"           # the handle a driver types to summon the agent —
+                                   # the BOT ACCOUNT's name, so a deployment under a
+                                   # different account changes it here
+status_bind = "0.0.0.0"            # statusd.py: bind address (tailnet default) and port;
+status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
 
 [claude]
 bin = "claude"
@@ -48,9 +54,17 @@ default_branch = "main"
 # mirror status back to the card. Trigger is a configurable predicate — the
 # work/Jira version is the same shape with different conditions.
 # [intake]
-# provider = "linear"
+# provider = "linear"              # selects the provider AND the [intake.<name>] block
 # repo = "owner/name"              # repo triggered stories run against
 # variant = "change-spec"          # optional; else the repo's default
+# pickup_state = "In Progress"     # where a picked-up card is moved
+# State names are workspace vocabulary, not the provider's: override the ones
+# your board spells differently and the rest keep their defaults.
+# [intake.phase_states]
+# slices = "In Progress"
+# "assembly-pending" = "In Review"
+# "final-review" = "In Review"
+# done = "Done"
 # [intake.linear]
 # api_key_env = "LINEAR_API_KEY"   # key lives in ~/.config/cadre/env
 # team = "Nexusdev"                # team name or key

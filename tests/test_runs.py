@@ -48,6 +48,53 @@ ok, result, usage, record = runs.outcome(run)
 assert ok and result == "" and record["returncode"] == 0
 assert (run_dir / "prompt.txt").read_text() == "prompt text"
 
+# -- the node's argv is what runs (agent-command-as-data) ---------------------
+# A stand-in "agent CLI" that records exactly what it was handed. Nothing about
+# the spawn path may assume Claude Code's flags.
+recorder = tmp / "agent-cli"
+recorder.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$RECORD"\n')
+recorder.chmod(0o755)
+
+record = tmp / "argv.txt"
+run_dir_n = tmp / "run-node"
+pid = runs.spawn("claude", "the rendered prompt", wt, "sonnet", "high", "bypass", 60,
+                 run_dir_n, session_id="sess-1",
+                 argv=[str(recorder), "--file", "{prompt}", "{session}", "{permission}",
+                       "--task", "nex-1"],
+                 extra_env={"RECORD": str(record)})
+run_n = {"pid": pid, "run_dir": str(run_dir_n), "started": time.time()}
+for _ in range(50):
+    if runs.finished(run_n):
+        break
+    time.sleep(0.1)
+assert runs.finished(run_n), "the stand-in agent never ran"
+assert record.read_text().splitlines() == [
+    "--file", "the rendered prompt", "--session-id", "sess-1",
+    "--dangerously-skip-permissions", "--task", "nex-1"]
+
+# placeholder expansion: strings substitute in place, lists become arguments,
+# and an empty list leaves nothing behind (a run with no session id)
+assert runs.expand_spawn_argv(["x", "p={prompt}", "{session}"],
+                              {"prompt": "hi", "session": []}) == ["x", "p=hi"]
+assert runs.session_args(None, False) == []
+assert runs.session_args("s", True) == ["--resume", "s"]
+assert runs.permission_args("acceptEdits") == ["--permission-mode", "acceptEdits"]
+
+# -- and without a node command, the legacy Claude Code argv is unchanged -----
+record2 = tmp / "argv-legacy.txt"
+run_dir_l = tmp / "run-legacy"
+pid = runs.spawn(str(recorder), "legacy prompt", wt, "opus", "max", "bypass", 60,
+                 run_dir_l, session_id="sess-2", extra_env={"RECORD": str(record2)})
+run_l = {"pid": pid, "run_dir": str(run_dir_l), "started": time.time()}
+for _ in range(50):
+    if runs.finished(run_l):
+        break
+    time.sleep(0.1)
+assert record2.read_text().splitlines() == [
+    "-p", "legacy prompt", "--model", "opus", "--effort", "max",
+    "--output-format", "json", "--session-id", "sess-2",
+    "--dangerously-skip-permissions"]
+
 # -- outcome parses claude-style json ----------------------------------------
 run_dir2 = tmp / "run2"
 run_dir2.mkdir()

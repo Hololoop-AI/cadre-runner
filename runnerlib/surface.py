@@ -43,6 +43,16 @@ def outbox_path() -> Path:
                                str(Path.home() / ".review-surface/outbox.jsonl")))
 
 
+DEFAULT_UPSTREAM = "http://127.0.0.1:4387"
+
+
+def upstream() -> str:
+    """Where the review-surface server lives. One reader of one env var, shared
+    with statusd — the health check and the proxy pointing at different hosts is
+    a failure nobody can see from either side."""
+    return os.environ.get("CADRE_SURFACE_UPSTREAM") or DEFAULT_UPSTREAM
+
+
 def available() -> bool:
     return shutil.which(CLI) is not None
 
@@ -476,7 +486,7 @@ def _ensure_server(cfg, sess: dict, log) -> None:
         return
     import urllib.request
     try:
-        urllib.request.urlopen("http://127.0.0.1:4387/health", timeout=3)
+        urllib.request.urlopen(upstream() + "/health", timeout=3)
         return
     except OSError:
         pass

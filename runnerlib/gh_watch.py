@@ -297,6 +297,10 @@ def main(argv=None):
     else:
         cfg = config_mod.load(args.config)
         data_dir = cfg.data_dir
+    if cfg is not None:
+        # Run standalone, this process has to configure the summon handle for
+        # itself; run from the daemon it already arrived in the environment.
+        poller.use_token(cfg.runner["summon_token"])
     board = Board(data_dir / "board.db")
     try:
         events = watch(board, GitHub(data_dir / "etags.json"),

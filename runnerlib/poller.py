@@ -2,16 +2,40 @@
 events. Network in, plain dicts out — no model calls here."""
 
 import json
+import os
 import re
 import time
 
+from . import config as config_mod
 from . import dispatcher
 
 from .dispatcher import AGENT_MARKER
 from .gh import NOT_MODIFIED
 from .registry import classify_branch
 
-SUMMON_RE = re.compile(r"@claude\b", re.IGNORECASE)
+# The summon handle is the BOT ACCOUNT's name, so it is configuration
+# (`[runner] summon_token`): a corporate deployment runs under its own account
+# and nobody there would ever type `@claude`. `use_token` rebinds the pattern
+# for the process AND exports it, because `gh_watch` runs as a subprocess of
+# the daemon and a subprocess inherits the environment and nothing else — the
+# same reason the data dir travels that way.
+SUMMON_TOKEN_ENV = "CADRE_SUMMON_TOKEN"
+DEFAULT_SUMMON_TOKEN = config_mod.DEFAULTS["runner"]["summon_token"]
+
+
+def summon_pattern(token: str) -> re.Pattern:
+    return re.compile(rf"{re.escape(token or DEFAULT_SUMMON_TOKEN)}\b", re.IGNORECASE)
+
+
+def use_token(token: str) -> re.Pattern:
+    """Point this process (and anything it spawns) at the configured handle."""
+    global SUMMON_RE
+    os.environ[SUMMON_TOKEN_ENV] = token or DEFAULT_SUMMON_TOKEN
+    SUMMON_RE = summon_pattern(token)
+    return SUMMON_RE
+
+
+SUMMON_RE = summon_pattern(os.environ.get(SUMMON_TOKEN_ENV) or DEFAULT_SUMMON_TOKEN)
 COMMAND_RE = re.compile(r"^/(status|escalate)\b")
 MANIFEST_RE = re.compile(r"```cadre-manifest\s*\n(.*?)```", re.DOTALL)
 

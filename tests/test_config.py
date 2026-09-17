@@ -40,4 +40,23 @@ assert (cfg.model_for("intake"), cfg.effort_for("intake")) == ("opus", "max")
 bare = Config({"limits": {"allowed_actors": ["driver"]}}, Path("config.toml"))
 assert bare.model_for("build") == "opus" and bare.effort_for("build") == "high"
 
+# Portability dials: every one of them has a default that is the behaviour the
+# runner shipped with, so an existing config.toml keeps working untouched.
+assert bare.runner["summon_token"] == "@claude"
+assert bare.runner["require_skills"] is True
+assert (bare.runner["status_bind"], bare.runner["status_port"]) == ("0.0.0.0", 8181)
+assert bare.intake["pickup_state"] == "In Progress"
+assert bare.intake["phase_states"]["done"] == "Done"
+assert not bare.intake["provider"]              # no [intake] section = disabled
+
+# The tracker's state names are workspace vocabulary, and an operator renaming
+# ONE column must not lose the rest of the map.
+jira = Config({"limits": {"allowed_actors": ["driver"]},
+               "intake": {"provider": "linear", "repo": "o/r",
+                          "pickup_state": "Doing",
+                          "phase_states": {"slices": "Doing"}}}, Path("config.toml"))
+assert jira.intake["pickup_state"] == "Doing"
+assert jira.intake["phase_states"] == {"slices": "Doing", "assembly-pending": "In Review",
+                                       "final-review": "In Review", "done": "Done"}
+
 print("config resolution tests: all passed")

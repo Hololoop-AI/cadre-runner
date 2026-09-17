@@ -51,6 +51,14 @@ from pathlib import Path
 # without the engine knowing anything about the node.
 COMMAND_VARS = ("prompt_path", "model", "node", "version", "event", "payload")
 
+# Placeholders the RUNNER fills when it actually starts the process, not here:
+# the rendered prompt text, the session flags that revive a stopped session,
+# and the permission flags. They are known only at spawn time, so
+# `command_argv` passes them through verbatim for the spawner to expand (see
+# `runs.expand_spawn_argv`). Naming them here is what keeps a template using
+# them from reading as a definition error.
+SPAWN_VARS = ("prompt", "session", "permission")
+
 
 class NodeError(Exception):
     """A bad node definition. Rejected here, not hours later in a spawn."""
@@ -158,18 +166,23 @@ class Nodes:
         The template is split into tokens FIRST and substituted per token, so a
         payload value containing spaces stays one argument instead of silently
         becoming two.
+
+        SPAWN_VARS survive as themselves: the argv produced here is the argv the
+        runner executes, and the values it still lacks are filled in at the
+        moment of spawning.
         """
         node = node or self.active(name)
         event = event or {}
         ctx = {"prompt_path": node["prompt_path"], "model": node["model"],
                "node": node["name"], "version": node["version"],
-               "event": event, "payload": event.get("payload", {})}
+               "event": event, "payload": event.get("payload", {}),
+               **{v: "{%s}" % v for v in SPAWN_VARS}}
         try:
             return [tok.format(**ctx) for tok in shlex.split(node["command"])]
         except (KeyError, IndexError) as e:
             raise NodeError(
                 f"node {name!r}: command template wants {e} which this event "
-                f"does not carry (available: {', '.join(COMMAND_VARS)})") from e
+                f"does not carry (available: {', '.join(COMMAND_VARS + SPAWN_VARS)})") from e
 
     # -- internals -------------------------------------------------------------
 

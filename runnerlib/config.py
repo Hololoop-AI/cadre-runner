@@ -11,6 +11,20 @@ DEFAULTS = {
         "skills_source": "~/dev-config/ai-workflow-config/skills",
         "workflows_source": "",   # cadre-workflows/workflows dir; empty = spec-writer node not used
         "max_concurrent_runs": 4,  # detached stage sessions; beyond it, events requeue (backpressure)
+        # The handle a driver types to summon the agent. It is the BOT's name,
+        # not a product name — a corporate deployment runs under its own
+        # account and would otherwise be unsummonable.
+        "summon_token": "@claude",
+        # Whether a skill missing from skills_source stops an install. True is
+        # the deployment-grade setting (a half-wired checkout fails silently
+        # hours later); a fresh machine that has not cloned the skills tree yet
+        # can set it false and get a warning instead.
+        "require_skills": True,
+        # The status/proxy service (statusd.py). 0.0.0.0 is the tailnet default
+        # this was built for; a host with a network policy narrows it here
+        # rather than in the source.
+        "status_bind": "0.0.0.0",
+        "status_port": 8181,
     },
     "claude": {
         "bin": "claude",
@@ -27,6 +41,21 @@ DEFAULTS = {
         "tests": True,
         "build": True,
         "contracts": True,
+    },
+    # Board-driven intake. `provider` selects the tracker (empty = disabled);
+    # everything else here is tracker-neutral. The two state maps live in
+    # config because a state NAME is the one part of the board contract no
+    # provider can supply: Linear's board says "In Progress", another
+    # workspace's says "Doing", and Jira moves by transition name entirely.
+    "intake": {
+        "provider": "",
+        "pickup_state": "In Progress",   # where a picked-up card is moved
+        "phase_states": {                # pipeline phase -> tracker state
+            "slices": "In Progress",
+            "assembly-pending": "In Review",
+            "final-review": "In Review",
+            "done": "Done",
+        },
     },
 }
 
@@ -47,7 +76,12 @@ class Config:
         # has to be expressible per stage, not just the model.
         self.stage_effort = raw.get("claude", {}).get("stage_effort", {})
         self.repos = raw.get("repos", [])
-        self.intake = raw.get("intake", {})
+        self.intake = merged["intake"]
+        # phase_states is the one nested map an operator is likely to override
+        # PARTIALLY ("we call it Doing, the rest is standard"), so it merges
+        # key-by-key instead of being replaced wholesale like every other key.
+        self.intake["phase_states"] = {**DEFAULTS["intake"]["phase_states"],
+                                       **raw.get("intake", {}).get("phase_states", {})}
         self.commit_identity = raw.get("runner", {}).get("commit_identity", {})
         self.automerge = merged["automerge"]
         if self.intake.get("provider") and not self.intake.get("repo"):

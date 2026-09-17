@@ -20,14 +20,22 @@ Model, effort and the agent-command template come from the runner config
 (`[claude] default_model` + `[claude.stage_models]` / `[claude.stage_effort]`),
 so the seeded registry reproduces exactly what `_run_stage` would have used.
 
-The command template reproduces `runs.spawn`'s argv (claude_run/runs.py):
+The command template IS what the runner executes (`runs.spawn`), so it carries
+the whole invocation:
 
-    claude -p @<prompt> --model M --effort E --output-format json
-           --dangerously-skip-permissions --story <story>
+    <bin> -p {prompt} --model M --effort E --output-format json
+          {session} {permission} --story <story>
 
-`{payload[story]}` is on purpose: a spawn event that does not name a story is a
-definition error, and the registry catches it at `command_argv` rather than
-letting a story-less session start.
+Three kinds of placeholder appear there. `{model}` and `{payload[story]}` are
+resolved by the registry when the action fires; `{prompt}`, `{session}` and
+`{permission}` are `nodes.SPAWN_VARS`, filled by the spawner with the rendered
+prompt, the session-resume flags and the permission flags (values that only
+exist at the moment a process starts). `{payload[story]}` is on purpose: a spawn
+event that does not name a story is a definition error, and the registry catches
+it at `command_argv` rather than letting a story-less session start.
+
+The binary comes from `[claude] bin`, so an exported node card names the program
+that will actually run rather than a literal `claude` the operator replaced.
 """
 
 from pathlib import Path
@@ -51,16 +59,19 @@ STAGES = {
     "risk-triage": {"reads": ["signal:risk-high"], "emits": ["signal", "propose"]},
 }
 
-COMMAND = ("claude -p @{prompt_path} --model {model} --effort %(effort)s "
-           "--output-format json --dangerously-skip-permissions "
+COMMAND = ("%(bin)s -p {prompt} --model {model} --effort %(effort)s "
+           "--output-format json {session} {permission} "
            "--story {payload[story]}")
 
+DEFAULT_BIN = "claude"
 
-def command_for(effort: str) -> str:
-    """The agent invocation as a template string. Effort is baked in per stage
-    because it is a property of the node, not of the triggering event —
-    `config.effort_for` is consulted once, here, instead of at every spawn."""
-    return COMMAND % {"effort": effort}
+
+def command_for(effort: str, claude_bin: str = DEFAULT_BIN) -> str:
+    """The agent invocation as a template string. Effort and the binary are
+    baked in per stage because they are properties of the node, not of the
+    triggering event — `config.effort_for` and `[claude] bin` are consulted
+    once, here, instead of at every spawn."""
+    return COMMAND % {"effort": effort, "bin": claude_bin}
 
 
 def prompt_text(stage: str, prompts_dir=None) -> str:
@@ -87,7 +98,7 @@ def seed(data_dir, cfg=None, stages=None, prompts_dir=None) -> dict:
         text = prompt_text(stage, pdir)
         model = cfg.model_for(stage) if cfg else "opus"
         effort = cfg.effort_for(stage) if cfg else "high"
-        command = command_for(effort)
+        command = command_for(effort, cfg.claude["bin"] if cfg else DEFAULT_BIN)
         if stage not in nodes.index["nodes"]:
             nodes.register(stage, text, model, command, reads=meta["reads"],
                            emits=meta["emits"], produced_by="seed")
@@ -100,6 +111,11 @@ def seed(data_dir, cfg=None, stages=None, prompts_dir=None) -> dict:
         rec.update(model=model, command=command,
                    reads=list(meta["reads"]), emits=list(meta["emits"]))
         nodes._save()
+        # The export card carries the command, so a re-pin has to reach it too —
+        # otherwise the handoff copy keeps advertising the binary and the model
+        # the node was FIRST seeded with, which is the drift this seed exists to
+        # prevent. The prompt text in it is still the active version's, untouched.
+        nodes._write_export(stage)
         if any(v["id"] == version_id(text) for v in rec["versions"]):
             outcome[stage] = "unchanged"
         else:

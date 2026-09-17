@@ -43,10 +43,17 @@ def ensure_checkout(repo: str, checkout: Path, default_branch: str, identity: di
 
 
 def install_skills(checkout: Path, skills_source: Path, exclude_from_git=True,
-                   extra_sources: tuple = ()):
-    """Link PIPELINE_SKILLS from skills_source (required, hard-fails if absent)
-    plus every skill found in extra_sources (e.g. cadre-workflows/skills —
-    community/registry skills, linked opportunistically)."""
+                   extra_sources: tuple = (), required: bool = True, log=None):
+    """Link PIPELINE_SKILLS from skills_source plus every skill found in
+    extra_sources (e.g. cadre-workflows/skills — community/registry skills,
+    linked opportunistically).
+
+    `required` is `runner.require_skills`. True (the deployment setting) refuses
+    a half-wired checkout, because a stage session missing a skill fails hours
+    later and obscurely. A fresh machine that has not cloned the skills tree yet
+    sets it false and gets a warning, so the runner can be brought up in the
+    order the operator chooses.
+    """
     dest = checkout / ".claude" / "skills"
     dest.mkdir(parents=True, exist_ok=True)
     linked, missing = [], []
@@ -78,11 +85,13 @@ def install_skills(checkout: Path, skills_source: Path, exclude_from_git=True,
             if src.is_dir() and (src / "SKILL.md").exists():
                 _link(src)
     if missing:
-        raise SystemExit(
-            f"skills missing from {skills_source}: {', '.join(missing)}\n"
-            "Stage sessions depend on these; refusing to install a half-wired "
-            "checkout. Check that skills_source points at a tree containing them."
-        )
+        detail = (f"skills missing from {skills_source}: {', '.join(missing)}\n"
+                  "Stage sessions depend on these. Point `runner.skills_source` "
+                  "in config.toml at a tree that contains them, or set "
+                  "`runner.require_skills = false` to run without them.")
+        if required:
+            raise SystemExit(detail + "\nRefusing to install a half-wired checkout.")
+        (log or print)(f"skills: {detail}")
     if exclude_from_git:
         # .git is a FILE in a worktree (gitdir pointer) — resolve the shared
         # common dir instead of assuming a directory layout.

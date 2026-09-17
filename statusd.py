@@ -7,10 +7,15 @@ port on the tailnet; review-surface keeps its loopback default and every
 surface session is reached through this proxy.
 
 Routing rule: a path that resolves to a file in the status directory is
-served statically; everything else is forwarded verbatim to the local Review
-Surface server (127.0.0.1:4387) — its pages use root-relative asset URLs, so
-prefix-free forwarding is the only shape that works. /shutdown is blocked:
-nothing reachable from the network may stop the surface server.
+served statically; everything else is forwarded verbatim to the Review Surface
+server (`surface.upstream()`, loopback by default) — its pages use root-relative
+asset URLs, so prefix-free forwarding is the only shape that works. /shutdown is
+blocked: nothing reachable from the network may stop the surface server.
+
+The directory served, the bind address and the port come from the runner's
+config (`[runner] data_dir / status_bind / status_port`), with env overrides,
+so the page this serves is the page the daemon writes and a host with a network
+policy can narrow the bind without a patch.
 
 Streams responses chunk-by-chunk so the surface's SSE channel (/events/:key)
 works through the proxy.
@@ -22,10 +27,40 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STATUS_DIR = Path(os.environ.get(
-    "CADRE_STATUS_DIR", str(Path.home() / ".local/state/pipeline-runner/status")))
-SURFACE = os.environ.get("CADRE_SURFACE_UPSTREAM", "http://127.0.0.1:4387")
-PORT = int(os.environ.get("CADRE_STATUS_PORT", "8181"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from runnerlib import config as config_mod
+from runnerlib import surface as surface_mod
+
+
+def _runner_config():
+    """The daemon's config when there is one. This service is started by hand
+    as often as by systemd and must come up either way, so a missing or broken
+    config is a fallback to the shipped defaults, never a failure to serve."""
+    try:
+        return config_mod.load(os.environ.get("CADRE_CONFIG"))
+    except SystemExit:
+        return None
+
+
+_CFG = _runner_config()
+_DEFAULTS = config_mod.DEFAULTS["runner"]
+
+
+def _runner(key):
+    return _CFG.runner[key] if _CFG else _DEFAULTS[key]
+
+
+# Env wins over config wins over the defaults: a unit file overrides one dial
+# without a config edit, and the config is what keeps the served directory the
+# SAME directory the daemon writes its status into (they drifted while this was
+# a literal path).
+STATUS_DIR = Path(os.environ.get("CADRE_STATUS_DIR") or
+                  (_CFG.data_dir / "status" if _CFG
+                   else Path(os.path.expanduser(_DEFAULTS["data_dir"])) / "status"))
+SURFACE = surface_mod.upstream()
+BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
+PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
 BLOCKED = {"/shutdown"}
 HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "host",
                "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -128,9 +163,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"statusd: serving {STATUS_DIR} on :{PORT}, proxying the rest to {SURFACE}",
-          file=sys.stderr)
+    srv = ThreadingHTTPServer((BIND, PORT), Handler)
+    print(f"statusd: serving {STATUS_DIR} on {BIND}:{PORT}, "
+          f"proxying the rest to {SURFACE}", file=sys.stderr)
     srv.serve_forever()
 
 

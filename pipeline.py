@@ -55,8 +55,10 @@ def cmd_install(cfg, args):
     repo_cfg = cfg.repo(args.repo)
     checkout = cfg.checkout_dir(repo_cfg)
     claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"], cfg.commit_identity)
-    linked, missing = claude_run.install_skills(checkout, cfg.skills_source,
-                                                extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else ())
+    linked, missing = claude_run.install_skills(
+        checkout, cfg.skills_source,
+        extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else (),
+        required=cfg.runner["require_skills"], log=log)
     log(f"checkout ready: {checkout}")
     log(f"skills linked: {len(linked)} new; missing from source: {missing or 'none'}")
 
@@ -218,7 +220,8 @@ def cmd_run(cfg, args, single_pass=False):
                 _poll_story(cfg, reg, ghc, slug, story)
             except Exception as e:  # keep the daemon alive; surface in logs
                 log(f"ERROR polling {slug}: {e}")
-            board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log)
+            board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log,
+                                    phase_states=cfg.intake["phase_states"])
             reg.save()
         surface_mod.tick(cfg, reg, ghc, log)
         try:
@@ -258,41 +261,44 @@ def _board_intake(cfg, reg, board):
     """Start a story for each new card in the trigger column."""
     known = board_mod.known_issue_ids(reg)
     for issue in board.candidates():
-        if issue["id"] in known or slugify(issue["identifier"]) in reg.data["stories"]:
+        # Neutral issue record (board.issue_record) — no tracker's field names
+        # appear here, which is what lets a second provider drop in unchanged.
+        if issue["id"] in known or slugify(issue["key"]) in reg.data["stories"]:
             continue
-        story_text = issue["title"] + ("\n\n" + issue["description"] if issue.get("description") else "")
-        log(f"board: new card {issue['identifier']} — {issue['title']!r}; running intake")
-        status_mod.write_status(cfg, reg, run={"stage": "intake", "story": issue["identifier"],
+        story_text = issue["title"] + ("\n\n" + issue["body"] if issue["body"] else "")
+        log(f"board: new card {issue['key']} — {issue['title']!r}; running intake")
+        status_mod.write_status(cfg, reg, run={"stage": "intake", "story": issue["key"],
                                                "slice": None, "pr": None, "started": time.time()})
         # Acknowledge on the card BEFORE the (many-minute) intake run — silence
         # reads as failure. Moving the card out of the trigger column here also
         # prevents a failed intake from re-triggering every poll pass.
         ack_comment = None
         try:
-            board.move(issue["id"], "In Progress")
+            board.move(issue["id"], cfg.intake["pickup_state"])
             ack_comment = board.comment(
                 issue["id"], "⏳ Cadre picked this up — intake is running "
                              "(10–30 min). The planning PR lands here when it's done.")
         except Exception as e:
-            log(f"board: pickup ack failed for {issue['identifier']}: {e}")
+            log(f"board: pickup ack failed for {issue['key']}: {e}")
         try:
             slug, story = _begin_intake(
-                cfg, reg, cfg.intake["repo"], issue["identifier"], issue["title"],
+                cfg, reg, cfg.intake["repo"], issue["key"], issue["title"],
                 story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"),
                 story_url=issue["url"])
         except Exception as e:
-            log(f"board: intake spawn FAILED for {issue['identifier']}: {e}")
+            log(f"board: intake spawn FAILED for {issue['key']}: {e}")
             body = f"⚠️ Cadre intake failed to start: {e} — fix the cause, then move the card back to the trigger column to retry."
             if ack_comment:
                 board.edit_comment(ack_comment, body)
             else:
                 board.comment(issue["id"], body)
             continue
-        story["board"] = {"provider": "linear", "issue_id": issue["id"],
-                          "identifier": issue["identifier"], "url": issue["url"],
-                          "status_comment_id": ack_comment, "last_state": "In Progress"}
+        story["board"] = {"provider": cfg.intake["provider"], "issue_id": issue["id"],
+                          "identifier": issue["key"], "url": issue["url"],
+                          "status_comment_id": ack_comment,
+                          "last_state": cfg.intake["pickup_state"]}
         reg.save()
-        log(f"board: {issue['identifier']} intake spawned — finishes at reap")
+        log(f"board: {issue['key']} intake spawned — finishes at reap")
 
 
 def _poll_story(cfg, reg, ghc, slug, story):
@@ -704,8 +710,10 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     wt = cfg.data_dir / "worktrees" / slug / rid
     runs_mod.add_worktree(checkout, wt, branch, start_ref)
     try:
-        claude_run.install_skills(wt, cfg.skills_source,
-                                  extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else ())
+        claude_run.install_skills(
+            wt, cfg.skills_source,
+            extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else (),
+            required=cfg.runner["require_skills"], log=log)
     except Exception:
         # never leak a worktree on a failed spawn — the event retries with a
         # fresh one, and nobody has shell access to sweep by hand
@@ -739,6 +747,10 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, model,
                          effort, cfg.claude["permission_mode"],
                          cfg.claude["timeout_seconds"], run_dir, session_id=session_id,
+                         # The node registry's command when the engine drove
+                         # this spawn; None (compose the Claude Code flags) when
+                         # the legacy path did.
+                         argv=action.get("argv"),
                          # identity for `pipeline.py ask` — links a question to
                          # this session so an answer can revive it after exit.
                          # Spec-shaping stages also get the surface out-path:
@@ -949,6 +961,11 @@ def _resume_parked(cfg, reg, ghc, slug, story):
             wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
             cfg.claude["permission_mode"], cfg.claude["timeout_seconds"], run_dir,
             session_id=run["session_id"], resume=True,
+            # Revive through the same command that started the session: the
+            # `{session}` placeholder becomes `--resume <id>` here. A run from
+            # before the node carried a command has none, and takes the legacy
+            # path exactly as it used to.
+            argv=(run.get("action") or {}).get("argv"),
             extra_env={"CADRE_STORY": slug, "CADRE_STAGE": run["stage"],
                        "CADRE_SESSION_ID": run["session_id"], "CADRE_RUN_ID": rid})
         del story["parked_runs"][rid]
@@ -994,7 +1011,8 @@ def _resume_paused(cfg, reg, ghc, slug, story):
             wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
             cfg.claude["permission_mode"],
             cfg.claude["timeout_seconds"], run_dir,
-            session_id=run["session_id"], resume=True)
+            session_id=run["session_id"], resume=True,
+            argv=(run.get("action") or {}).get("argv"))
         del story["paused_runs"][rid]
         story.setdefault("active_runs", {})[rid] = {
             **run, "pid": pid, "started": time.time(), "resumed": True,
@@ -1098,8 +1116,9 @@ def cmd_board_check(cfg, args):
     if board is None:
         sys.exit("board-check: no [intake] provider configured")
     if not board.enabled:
-        sys.exit(f"board-check: API key env "
-                 f"{cfg.intake.get('linear', {}).get('api_key_env', 'LINEAR_API_KEY')} is not set")
+        # The provider names its own credential env var — this command must not
+        # know which tracker it is checking.
+        sys.exit(f"board-check: API key env {board.api_key_env} is not set")
     states = board.states()
     print(f"team {board.team!r}: connected — states: {', '.join(sorted(states))}")
     trig = board.trigger_state.lower()
@@ -1108,9 +1127,9 @@ def cmd_board_check(cfg, args):
     cands = board.candidates()
     known = board_mod.known_issue_ids(Registry(cfg.data_dir / "registry.json"))
     print(f"trigger column {board.trigger_state!r}: {len(cands)} card(s)"
-          + (f" — {', '.join(c['identifier'] for c in cands)}" if cands else ""))
+          + (f" — {', '.join(c['key'] for c in cands)}" if cands else ""))
     for c in cands:
-        print(f"  {c['identifier']}: {'already registered' if c['id'] in known else 'would intake'}")
+        print(f"  {c['key']}: {'already registered' if c['id'] in known else 'would intake'}")
 
 
 def cmd_status(cfg, args):
@@ -1308,6 +1327,9 @@ def main():
 
     args = ap.parse_args()
     cfg = config_mod.load(args.config)
+    # The summon handle is per-deployment; set it once, here, so every command
+    # (and every subprocess this one spawns) reads comments the same way.
+    poller.use_token(cfg.runner["summon_token"])
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface,

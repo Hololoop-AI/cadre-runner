@@ -114,12 +114,53 @@ def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
 
 # ------------------------------------------------------------------ processes
 
+def session_args(session_id: str | None, resume: bool) -> list[str]:
+    return ([] if not session_id else
+            ["--resume", session_id] if resume else ["--session-id", session_id])
+
+
+def permission_args(permission_mode: str) -> list[str]:
+    return (["--dangerously-skip-permissions"] if permission_mode == "bypass"
+            else ["--permission-mode", permission_mode])
+
+
+def expand_spawn_argv(argv: list[str], values: dict) -> list[str]:
+    """Fill a node command's spawn-time placeholders (`nodes.SPAWN_VARS`).
+
+    A value may be a string, substituted inside the token, or a LIST, in which
+    case a token that is exactly `{name}` becomes those arguments — zero of them
+    when there are none. Flag pairs (`--resume <id>`) and flags that sometimes
+    do not exist at all are the reason the list form is needed; a string could
+    only ever produce exactly one argument.
+    """
+    out = []
+    for tok in argv:
+        name = tok[1:-1] if tok.startswith("{") and tok.endswith("}") else None
+        if name is not None and isinstance(values.get(name), list):
+            out.extend(values[name])
+            continue
+        for key, val in values.items():
+            if isinstance(val, str):
+                tok = tok.replace("{%s}" % key, val)
+        out.append(tok)
+    return out
+
+
 def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
           timeout, run_dir: Path, session_id: str | None = None,
-          resume: bool = False, extra_env: dict | None = None) -> int:
-    """Detached `claude -p` under a shell wrapper that writes stdout, stderr,
+          resume: bool = False, extra_env: dict | None = None,
+          argv: list[str] | None = None) -> int:
+    """Detached agent session under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
     the outcome. Returns the wrapper pid.
+
+    `argv` is the node registry's command, already formatted by
+    `nodes.command_argv`. When it is given it IS the command — the claim "swap
+    the agent CLI by editing the node's command" is only true if nothing here
+    second-guesses it, so this function adds the run-time values the template
+    asked for and nothing else. Without it (the legacy path: no engine, revived
+    sessions from before nodes carried the command) the Claude Code flags below
+    are composed as they always were.
 
     session_id is chosen by the caller rather than read back afterwards: a run
     that dies (usage limit, reboot) never prints its id, and without it the
@@ -127,14 +168,16 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
     continues that session instead of starting a new one."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "prompt.txt").write_text(prompt)
-    argv = [claude_bin, "-p", prompt, "--model", model, "--effort", effort,
-            "--output-format", "json"]
-    if session_id:
-        argv += ["--resume", session_id] if resume else ["--session-id", session_id]
-    if permission_mode == "bypass":
-        argv.append("--dangerously-skip-permissions")
+    if argv:
+        argv = expand_spawn_argv(argv, {
+            "prompt": prompt,
+            "session": session_args(session_id, resume),
+            "permission": permission_args(permission_mode)})
     else:
-        argv += ["--permission-mode", permission_mode]
+        argv = ([claude_bin, "-p", prompt, "--model", model, "--effort", effort,
+                 "--output-format", "json"]
+                + session_args(session_id, resume)
+                + permission_args(permission_mode))
     argv = ["timeout", str(int(timeout))] + argv
     env = {**os.environ,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),
