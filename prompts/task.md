@@ -97,6 +97,15 @@ the verdict form are mandatory at any size; the rest scale with stakes.
    you did not; then the current state restated in full with
    `<span class="chip">changed</span>` on the sections this round touched and
    nothing on the rest.
+   Directly under the header, every round after the first also carries the
+   settled/changed layer: a green-bordered **decided** block pinning each
+   already-answered question with its answer, the round it was decided in, and
+   a lock marker — decided items are never silently rewritten; if this round's
+   work makes a settled answer stale, keep it locked and add a "context
+   changed in round $iteration — worth a look" flag instead of reopening it.
+   Above everything, one count line telling the driver where their attention
+   goes: how many items are decided, how many changed this round, how many
+   need them now.
 3. **Evidence with every claim** — a factual claim carries its proof inline:
    `file:line`, the command and what it printed verbatim, a quoted source with
    a date. A claim you cannot evidence is labeled as your judgement. Put long
