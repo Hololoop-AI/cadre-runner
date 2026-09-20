@@ -105,6 +105,34 @@ def load_actions(path) -> list[dict]:
     return [validate_action(a) for a in raw]
 
 
+def load_action_set(paths) -> list[dict]:
+    """Several action FILES, one action SET — which is what a tick consumes.
+
+    A workflow is a file (`actions-pipeline.json`, `actions-dialogue.json`);
+    the engine runs all of them at once, because the board is the only coupling
+    and an action does not know which file it came from. Concatenation, not a
+    merge: nothing is combined, overridden or reordered, so the set is exactly
+    the files read in order.
+
+    The one thing concatenation can break is the consumer cursor, which the
+    board keeps per ACTION NAME. Two files using the same name would share one
+    cursor and hide events from each other — silently, and only under load. So
+    a name collision across files is refused here, at load, naming both files.
+    """
+    out, seen = [], {}
+    for path in paths:
+        for action in load_actions(path):
+            name = action["name"]
+            if name in seen:
+                raise ActionError(
+                    f"duplicate action name {name!r} in {Path(path).name} — "
+                    f"already defined in {seen[name]}; action names are the "
+                    f"board's consumer cursors and must be unique across files")
+            seen[name] = Path(path).name
+            out.append(action)
+    return out
+
+
 def validate_action(action: dict) -> dict:
     """Everything checkable without a board, checked once, up front."""
     if not isinstance(action, dict):

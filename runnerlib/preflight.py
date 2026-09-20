@@ -8,12 +8,13 @@ table.
 
 Every check answers a question engine-only mode asks and shadow mode does not:
 
-    nodes       is there an ACTIVE version for all 9 stage nodes, and for the
-                eval judge? (`seed_nodes` records a changed prompt WITHOUT
-                promoting it — a registry can be seeded and still have a node
-                with no active version.)
-    actions     do both action files still validate against the closed
-                vocabulary, and does every spawn_node name an installed node?
+    nodes       is there an ACTIVE version for all 9 stage nodes, the eval
+                judges, and workflow #3's `task` node? (`seed_nodes` records a
+                changed prompt WITHOUT promoting it — a registry can be seeded
+                and still have a node with no active version.)
+    actions     does every action file still validate against the closed
+                vocabulary, does every spawn_node name an installed node, and
+                does the set the DAEMON loads have unique names across files?
     board       can the daemon actually write the board file in the data dir?
     gh          is `gh` authenticated? The gh-watch action shells out to it
                 every heartbeat; unauthenticated, the board just stays empty.
@@ -29,13 +30,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import engine, seed_eval_nodes, seed_nodes
+from . import engine, engine_seam, seed_eval_nodes, seed_nodes, tasks
 from .blackboard import Board
 from .nodes import Nodes, NodeError
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTION_FILES = (ROOT / "config" / "actions-pipeline.json",
-                ROOT / "config" / "actions-eval.json")
+                ROOT / "config" / "actions-eval.json",
+                ROOT / "config" / "actions-dialogue.json")
 
 
 class Check:
@@ -54,14 +56,19 @@ def check_nodes(data_dir: Path, cfg=None, seed: bool = True) -> list[Check]:
     out = []
     if seed:
         for name, fn in (("seed_nodes", lambda: seed_nodes.seed(data_dir, cfg)),
-                         ("seed_eval_nodes", lambda: seed_eval_nodes.seed(data_dir))):
+                         ("seed_eval_nodes", lambda: seed_eval_nodes.seed(data_dir)),
+                         # workflow #3's node is seeded by its own submit, so a
+                         # deployment that has never had a task submitted has no
+                         # `task` node — and the dialogue actions the engine now
+                         # loads would spawn one that does not exist.
+                         ("seed_task_node", lambda: tasks.seed(data_dir, cfg))):
             try:
                 fn()
                 out.append(Check(name, True, "ran"))
             except Exception as e:
                 out.append(Check(name, False, f"{type(e).__name__}: {e}"))
     nodes = Nodes(data_dir)
-    expected = list(seed_nodes.STAGES) + list(seed_eval_nodes.NODES)
+    expected = list(seed_nodes.STAGES) + list(seed_eval_nodes.NODES) + [tasks.NODE]
     missing, inactive = [], []
     for name in expected:
         try:
@@ -97,7 +104,25 @@ def check_actions(data_dir: Path, paths=ACTION_FILES) -> list[Check]:
                          "; ".join(filter(None, [
                              f"duplicate names: {', '.join(sorted(dupes))}" if dupes else "",
                              f"spawns unknown node(s): {', '.join(unknown)}" if unknown else ""]))))
+    out.append(check_action_set())
     return out
+
+
+def check_action_set(paths=None) -> Check:
+    """The files the DAEMON loads, loaded the way it loads them.
+
+    Each file validating on its own is not the same claim: action names are the
+    board's consumer cursors, so a name used in two files is a cursor two
+    actions share — invisible per file, fatal in a tick.
+    """
+    paths = engine_seam.ACTIONS_PATHS if paths is None else paths
+    names = ", ".join(Path(p).name for p in paths)
+    try:
+        actions = engine.load_action_set(paths)
+    except engine.ActionError as e:
+        return Check("engine action set", False, str(e))
+    return Check("engine action set", True,
+                 f"{len(actions)} action(s) from {names}")
 
 
 def check_board(data_dir: Path) -> Check:

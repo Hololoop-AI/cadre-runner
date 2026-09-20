@@ -16,6 +16,12 @@ Everything else the driver annotates is recorded to the board as
 the record (dual channel: GitHub remains fully live for teammates; the gate
 advances on the first qualifying event from either side).
 
+Task pages (workflow #3, `config/actions-dialogue.json`) are the exception,
+and `_task_bridge` is the whole of it: they have no PR, so their feedback goes
+to the BLACKBOARD as that workflow's own commands and nowhere near GitHub.
+The scope is one session kind — a session opened as `kind="task"` — so every
+pipeline surface keeps the flow above untouched.
+
 sessions.json is the durable session list; the outbox cursor is a byte
 offset persisted next to it, so a daemon restart re-reads nothing and loses
 nothing. All entry points swallow exceptions — the surface must never take
@@ -36,6 +42,12 @@ from . import board_events, dispatcher, gh
 CLI = "review-surface"
 _DECISION_RE = re.compile(
     r"CADRE_DECISION gate=(\w+) story=([\w.-]+) pr=(\d+) verdict=(approve|reject)")
+# Workflow #3's verdict (prompts/task.md). Its own pattern because the pipeline
+# one is PR-shaped to the bone — `pr=<n>` is required and the verdicts are
+# approve|reject — and a dialogue has no PR and a `continue` instead of a
+# reject. Matched FIRST, so a task token can never be read as a pipeline one.
+_TASK_DECISION_RE = re.compile(
+    r"CADRE_DECISION gate=task story=([\w.-]+) task=([\w.-]+) verdict=(approve|continue)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
 
 def outbox_path() -> Path:
@@ -379,6 +391,17 @@ def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
             p = {"prompt": str(p)}
         text = str(p.get("prompt") or "")
         anchor = _anchor(p)
+        t = _TASK_DECISION_RE.search(text)
+        if t:
+            # Whatever the driver typed AROUND the token is theirs and is kept:
+            # on a `continue` verdict it is the instruction for the next turn,
+            # and dropping it would lose the one thing they said.
+            structured.append({"type": "task_decision", "gate": "task",
+                               "story": t.group(1), "task": t.group(2),
+                               "verdict": t.group(3),
+                               "text": (text[:t.start()] + text[t.end():]).strip(),
+                               **anchor})
+            continue
         d = _DECISION_RE.search(text)
         if d:
             structured.append({"type": "decision", "gate": d.group(1),
@@ -456,6 +479,13 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
         board_events.emit("surface_unparsed", artifact=path, raw_file=str(keep))
         log(f"surface: feedback arrived but parsed to NOTHING — raw kept at {keep}")
         return
+    if meta.get("kind") == "task":
+        # Workflow #3 owns this page. Its feedback goes to the blackboard as
+        # the dialogue's own commands and NOWHERE else — no PR mirror, no
+        # merge, no `gh` at all, which is the claim that makes this workflow
+        # the engine's agnosticism proof.
+        _task_bridge(cfg, reg, log, path, meta, structured, free)
+        return
     for item in structured:
         _apply(cfg, reg, ghc, log, path, meta, item)
     for item in free:
@@ -476,6 +506,68 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
             except Exception as e:
                 log(f"surface: PR mirror failed: {e}")
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
+
+
+def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
+                 free: list[dict]) -> None:
+    """Surface -> board, for workflow #3's pages only.
+
+    The rest of this module mirrors driver feedback to a PR, because for the
+    pipeline the PR is the record. A dialogue has no PR: the BOARD is the
+    record, so the driver's words become the two commands
+    `config/actions-dialogue.json` triggers on and the engine takes the next
+    turn from there.
+
+    The mapping is the config's rule, not a choice made here:
+
+        approve            -> `task:verdict`, and the dialogue is over
+        annotations        -> `task:feedback`, the next turn of this session
+        `continue` verdict -> ALSO `task:feedback` — continuing IS a feedback
+                              turn, which is why the config has no continue
+                              branch to fire.
+
+    Approve wins over annotations that arrived with it: a page the driver
+    approved is finished, and re-spawning the session to answer notes on work
+    that is done would restart a dialogue the driver just closed. Those notes
+    are logged rather than written, so they are not silently gone.
+    """
+    from . import tasks as tasks_mod
+    task_id = meta.get("task") or ""
+    if not task_id:
+        log(f"surface: task feedback on {Path(path).name} with no task id — dropped")
+        return
+    notes = list(free)
+    approve = asked_to_continue = False
+    for item in structured:
+        if item.get("type") != "task_decision":
+            continue
+        if item["verdict"] == "approve":
+            approve = True
+        else:                       # continue: whatever it rode in on counts
+            asked_to_continue = True
+            notes.append(item)
+    if approve:
+        tasks_mod.write_verdict(cfg, task_id, "approve")
+        if notes:
+            log(f"surface: {task_id} approved with {len(notes)} annotation(s) "
+                f"alongside — the dialogue is closed, they start no new turn: "
+                + " | ".join((n.get("text") or "")[:120] for n in notes))
+        log(f"surface: {task_id} approved via surface — dialogue closed")
+        end_session(cfg, path, log)
+        return
+    if not any((n.get("text") or "").strip() for n in notes):
+        if not asked_to_continue:
+            return
+        # The driver pressed Continue and annotated nothing. That is still a
+        # turn — refusing it would leave a button that does nothing — and the
+        # line saying so is the bridge's, not words put in the driver's mouth.
+        notes = [{"text": "Continue — the driver asked for another round "
+                          "without annotating this page."}]
+    ev = tasks_mod.write_feedback(cfg, reg, task_id, meta.get("cwd") or "", notes)
+    if ev is None:
+        return
+    log(f"surface: {task_id} round {ev['payload']['iteration']} requested — "
+        f"{len(notes)} annotation(s) back to the session")
 
 
 def _ensure_server(cfg, sess: dict, log) -> None:

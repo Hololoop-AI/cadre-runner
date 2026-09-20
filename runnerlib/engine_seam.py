@@ -43,11 +43,25 @@ from . import engine, seed_nodes
 from .blackboard import Board
 from .nodes import Nodes
 
-ACTIONS_PATH = Path(__file__).resolve().parent.parent / "config" / "actions-pipeline.json"
+CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+
+# The action files the daemon runs, as a LIST — one workflow per file, all of
+# them live in one tick. The board is the only coupling between them, so
+# running two workflows is reading two files; `engine.load_action_set` refuses
+# a name collision across them rather than letting two actions share a cursor.
+#
+# `actions-eval.json` is deliberately NOT here. Its actions spawn the eval
+# judge nodes, which `state()` does not seed (it runs `seed_nodes` only), so
+# adding the file would put spawns of unregistered nodes into every pass of
+# every deployment. The eval workflow runs from its own harness against its own
+# data dir; including it here is a seeding change, not a list change.
+ACTIONS_PATHS = (CONFIG_DIR / "actions-pipeline.json",
+                 CONFIG_DIR / "actions-dialogue.json")
 
 NAMESPACE = "cadre"
 STORIES_TOPIC = "stories"
 STAGES_TOPIC = "stages"
+TASKS_TOPIC = "tasks"
 RUNNER_TOPIC = "runner"
 
 MODES = ("off", "shadow", "only")
@@ -99,6 +113,7 @@ def state(cfg) -> dict:
     """Board + node registry + loaded actions, opened once per process. The
     board is one SQLite file and one connection by design; reopening it every
     pass would just churn WAL."""
+    from . import tasks            # workflow #3 imports this module; late-bind
     path = str(board_path(cfg))
     if path not in _state:
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
@@ -109,10 +124,11 @@ def state(cfg) -> dict:
         # the operator's live state).
         os.environ["CADRE_DATA_DIR"] = str(cfg.data_dir)
         seed_nodes.seed(cfg.data_dir, cfg)      # idempotent; see seed_nodes
+        tasks.seed(cfg.data_dir, cfg)           # workflow #3's one node
         _state[path] = {
             "board": Board(path),
             "nodes": Nodes(cfg.data_dir),
-            "actions": engine.load_actions(ACTIONS_PATH),
+            "actions": engine.load_action_set(ACTIONS_PATHS),
         }
     return _state[path]
 
@@ -150,7 +166,10 @@ def tick_pass(cfg, reg, ghc, log, run_stage) -> dict:
             # A spawn that cannot start is a failed signal like any other, so
             # the stage-failed action sees it instead of it dying in a log line.
             ev = board.get(spec["event_id"]) or {}
-            board.write(NAMESPACE, STAGES_TOPIC, spec["key"], "signal",
+            # The failure belongs on the topic the spawn came from, so the
+            # workflow that owns the key is the one that can see it.
+            topic = ev.get("topic") if ev.get("topic") == TASKS_TOPIC else STAGES_TOPIC
+            board.write(NAMESPACE, topic, spec["key"], "signal",
                         {"status": "failed", "stage": spec["node"],
                          "story": (ev.get("payload") or {}).get("story", ""),
                          "error": f"{type(e).__name__}: {e}"[:300]},
@@ -239,6 +258,12 @@ def run_spawn_spec(cfg, reg, ghc, board: Board, log, run_stage, spec: dict):
     """
     event = board.get(spec["event_id"]) or {}
     payload = event.get("payload") or {}
+    if event.get("topic") == TASKS_TOPIC:
+        # Workflow #3. Told apart by the TOPIC the trigger fired on rather than
+        # by the node's name, because "which workflow is this" is a property of
+        # the board, and a second dialogue node later must not need a second
+        # branch here.
+        return run_task_spawn(cfg, reg, board, log, run_stage, spec, payload)
     slug = payload.get("story") or spec["key"].split(":", 1)[-1]
     story = reg.data["stories"].get(slug)
     if story is None:
@@ -274,6 +299,56 @@ def run_spawn_spec(cfg, reg, ghc, board: Board, log, run_stage, spec: dict):
     log(f"engine: spawning {spec['node']} for {slug} "
         f"(node version {spec['version'][:12]}, firing {spec.get('firing_id')})")
     run_stage(cfg, reg, ghc, slug, story, action)
+
+
+def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: dict):
+    """One turn of a dialogue (config/actions-dialogue.json).
+
+    Everything the pipeline spawn does to give a session somewhere to work —
+    find the story in the registry, ensure a checkout, cut a branch, add a
+    worktree — means nothing here. A task has no repo. The ask names a `cwd`
+    and the session runs in THAT directory, the one the driver is looking at,
+    with nothing checked out and nothing to tear down afterwards.
+
+    What replaces all of it is one value: the session id. It is minted on the
+    first turn and recorded against the task, and a turn carrying
+    `resume: "session"` gets it back — so the driver's annotation continues the
+    conversation that read their page instead of starting a cold one that has
+    to be told everything again. That is the entire workflow.
+    """
+    from . import tasks
+    task_id = payload.get("task") or payload.get("story") or spec["key"].split(":", 1)[-1]
+    cwd = str(payload.get("cwd") or "").strip()
+    if not cwd.startswith("/"):
+        # The ask is the only thing that names a working directory, so a
+        # missing or relative one is a spawn that would land wherever the
+        # daemon happens to be — refuse it here rather than find out from the
+        # session's transcript.
+        raise RuntimeError(f"task {task_id}: cwd {cwd!r} is not an absolute path")
+    session_id, resume = tasks.session_for(
+        reg, task_id, payload.get("resume") == "session")
+    action = {
+        "type": "run_task",
+        "stage": spec["node"],
+        "task": task_id,
+        "cwd": cwd,
+        "session_id": session_id,
+        "resume": resume,
+        "model": spec["model"],
+        "effort": None,          # the node's command carries it; config still wins
+        "prompt_template": Path(spec["prompt_path"]).read_text(),
+        "argv": spec.get("argv"),
+        "node_version": spec["version"],
+        "firing_id": spec.get("firing_id"),
+        "correlation_id": spec.get("correlation_id"),
+        "extra_vars": {k: v for k, v in payload.items() if k in PROMPT_VARS},
+    }
+    log(f"engine: spawning {spec['node']} turn for {task_id} in {cwd} "
+        f"({'resuming' if resume else 'new'} session {session_id[:8]}, "
+        f"node version {spec['version'][:12]}, firing {spec.get('firing_id')})")
+    # `story` is None on purpose: there is no story record and inventing one
+    # would put a repo-less row in front of `_poll_story` every pass.
+    run_stage(cfg, reg, None, task_id, None, action)
 
 
 # --------------------------------------------------------------------------- round caps

@@ -224,6 +224,13 @@ def cmd_run(cfg, args, single_pass=False):
             board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log,
                                     phase_states=cfg.intake["phase_states"])
             reg.save()
+        # Workflow #3's reap — before the surface tick, so a turn that finished
+        # this pass has its page open in the same pass the driver could reply on.
+        try:
+            _reap_tasks(cfg, reg)
+            reg.save()
+        except Exception as e:
+            log(f"ERROR reaping task turns: {e}")
         surface_mod.tick(cfg, reg, ghc, log)
         try:
             surface_mod.reconcile_merged_holds(cfg, reg, log)
@@ -685,6 +692,12 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     """Spawn a stage session detached in its own worktree. Raises RunsBusy on
     cap/branch contention (callers requeue); duplicate targets drop silently.
     wait=True (CLI paths: start, trigger) blocks until the run reaps."""
+    if action.get("type") == "run_task":
+        # Workflow #3 has no repo, so none of what follows applies to it. The
+        # branch is here rather than at the caller because this stays the one
+        # spawn door: the cap, the run record and the surface out-path are
+        # decided in one place for both workflows.
+        return _run_task(cfg, reg, slug, action, skip_cap=skip_cap)
     stage, slice_name, pr = action["stage"], action.get("slice"), action.get("pr")
     # Engine seam: a spawn spec carries the node registry's pins, and the
     # registry is authoritative at runtime. Legacy actions carry none of these
@@ -763,18 +776,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                                     # session rewrites it every round (the same
                                     # one-page-replaces-itself rule the spec
                                     # stages follow).
-                                    **({"CADRE_SURFACE_OUT":
-                                        str(surface_mod._dir(cfg) / f"task-{slug}.html")}
-                                       if stage == tasks_mod.NODE
-                                       else {"CADRE_SURFACE_OUT":
-                                        str(surface_mod._dir(cfg) / f"spec-{slug}.html")}
-                                       if stage in SPEC_STAGES
-                                       else {"CADRE_SURFACE_OUT":
-                                             str(surface_mod._dir(cfg) / f"final-{slug}.html")}
-                                       if stage == "assembly"
-                                       else {"CADRE_SURFACE_OUT":
-                                             str(surface_mod._dir(cfg) / f"hold-{slug}-pr{pr}.html")}
-                                       if stage == "risk-triage" else {})})
+                                    **_surface_env(cfg, stage, slug, pr)})
     story.setdefault("active_runs", {})[rid] = {
         "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
         "repo": story["repo"], "branch": branch, "model": model,
@@ -789,6 +791,130 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         while not runs_mod.finished(story["active_runs"][rid]):
             time.sleep(10)
         _reap_runs(cfg, reg, ghc, slug, story)
+
+
+def surface_out(cfg, stage, slug, pr=None) -> Path | None:
+    """Where THIS stage's session writes the driver's page, or None when the
+    stage authors none. One page per touchpoint, rewritten in place every round
+    (the session authors the briefing — never a PR copy; driver decision
+    2026-08-27)."""
+    d = surface_mod._dir(cfg)
+    if stage == tasks_mod.NODE:
+        return d / f"task-{slug}.html"          # workflow #3: one page per task
+    if stage in SPEC_STAGES:
+        return d / f"spec-{slug}.html"
+    if stage == "assembly":
+        return d / f"final-{slug}.html"
+    if stage == "risk-triage":
+        return d / f"hold-{slug}-pr{pr}.html"
+    return None
+
+
+def _surface_env(cfg, stage, slug, pr=None) -> dict:
+    path = surface_out(cfg, stage, slug, pr)
+    return {"CADRE_SURFACE_OUT": str(path)} if path else {}
+
+
+def _run_task(cfg, reg, task_id, action, skip_cap=False):
+    """Spawn one turn of a dialogue (workflow #3), in the driver's own tree.
+
+    The three things that make this not a stage run:
+
+      cwd        the ask's directory IS the working directory. No checkout, no
+                 branch, no worktree — so also nothing to tear down, and no
+                 branch guard, because two turns of one dialogue are serialised
+                 by the board (one command, one turn) rather than by a ref.
+      session    `action["session_id"]` was minted or recovered by the spawn
+                 seam. resume=True turns it into `--resume`, which is how the
+                 driver's annotation reaches the session that wrote the page.
+      record     the run lands in the registry's `tasks` section, not in a
+                 story's `active_runs`, because a task is not a story.
+    """
+    stage = action["stage"]
+    rec = tasks_mod.record(reg, task_id)
+    rec["cwd"] = action["cwd"]
+    active = rec.setdefault("active_runs", {})
+    if active:
+        # One turn at a time: a dialogue where the driver's last two messages
+        # are being answered concurrently is two dialogues.
+        log(f"{task_id}: a turn is already running — skipped")
+        return
+    cwd = Path(action["cwd"])
+    if not cwd.is_dir():
+        raise RuntimeError(f"{task_id}: working directory {cwd} does not exist")
+    running = len(runs_mod.all_active(reg)) + tasks_mod.active_count(reg)
+    if not skip_cap and running >= cfg.runner["max_concurrent_runs"]:
+        raise runs_mod.RunsBusy(f"{cfg.runner['max_concurrent_runs']} concurrent runs")
+
+    rid = f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}"
+    v = {"task": task_id, "story": task_id, "cwd": str(cwd),
+         "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
+         "task_text": "", "feedback": "", "surface_prev": ""}
+    v |= action.get("extra_vars", {})
+    rec["iteration"] = int(str(v["iteration"]) or 1)
+    prompt = Template(action["prompt_template"]).safe_substitute(v)
+    run_dir = cfg.data_dir / "runs" / task_id / rid
+    session_id = action["session_id"]
+    model = action.get("model") or cfg.model_for(stage)
+    effort = action.get("effort") or cfg.effort_for(stage)
+    pid = runs_mod.spawn(cfg.claude["bin"], prompt, cwd, model, effort,
+                         cfg.claude["permission_mode"], cfg.claude["timeout_seconds"],
+                         run_dir, session_id=session_id,
+                         resume=bool(action.get("resume")),
+                         argv=action.get("argv"),
+                         extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
+                                    "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
+                                    "CADRE_RUN_ID": rid,
+                                    **_surface_env(cfg, stage, task_id)})
+    active[rid] = {
+        "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
+        "repo": "", "branch": "", "model": model, "effort": effort,
+        "worktree": str(cwd), "run_dir": str(run_dir), "started": time.time(),
+        "session_id": session_id, "resumed": bool(action.get("resume")),
+        "iteration": rec["iteration"], "action": action,
+    }
+    reg.save()
+    log(f"{task_id}: spawned turn {rec['iteration']} in {cwd} — pid {pid} "
+        f"({'resumed' if action.get('resume') else 'new'} session {session_id[:8]})")
+
+
+def _reap_tasks(cfg, reg):
+    """Collect finished dialogue turns.
+
+    A stage reap tears down a worktree and applies registry effects; there is
+    neither here. What a turn ending MEANS in this workflow is that the page is
+    ready, so the reap's one real job is opening the surface session — without
+    it the driver is never shown the answer and the feedback bridge has nothing
+    to poll.
+    """
+    for task_id, rec in list(tasks_mod.records(reg).items()):
+        for rid, run in list((rec.get("active_runs") or {}).items()):
+            if not runs_mod.finished(run):
+                continue
+            ok, result, usage, record = runs_mod.outcome(run)
+            log_path = cfg.data_dir / "logs" / task_id / f"{rid}.json"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(json.dumps(record, indent=2))
+            status_mod.append_history(cfg, {
+                "ended": time.time(), "story": task_id, "stage": run["stage"],
+                "slice": None, "pr": None, "ok": ok,
+                "seconds": round(time.time() - run["started"], 1),
+                "model": run.get("model"),
+                "cost_usd": (usage or {}).get("total_cost_usd"),
+            })
+            del rec["active_runs"][rid]
+            rec["last_result"] = (result or "")[:500]
+            log(f"{task_id}: turn {run.get('iteration')} "
+                f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
+            art = surface_out(cfg, run["stage"], task_id)
+            if ok and art and art.exists() and surface_mod.available():
+                # `task` is the meta the feedback bridge scopes on: only a
+                # session opened here is a dialogue turn's page.
+                surface_mod.open_session(cfg, art, "task", log,
+                                         task=task_id, cwd=rec.get("cwd", ""))
+            elif ok and art and not art.exists():
+                log(f"{task_id}: turn finished but wrote no page at {art} — "
+                    f"nothing for the driver to rule on")
 
 
 def _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg):
@@ -1307,7 +1433,11 @@ def cmd_messages(cfg, args):
 def main():
     ap = argparse.ArgumentParser(prog="pipeline", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", help="path to config.toml")
+    # CADRE_CONFIG fallback matches preflight: without it, a harness that sets
+    # the env var but not the flag silently runs against the repo's config.toml
+    # and writes into the LIVE state dir (it happened twice).
+    ap.add_argument("--config", default=os.environ.get("CADRE_CONFIG"),
+                    help="path to config.toml (default: $CADRE_CONFIG)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("install");  p.add_argument("--repo", required=True)

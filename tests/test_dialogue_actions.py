@@ -14,20 +14,24 @@ Run directly: python3 tests/test_dialogue_actions.py
 """
 
 import io
+import json
+import os
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from runnerlib import engine, engine_seam, tasks
+from runnerlib import config as config_mod
+from runnerlib import engine, engine_seam, preflight, surface, tasks
 from runnerlib.blackboard import Board
 from runnerlib.nodes import Nodes
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTIONS = ROOT / "config" / "actions-dialogue.json"
+PIPELINE_ACTIONS = ROOT / "config" / "actions-pipeline.json"
 PROMPTS = ROOT / "prompts"
 
 
@@ -53,11 +57,14 @@ def by_name(name: str) -> dict:
 
 
 class FakeCfg:
-    """Enough config for `submit_task`: a data dir and the node pins."""
+    """Enough config for `submit_task` and for a task spawn: a data dir, the
+    node pins, and the runner dials the spawn path reads."""
 
     def __init__(self, d):
         self.data_dir = Path(d)
-        self.claude = {"bin": "claude"}
+        self.claude = {**config_mod.DEFAULTS["claude"], "bin": "claude"}
+        self.runner = {**config_mod.DEFAULTS["runner"], "max_concurrent_runs": 4}
+        self.limits = {"max_rounds_per_stage": 5}
 
     def model_for(self, node):
         return "opus"
@@ -191,12 +198,20 @@ def test_surface_feedback_takes_the_next_turn_on_the_same_session():
 
 
 class FakeReg:
-    """A dialogue has no repo and no plan; the seam still wants a story row."""
+    """The registry a dialogue actually uses: no story row at all (the task
+    spawn path never looks one up), and a `tasks` section it writes its session
+    ids and run records into."""
 
-    data = {"stories": {"task-demo": {"repo": "", "status": "active"}}}
+    def __init__(self, stories=None):
+        self.data = {"stories": dict(stories or {})}
+        self.saves = 0
 
     def stories(self, status="active"):
-        return self.data["stories"]
+        return {k: v for k, v in self.data["stories"].items()
+                if v.get("status") == status}
+
+    def save(self):
+        self.saves += 1
 
 
 def test_an_approve_verdict_marks_the_task_done():
@@ -312,6 +327,309 @@ def test_task_subcommand_submits_and_prints_where_to_look():
     assert ev["payload"]["task_text"] == Args.text
     # the CLI is a caller of submit_task, not a second write path
     assert ev["payload"]["target"] == tasks.TARGET_REQUEST
+
+
+# --------------------------------------------------------------------------- the action SET
+
+
+def test_the_engine_loads_every_workflow_as_one_set():
+    """Two workflows, two files, one tick. Before this the seam loaded
+    actions-pipeline.json alone, so the dialogue config was a file nothing
+    read."""
+    loaded = engine.load_action_set(engine_seam.ACTIONS_PATHS)
+    names = [a["name"] for a in loaded]
+
+    assert set(engine_seam.ACTIONS_PATHS) == {PIPELINE_ACTIONS, ACTIONS}
+    assert names == [a["name"] for a in engine.load_actions(PIPELINE_ACTIONS)] + \
+                    [a["name"] for a in engine.load_actions(ACTIONS)], \
+        "the set is the files concatenated in order — no merge, no reordering"
+    assert "task-requested" in names and len(names) == len(set(names))
+
+    # the eval workflow is deliberately NOT in the daemon's set: its nodes are
+    # seeded by a different seed, so loading it would spawn nodes that are not
+    # installed. Preflight still validates the file on its own.
+    assert ROOT / "config" / "actions-eval.json" not in engine_seam.ACTIONS_PATHS
+    assert ROOT / "config" / "actions-eval.json" in preflight.ACTION_FILES
+
+
+def test_a_name_used_in_two_files_fails_the_load_loudly():
+    """An action name IS its cursor on the board. Two actions sharing one would
+    hide events from each other silently, so the collision is refused at load
+    and both files are named."""
+    d = scratch()
+    clash = d / "actions-clash.json"
+    clash.write_text(json.dumps({"actions": [
+        {"name": "task-requested",
+         "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command"},
+         "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                     "kind": "notify", "payload": {"message": "hi"}}}]}))
+
+    try:
+        engine.load_action_set((ACTIONS, clash))
+        raise AssertionError("a duplicate action name across files must not load")
+    except engine.ActionError as e:
+        assert "task-requested" in str(e)
+        assert "actions-clash.json" in str(e) and "actions-dialogue.json" in str(e)
+
+    # and preflight says so rather than passing a deployment that cannot tick
+    bad = preflight.check_action_set((ACTIONS, clash))
+    assert not bad.ok and "task-requested" in bad.detail
+    assert preflight.check_action_set().ok
+
+
+# --------------------------------------------------------------------------- the spawn
+
+
+class Spawned(dict):
+    """A recorded `runs.spawn` call — the real one is never made."""
+
+
+@contextmanager
+def no_real_spawn(calls):
+    """Replace the two things a task spawn must and must not do: record the
+    spawn, and make any worktree attempt an outright failure."""
+    import pipeline
+    from runnerlib import runs as runs_mod
+
+    real_spawn, real_wt = runs_mod.spawn, runs_mod.add_worktree
+
+    def fake_spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
+                   timeout, run_dir, session_id=None, resume=False,
+                   extra_env=None, argv=None):
+        Path(run_dir).mkdir(parents=True, exist_ok=True)
+        calls.append(Spawned(prompt=prompt, cwd=str(wt_path), model=model,
+                             session_id=session_id, resume=resume,
+                             env=dict(extra_env or {}), argv=list(argv or []),
+                             run_dir=str(run_dir)))
+        return 4242
+
+    def forbidden_worktree(*a, **k):
+        raise AssertionError("a task spawn must never create a worktree")
+
+    runs_mod.spawn, runs_mod.add_worktree = fake_spawn, forbidden_worktree
+    pipeline.runs_mod.spawn = fake_spawn
+    pipeline.runs_mod.add_worktree = forbidden_worktree
+    try:
+        yield calls
+    finally:
+        runs_mod.spawn, runs_mod.add_worktree = real_spawn, real_wt
+        pipeline.runs_mod.spawn, pipeline.runs_mod.add_worktree = real_spawn, real_wt
+
+
+def drive(cfg, reg, b, spec, calls):
+    import pipeline
+    with no_real_spawn(calls):
+        engine_seam.run_spawn_spec(cfg, reg, None, b, lambda *a: None,
+                                   pipeline._run_stage, spec)
+
+
+def test_a_task_turn_runs_in_the_ask_s_cwd_with_no_worktree_and_a_recorded_session():
+    d, work = scratch(), scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, cwd=str(work))
+
+    calls = []
+    drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
+
+    assert len(calls) == 1
+    spawn = calls[0]
+    # the ask's directory IS the working directory — no checkout, no worktree
+    # (no_real_spawn makes an attempt at one an assertion failure)
+    assert spawn["cwd"] == str(work)
+    # round 1 MINTS a session id and writes it down, because the driver's next
+    # annotation has to be able to find it after a daemon restart
+    assert spawn["resume"] is False
+    assert spawn["session_id"] and spawn["env"]["CADRE_SESSION_ID"] == spawn["session_id"]
+    assert tasks.records(reg)["task-demo"]["session_id"] == spawn["session_id"]
+    assert reg.saves >= 1, "the session id must be persisted, not just held"
+
+    # the page the driver will read is named for the task, and the session is
+    # told where to write it
+    assert spawn["env"]["CADRE_SURFACE_OUT"].endswith("surfaces/task-task-demo.html")
+    assert spawn["env"]["CADRE_TASK"] == "task-demo"
+
+    # the run record lives in the registry's `tasks` section, NOT in a story
+    run = list(tasks.records(reg)["task-demo"]["active_runs"].values())[0]
+    assert run["pid"] == 4242 and run["session_id"] == spawn["session_id"]
+    assert run["worktree"] == str(work) and run["branch"] == ""
+    assert reg.data["stories"] == {}, "a task must never become a story row"
+
+
+def test_a_feedback_turn_resumes_the_recorded_session_at_round_two():
+    d, work = scratch(), scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    b, n, acts = board(d), seeded(d), actions()
+
+    request(b, cwd=str(work), task_text="tidy the flags")
+    calls = []
+    drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
+    first_session = calls[0]["session_id"]
+    # round 1 has to be out of the way, or the one-turn-at-a-time guard drops
+    # the next one (which is the correct behaviour, not the one under test)
+    tasks.records(reg)["task-demo"]["active_runs"].clear()
+
+    b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
+            {"target": tasks.TARGET_FEEDBACK, "task": "task-demo",
+             "story": "task-demo", "cwd": str(work), "iteration": "2",
+             "feedback": "the second table is unreadable — fold it into prose",
+             "resume": "session"})
+    drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
+
+    assert len(calls) == 2
+    turn = calls[1]
+    # the SAME session, continued — this is the whole workflow
+    assert turn["session_id"] == first_session and turn["resume"] is True
+    assert turn["cwd"] == str(work)
+    # ...and it reaches the process as `--resume <id>`: the node's command
+    # carries the `{session}` placeholder and the spawner fills it from
+    # (session_id, resume), which is the only difference between continuing the
+    # dialogue and starting it over
+    from runnerlib import runs as runs_mod
+    assert "{session}" in turn["argv"]
+    expanded = runs_mod.expand_spawn_argv(
+        turn["argv"], {"prompt": "P", "permission": [],
+                       "session": runs_mod.session_args(turn["session_id"],
+                                                        turn["resume"])})
+    assert expanded[expanded.index("--resume") + 1] == first_session
+    assert "--session-id" not in expanded
+    assert runs_mod.session_args(calls[0]["session_id"], calls[0]["resume"]) == \
+        ["--session-id", first_session]
+
+    # the driver's words and the round reached the RENDERED prompt
+    assert "the second table is unreadable" in turn["prompt"]
+    assert "round **2 of 5**" in turn["prompt"]
+    assert "$feedback" not in turn["prompt"] and "$cwd" not in turn["prompt"]
+    assert str(work) in turn["prompt"]
+
+
+def test_a_task_spawn_refuses_a_cwd_that_is_not_an_absolute_path():
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, cwd="relative/dir")
+
+    try:
+        drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], [])
+        raise AssertionError("a relative cwd must be refused before the spawn")
+    except RuntimeError as e:
+        assert "absolute" in str(e)
+
+
+# --------------------------------------------------------------------------- the bridge
+
+
+@contextmanager
+def jsonl_board(d: Path):
+    """board_events writes to a JSONL stub; point it somewhere disposable so a
+    test can assert on what the pipeline path still emits."""
+    was = os.environ.get("CADRE_BOARD_JSONL")
+    os.environ["CADRE_BOARD_JSONL"] = str(d / "events.jsonl")
+    try:
+        yield d / "events.jsonl"
+    finally:
+        os.environ.pop("CADRE_BOARD_JSONL", None)
+        if was is not None:
+            os.environ["CADRE_BOARD_JSONL"] = was
+
+
+def poll_json(*prompts) -> str:
+    return json.dumps({"status": "open", "prompts": list(prompts)})
+
+
+def note(text, anchor=""):
+    return {"prompt": text, "text": anchor}
+
+
+def commands(cfg) -> list[dict]:
+    b = Board(engine_seam.board_path(cfg))
+    try:
+        return [e["payload"] for e in b.peek(topic="tasks", kind="command")]
+    finally:
+        b.close()
+
+
+def test_annotations_on_a_task_surface_become_a_feedback_command():
+    d, work = scratch(), scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    tasks.record(reg, "task-demo")["cwd"] = str(work)
+    meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
+
+    with jsonl_board(d):
+        surface._handle_poll(
+            cfg, reg, None, lambda *a: None, str(d / "task-task-demo.html"), meta,
+            poll_json(note("fold this into prose", "The second table"),
+                      note("and say what you could not check")))
+
+    payloads = commands(cfg)
+    assert len(payloads) == 1
+    # the exact shape config/actions-dialogue.json documents — nothing more
+    assert payloads[0] == {
+        "target": "task:feedback", "task": "task-demo", "story": "task-demo",
+        "cwd": str(work), "iteration": "2", "resume": "session",
+        "feedback": "> The second table\n\nfold this into prose"
+                    "\n\n---\n\nand say what you could not check"}
+
+    # and it is a real trigger: the engine takes the next turn from it
+    b, n = Board(engine_seam.board_path(cfg)), seeded(d)
+    assert [s["node"] for s in engine.tick(b, actions(), n, d).spawns] == ["task"]
+
+
+def test_a_continue_verdict_is_a_feedback_turn_and_approve_ends_the_dialogue():
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
+    art = str(d / "task-task-demo.html")
+
+    # `continue` is not a verdict the config handles — continuing IS a feedback
+    # turn, so the bridge writes one
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+            note("CADRE_DECISION gate=task story=task-demo task=task-demo "
+                 "verdict=continue\n\nkeep going, drop the second table",
+                 "Verdict")))
+    payloads = commands(cfg)
+    assert [p["target"] for p in payloads] == ["task:feedback"]
+    assert "drop the second table" in payloads[0]["feedback"]
+
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+            note("CADRE_DECISION gate=task story=task-demo task=task-demo "
+                 "verdict=approve")))
+    payloads = commands(cfg)
+    assert payloads[-1] == {"target": "task:verdict", "task": "task-demo",
+                            "story": "task-demo", "verdict": "approve"}
+
+    # ...and the approval is what the config's done action reads
+    b, n = Board(engine_seam.board_path(cfg)), seeded(d)
+    spawns, firings = engine.tick(b, [by_name("task-approved-done")], n, d)
+    assert spawns == [] and [f["outcome"] for f in firings] == ["fired"]
+
+
+def test_the_bridge_never_touches_a_surface_it_does_not_own():
+    """Scope: one session kind. A pipeline surface keeps mirroring to its PR
+    and writing `surface_feedback`, and writes NOTHING on the tasks topic."""
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg({"nex-1": {"repo": "o/r", "status": "active"}})
+    mirrored = []
+
+    class FakeGh:
+        def comment(self, repo, pr, body):
+            mirrored.append((repo, pr, body))
+
+    meta = {"kind": "spec_review", "story": "nex-1", "pr": 7, "repo": "o/r",
+            "open": True}
+    with jsonl_board(d) as events:
+        surface._handle_poll(cfg, reg, FakeGh(), lambda *a: None,
+                             str(d / "spec-nex-1.html"), meta,
+                             poll_json(note("this slice is too big", "Slice 2")))
+        emitted = [json.loads(l) for l in events.read_text().splitlines()]
+
+    assert [e["kind"] for e in emitted] == ["surface_feedback"]
+    assert emitted[0]["story"] == "nex-1" and emitted[0]["pr"] == 7
+    assert mirrored and mirrored[0][1] == 7        # still the PR's record
+    assert commands(cfg) == [], "the bridge must not write for a pipeline surface"
+    assert tasks.records(reg) == {}
 
 
 if __name__ == "__main__":

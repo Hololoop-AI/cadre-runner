@@ -27,6 +27,7 @@ repo, no PR and no story would be instructions for a different world.
 """
 
 import time
+import uuid
 from pathlib import Path
 
 from . import engine_seam, seed_nodes
@@ -122,3 +123,121 @@ def submit_task(cfg, text: str, cwd=None, title=None) -> str:
     finally:
         board.close()
     return task_id
+
+
+# --------------------------------------------------------------------------- records
+#
+# Where a dialogue's operational state lives: `registry.json`, beside the
+# stories, under its own `tasks` section.
+#
+# It is not a story. A story record means a repo, a feature branch, PR caches
+# and a phase, and `_poll_story` would take a task for one and start asking
+# GitHub about a repo that is the empty string. But the registry IS where run
+# records already persist — `active_runs`, `pid`, `session_id`, `run_dir` —
+# and a dialogue needs exactly those fields for exactly the same reason (the
+# daemon can die between spawn and reap). So it gets the same file and the
+# same shape, one level over.
+#
+# The session id is the part that matters: workflow #3's whole claim is that
+# the driver's next annotation continues the SAME conversation, and a session
+# id that is not written down before the process starts is a conversation that
+# cannot be re-entered after a restart.
+
+
+def records(reg) -> dict:
+    return reg.data.setdefault("tasks", {})
+
+
+def record(reg, task_id: str) -> dict:
+    return records(reg).setdefault(
+        task_id, {"task": task_id, "session_id": None, "iteration": 1,
+                  "cwd": "", "active_runs": {}, "since": time.time()})
+
+
+def active_count(reg) -> int:
+    return sum(len(r.get("active_runs") or {}) for r in records(reg).values())
+
+
+def session_for(reg, task_id: str, resume: bool) -> tuple[str, bool]:
+    """(session id, resume?) for the turn about to spawn.
+
+    The first turn MINTS an id and records it; every turn after it that asks to
+    resume gets that same id back with resume=True, which `runs.session_args`
+    turns into `--resume <id>` instead of `--session-id <id>`.
+
+    A resume asked for on a task with nothing recorded (a board replayed into a
+    fresh data dir) mints a fresh one rather than failing: a cold new session is
+    a worse answer than a continued one, and no answer at all is worse still.
+    """
+    rec = record(reg, task_id)
+    if resume and rec.get("session_id"):
+        return rec["session_id"], True
+    rec["session_id"] = str(uuid.uuid4())
+    return rec["session_id"], False
+
+
+# --------------------------------------------------------------------------- the driver's turn
+
+
+def format_feedback(notes: list[dict]) -> str:
+    """The driver's words as the node will read them in `$feedback`.
+
+    Each note is quoted under the text it was attached to, because an
+    annotation without its anchor is a floating sentence the session has to
+    guess the target of (the same finding that put anchors on surface feedback
+    in the first place).
+    """
+    out = []
+    for note in notes:
+        anchor = (note.get("anchor") or "").strip()
+        text = (note.get("text") or "").strip()
+        if not text:
+            continue
+        quoted = "> " + anchor.replace("\n", "\n> ") + "\n\n" if anchor else ""
+        out.append(quoted + text)
+    return "\n\n---\n\n".join(out)
+
+
+def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict]) -> dict | None:
+    """The driver annotated the page: write the `task:feedback` command.
+
+    This is the board-side half of "a surface annotation is the next turn". The
+    payload shape is the config's, not this function's — `target` tells it from
+    the other two commands on the topic, `resume` is what the spawn seam reads
+    to continue the session rather than start one, and the bumped `iteration`
+    is what the node renders as "round N of M".
+    """
+    text = format_feedback(notes)
+    if not text:
+        return None
+    rec = record(reg, task_id)
+    rec["iteration"] = int(rec.get("iteration") or 1) + 1
+    if hasattr(reg, "save"):
+        # The bumped round has to survive a restart between this write and the
+        # spawn it triggers, or the next turn renders as the round before it.
+        reg.save()
+    return _command(cfg, task_id,
+                    {"target": TARGET_FEEDBACK, "task": task_id, "story": task_id,
+                     "cwd": cwd or rec.get("cwd") or "",
+                     "iteration": str(rec["iteration"]),
+                     "feedback": text, "resume": "session"})
+
+
+def write_verdict(cfg, task_id: str, verdict: str) -> dict:
+    """The driver ruled on the page: write the `task:verdict` command.
+
+    Only `approve` ends the dialogue (config: `task-approved-done`). A
+    `continue` verdict is not written here at all — continuing IS a feedback
+    turn, so the bridge writes it as one.
+    """
+    return _command(cfg, task_id,
+                    {"target": TARGET_VERDICT, "task": task_id, "story": task_id,
+                     "verdict": verdict})
+
+
+def _command(cfg, task_id: str, payload: dict) -> dict:
+    board = Board(engine_seam.board_path(cfg))
+    try:
+        return board.write(NAMESPACE, TOPIC, key_for(task_id), "command", payload)
+    finally:
+        board.close()
