@@ -764,7 +764,7 @@ def status_list(cfg) -> list[dict]:
                         "pr": meta.get("pr"), "ticket": meta.get("ticket"),
                         "path": meta.get("path"), "opened": meta.get("opened"),
                         "project": meta.get("project"), "title": meta.get("title"),
-                        "role": meta.get("role")})
+                        "role": meta.get("role"), "task": meta.get("task")})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
 
 

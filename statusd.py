@@ -255,22 +255,28 @@ def external_projects(snap: dict) -> list[dict]:
 # -------------------------------------------------------------------- render
 
 _CSS = """
-:root{--bg:#faf9f6;--fg:#1c1e21;--muted:#6b6f76;--card:#fff;--border:#e4e1da;
- --ok:#15803d;--run:#b45309;--hot:#b91c1c;--accent:#c2410c;--soft:#00000008}
-@media (prefers-color-scheme:dark){:root{--bg:#131417;--fg:#e8e6e1;--muted:#9a9ea6;
- --card:#1b1d22;--border:#2a2d34;--ok:#4ade80;--run:#fbbf24;--hot:#f87171;
- --accent:#fb923c;--soft:#ffffff08}}
+/* One design system: these tokens are surface-theme.css's, verbatim, so the
+   fleet and every surface it opens read as one product. Dark, committed —
+   the surfaces have no light mode, so a light fleet is a theme break. */
+:root{--bg:#0f1115;--fg:#e8e6e1;--muted:#9aa4b2;--label:#8c96aa;
+ --card:#12161e;--card-2:#171c26;--border:#2a2e36;
+ --ok:#8fe0a8;--run:#e6c07b;--hot:#ff8f8f;--accent:#8fc7ff;--soft:#ffffff08;
+ --serif:"Iowan Old Style",Georgia,serif;
+ --sans:ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+ --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
- font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{max-width:52rem;margin:0 auto;padding:1.2rem 1.2rem 3rem}
-header{display:flex;align-items:baseline;gap:.8rem;margin-bottom:1rem}
-h1{font-size:1.15rem;margin:0;letter-spacing:-.01em}h1 .dot{color:var(--accent)}
-header .updated{margin-left:auto;color:var(--muted);font-size:.78rem}
+ font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:52rem;margin:0 auto;padding:1.6rem 1.2rem 3rem}
+header{display:flex;align-items:baseline;gap:.8rem;margin-bottom:1.1rem}
+h1{font-family:var(--serif);font-weight:600;font-size:1.55rem;margin:0;
+ letter-spacing:.2px}h1 .dot{color:var(--accent)}
+header .updated{margin-left:auto;color:var(--label);font-size:.74rem;
+ font-family:var(--mono)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
  padding:.9rem 1.1rem;margin-bottom:.9rem}
-.card h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;
- color:var(--muted);margin:0 0 .6rem}
+.card h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;
+ color:var(--label);margin:0 0 .6rem;font-family:var(--mono);font-weight:650}
 form.newtask textarea{width:100%;min-height:4.5rem;resize:vertical;padding:.6rem .7rem;
  border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--fg);font:inherit}
 form.newtask .row{display:flex;gap:.6rem;align-items:center;margin-top:.6rem;flex-wrap:wrap}
@@ -278,17 +284,29 @@ form.newtask input[type=text]{flex:1 1 18rem;padding:.45rem .6rem;border:1px sol
  border-radius:9px;background:var(--bg);color:var(--fg);font:inherit;
  font-family:ui-monospace,Menlo,monospace;font-size:.82rem}
 form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
- padding:.5rem 1.1rem;background:var(--accent);color:#fff;cursor:pointer}
+ padding:.5rem 1.1rem;background:var(--accent);color:#0f1115;cursor:pointer}
 .project{margin-bottom:1rem}
 .project > h2{display:flex;align-items:baseline;gap:.6rem}
-.project .repo{font-family:ui-monospace,Menlo,monospace;text-transform:none;
- letter-spacing:0;font-size:.9rem;color:var(--fg);font-weight:650}
+.project .repo{font-family:var(--mono);text-transform:none;
+ letter-spacing:0;font-size:.92rem;color:var(--fg);font-weight:650}
+.project .orch{font-size:.78rem;color:var(--muted);margin:-.35rem 0 .55rem;
+ font-style:italic}
+.project .orch b{color:var(--fg);font-weight:600;font-style:normal}
 .story{padding:.55rem 0}
-.story + .story{border-top:1px solid var(--border)}
+.story + .story, a.row + a.row, .story + a.row, a.row + .story{
+ border-top:1px solid var(--border)}
 .story .line{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem}
 .story .id{font-weight:650}
 .story .title{color:var(--muted);font-size:.86rem;flex:1 1 12rem;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
+a.row{display:flex;align-items:baseline;gap:.4rem .7rem;padding:.6rem .5rem;
+ margin:0 -.5rem;border-radius:8px;text-decoration:none;color:inherit;
+ transition:background .15s ease}
+a.row:hover{background:var(--soft)}
+a.row .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
+@media (prefers-reduced-motion:reduce){a.row{transition:none}}
 .badge{font-size:.72rem;padding:.1rem .55rem;border-radius:99px;border:1px solid var(--border);
  color:var(--muted);white-space:nowrap}
 .badge.needs{border-color:var(--hot);color:var(--hot)}
@@ -296,11 +314,12 @@ form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
 .badge.running{border-color:var(--run);color:var(--run)}
 .agents{margin:.35rem 0 0;padding:0;list-style:none;font-size:.82rem}
 .agents li{display:flex;flex-wrap:wrap;gap:.5rem;padding:.15rem 0;color:var(--muted)}
-.agents .stage{font-family:ui-monospace,Menlo,monospace;color:var(--fg)}
+.agents .stage{font-family:var(--mono);color:var(--fg)}
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
-footer{color:var(--muted);font-size:.75rem;margin-top:1.4rem}
+footer{color:var(--label);font-size:.74rem;font-family:var(--mono);margin-top:1.4rem}
+footer a{color:var(--accent)}
 """
 
 _POLL_JS = """
@@ -376,31 +395,55 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
     projects = fleet(snap)
     out = []
     for ext in external_projects(snap):
+        # An orchestrator is the project's parent, not a sibling of the pages
+        # under it: it renders as the header's byline. Only page-less
+        # orchestrators lift — one WITH a page is still a row you can open.
+        orch = [sf for sf in ext["rows"]
+                if sf.get("role") == "orchestrator" and not sf.get("path")]
+        rows_src = [sf for sf in ext["rows"] if sf not in orch]
+        byline = "".join(
+            f'<p class="orch">orchestrated by <b>{escape(str(sf.get("title") or ""))}</b>'
+            f' · {escape(_rel_time(sf.get("opened") or 0, now))}</p>' for sf in orch)
         rows = []
-        for sf in ext["rows"]:
+        for sf in rows_src:
             role = (f'<span class="badge">{escape(str(sf["role"]))}</span>'
                     if sf.get("role") else "")
-            link = (f'<div class="links"><a href="{escape(str(sf["path"]))}">'
-                    f'open surface</a></div>' if sf.get("path") else "")
-            rows.append(
-                f'<div class="story"><div class="line">'
-                f'<span class="title">{escape(str(sf.get("title") or sf.get("kind") or ""))}</span>'
-                f'{role}'
-                f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
-                f'</div>{link}</div>')
+            when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
+            title = escape(str(sf.get("title") or sf.get("kind") or ""))
+            if sf.get("path"):
+                # the whole row is the click target — a 12px "open surface"
+                # link under each row made every open a precision task
+                rows.append(f'<a class="row" href="{escape(str(sf["path"]))}">'
+                            f'<span class="title">{title}</span>{role}{when}'
+                            f'<span class="go">open →</span></a>')
+            else:
+                rows.append(f'<div class="story"><div class="line">'
+                            f'<span class="title">{title}</span>{role}{when}'
+                            f'</div></div>')
+        count = f'<span class="badge">{len(rows_src)} session{"s" if len(rows_src) != 1 else ""}</span>'
         out.append(f'<section class="card project"><h2>'
-                   f'<span class="repo">{escape(ext["project"])}</span></h2>'
-                   f'{"".join(rows)}</section>')
+                   f'<span class="repo">{escape(ext["project"])}</span>{count}</h2>'
+                   f'{byline}{"".join(rows)}</section>')
     orphans = orphan_surfaces(snap)
+    tasks = [sf for sf in orphans if sf.get("kind") == "task"]
+    orphans = [sf for sf in orphans if sf.get("kind") != "task"]
+
+    def _orow(sf, label):
+        when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
+        return (f'<a class="row" href="{escape(str(sf.get("path")))}">'
+                f'<span class="title">{escape(label)}</span>{when}'
+                f'<span class="go">open →</span></a>')
+
+    if tasks:
+        # a dialogue task's page is its whole deliverable — a row reading just
+        # "task" with no identity was noise, not a link worth clicking
+        rows = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
+                                     or "task")) for sf in tasks)
+        out.append(f'<section class="card project"><h2>'
+                   f'<span class="repo">tasks</span></h2>{rows}</section>')
     if orphans:
-        rows = "".join(
-            f'<div class="story"><div class="line">'
-            f'<span class="id">{escape(str(sf.get("kind") or "surface"))}</span>'
-            f'<span class="title">{escape(str(sf.get("story") or ""))}</span>'
-            f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
-            f'</div><div class="links">'
-            f'<a href="{escape(str(sf.get("path")))}">open surface</a></div></div>'
-            for sf in orphans)
+        rows = "".join(_orow(sf, str(sf.get("story") or sf.get("kind")
+                                     or "surface")) for sf in orphans)
         out.append(f'<section class="card"><h2>Loose sessions</h2>{rows}</section>')
     if not projects and not out:
         out.append('<section class="card"><p class="empty">No stories in flight. '
@@ -422,6 +465,9 @@ def render_home(snap: dict, notice: str = "", now: float | None = None) -> str:
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Cadre — Agent Fleet</title>'
+        '<link rel="icon" href="data:image/svg+xml,'
+        '%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E'
+        '%3Ctext y=%2213%22 font-size=%2213%22%3E%F0%9F%9B%B0%3C/text%3E%3C/svg%3E">'
         f'<style>{_CSS}</style></head><body><div class="wrap">'
         '<header><h1>Cadre<span class="dot">.</span> agent fleet</h1>'
         f'<span class="updated">snapshot {escape(str(stamp))}</span></header>'
