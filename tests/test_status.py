@@ -534,3 +534,17 @@ def test_fleet_rows_carry_live_state_and_history_links():
         # and with no statuses (surface server down) the page still renders
         assert "agent working" not in statusd.render_fleet(snap, now=200.0)
         del os.environ["REVIEW_SURFACE_STATE_DIR"]
+
+
+def test_decided_title_overrides_presence_badge():
+    snap = {"stories": {}, "tasks": {}, "surfaces": [
+        {"path": "/session/abc", "title": "d8 — report anatomy (DECIDED: adopted)",
+         "project": "hitl", "kind": "external", "role": "discussion",
+         "artifact": "", "opened": 1789900000.0},
+    ]}
+    from statusd import render_fleet
+    html = render_fleet(snap, now=0, statuses={
+        "abc": {"presence": "waiting", "pending_prompts": 0,
+                "last_agent_reply_at": "2026-09-20T00:00:00Z"}})
+    assert "decided — nothing needs you" in html
+    assert "your turn" not in html

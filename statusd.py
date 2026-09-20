@@ -513,6 +513,11 @@ def render_fleet(snap: dict, now: float | None = None,
     out = []
 
     def _live(sf) -> str:
+        # Interim lifecycle marker until the HITL store carries real state
+        # (d7): a surface registered with DECIDED in its title is settled —
+        # presence churn on it must not read as "your turn".
+        if "DECIDED" in str(sf.get("title") or ""):
+            return '<span class="badge finished">decided — nothing needs you</span>'
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
         st = statuses.get(key)
         label, cls = agent_state_badge(st, now)
