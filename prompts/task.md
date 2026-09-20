@@ -54,6 +54,20 @@ Write the page to the exact path in `$CADRE_SURFACE_OUT` (an absolute path in
 your environment; skip this whole section if that variable is empty). Rewrite it
 in full every round — it is one page that replaces itself, not an append log.
 
+The page must be a COMPLETE HTML document, themed by the platform — never a
+bare fragment (a fragment renders as unstyled white text and the driver has
+told us that is unacceptable). Non-negotiable shell, even when no skill is
+installed to hand it to you:
+
+- Start with `<!doctype html><html lang="en"><head><meta charset="utf-8">`
+  `<meta name="viewport" content="width=device-width, initial-scale=1">`
+  `<link rel="stylesheet" href="/surface-theme.css"><title>…</title></head><body>`
+  — the stylesheet link is FIRST in head and root-relative; the Cadre page
+  server provides it, and it owns all design. Close `</body></html>` at the end.
+- You write semantic content only: no `<style>` blocks, no inline styles, no
+  CSS frameworks. If the theme is missing the page degrades to readable
+  defaults, which is correct.
+
 Invoke the **auto-surface** skill for the page. It owns the skeleton (the
 standalone orientation block for a reader with zero shared context, the
 decision-first opening, driver calls, support, verdict form last), the reading

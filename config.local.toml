@@ -1,0 +1,24 @@
+# Local dogfood runner — laptop instance, separate state from fedora-1.
+# Launch: CADRE_CONFIG=$PWD/config.local.toml CADRE_ENGINE=only python3 pipeline.py run
+#         CADRE_CONFIG=$PWD/config.local.toml python3 statusd.py
+
+[runner]
+poll_interval = 15                                  # tight loop for local dogfooding
+data_dir = "~/.local/state/cadre-local"
+skills_source = "~/dev-config/ai-workflow-config/skills"
+require_skills = false                              # dogfood: warn, don't refuse
+status_bind = "127.0.0.1"                           # local only, no tailnet exposure
+status_port = 8181
+
+[claude]
+bin = "claude"
+effort = "high"
+permission_mode = "bypass"
+timeout_seconds = 7200
+default_model = "opus"
+
+[limits]
+allowed_actors = ["BrandonPerez-Dev"]
+
+# No [[repos]] and no [intake] provider: this instance exists for dialogue
+# tasks (pipeline.py task ...) and the agent-manager page, not board intake.

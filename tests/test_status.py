@@ -373,3 +373,96 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("status smoke tests: all passed")
+
+
+def test_registered_externals_group_under_their_project():
+    """Driver ask 2026-09-20: sessions the runner did not spawn — the
+    orchestrator terminal session, design discussions — must appear on the
+    fleet page under a project hierarchy, orchestrator first, instead of the
+    driver holding session URLs in their head."""
+    snap = {"surfaces": [
+        {"kind": "external", "path": "/session/d2", "opened": 200.0,
+         "project": "hitl", "title": "d2 — store × blackboard",
+         "role": "discussion"},
+        {"kind": "external", "path": "", "opened": 100.0,
+         "project": "hitl", "title": "design orchestrator",
+         "role": "orchestrator"},
+        {"kind": "ask", "path": "/session/loose", "opened": 50.0,
+         "story": "nex-1"},
+    ]}
+    ext = statusd.external_projects(snap)
+    assert [p["project"] for p in ext] == ["hitl"]
+    assert [r["title"] for r in ext[0]["rows"]] == [
+        "design orchestrator", "d2 — store × blackboard"]
+
+    # a project row never doubles as a loose session
+    assert [sf.get("story") for sf in statusd.orphan_surfaces(snap)] == ["nex-1"]
+
+    html = statusd.render_fleet(snap, now=300.0)
+    assert "hitl" in html and "design orchestrator" in html
+    assert 'href="/session/d2"' in html
+    # the page-less orchestrator row renders without a dead link
+    assert 'href=""' not in html
+    assert "No stories in flight" not in html
+
+
+def test_register_external_without_a_page_is_presence_only():
+    """A terminal session has no artifact: the record still lands, flagged
+    kind=external so no runner consumer ever polls (poll delivery consumes —
+    stealing the registrar's feedback is the review-surface loss bug again)."""
+    from runnerlib import surface as surface_mod
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = FakeCfg(d)
+        surface_mod.register_external(cfg, None, "hitl", "orchestrator",
+                                      role="orchestrator", log=lambda *a: None)
+        rows = surface_mod.status_list(cfg)
+        assert [(r["kind"], r["project"], r["title"], r["role"]) for r in rows] == [
+            ("external", "hitl", "orchestrator", "orchestrator")]
+
+
+def test_tick_never_consumes_an_external_session(monkeypatch=None):
+    """The outbox wake for an external key must fall through: the session
+    belongs to whoever registered it, and a poll here would consume the
+    driver's feedback out from under that owner's own loop."""
+    from runnerlib import surface as surface_mod
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = FakeCfg(d)
+        surface_mod._save_sessions(cfg, {
+            "/x/ext.html": {"kind": "external", "key": "extkey", "open": True},
+            "/x/task.html": {"kind": "task", "key": "taskkey", "open": True},
+        })
+        consumed = []
+        orig_consume = surface_mod._consume
+        orig_outbox = surface_mod._read_outbox
+        orig_sweep = surface_mod._sweep_stale
+        orig_server = surface_mod._ensure_server
+        surface_mod._consume = lambda *a: consumed.append(a[4])
+        surface_mod._read_outbox = lambda cfg: [{"key": "extkey"},
+                                                {"key": "taskkey"}]
+        surface_mod._sweep_stale = lambda *a: None
+        surface_mod._ensure_server = lambda *a: None
+        try:
+            surface_mod._tick(cfg, types.SimpleNamespace(data={"stories": {}}),
+                              None, lambda *a: None)
+        finally:
+            surface_mod._consume = orig_consume
+            surface_mod._read_outbox = orig_outbox
+            surface_mod._sweep_stale = orig_sweep
+            surface_mod._ensure_server = orig_server
+        assert consumed == ["/x/task.html"]
+
+
+def test_sweep_leaves_a_pageless_external_alone():
+    """The orchestrator row is keyed synthetically (external:project:title) —
+    the sweep's file-existence test read that key as a deleted artifact and
+    closed the row on the daemon's first pass (observed live, 2026-09-20)."""
+    from runnerlib import surface as surface_mod
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = FakeCfg(d)
+        surface_mod.register_external(cfg, None, "hitl", "orchestrator",
+                                      role="orchestrator", log=lambda *a: None)
+        surface_mod._sweep_stale(cfg, None, lambda *a: None)
+        assert [r["title"] for r in surface_mod.status_list(cfg)] == ["orchestrator"]

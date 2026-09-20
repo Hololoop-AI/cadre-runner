@@ -1343,6 +1343,15 @@ def cmd_surface(cfg, args):
             print(f"{s['kind']:10} {s.get('story') or '':10} "
                   f"{('PR #' + str(s['pr'])) if s.get('pr') else (s.get('ticket') or '')}  {s.get('path')}")
         return
+    if args.action == "register":
+        if not (args.project and args.s_title):
+            print("register needs --project and --title"); return
+        path = Path(args.file).expanduser().resolve() if args.file else None
+        if path is not None and not path.exists():
+            print(f"no such artifact: {path}"); return
+        surface_mod.register_external(cfg, path, args.project, args.s_title,
+                                      role=args.role, log=log)
+        return
     if args.action == "hold":
         if not (args.story and args.pr):
             print("hold needs --story and --pr"); return
@@ -1479,11 +1488,16 @@ def main():
     p.add_argument("--cwd", help="working directory the task targets (default: here)")
     p.add_argument("--title", help="short title (default: the ask's first line)")
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
-    p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect"])
+    p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect",
+                                      "register"])
     p.add_argument("--story")
     p.add_argument("--pr", type=int)
     p.add_argument("--title", dest="s_title")
     p.add_argument("--text")
+    p.add_argument("--file", help="register: artifact to open/link (omit for a "
+                                  "page-less row, e.g. a terminal session)")
+    p.add_argument("--project", help="register: hierarchy group on the fleet page")
+    p.add_argument("--role", default="", help="register: e.g. orchestrator, discussion")
 
     args = ap.parse_args()
     cfg = config_mod.load(args.config)

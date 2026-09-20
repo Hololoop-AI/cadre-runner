@@ -229,7 +229,27 @@ def orphan_surfaces(snap: dict) -> list[dict]:
     """Open sessions with no story to live under (ad-hoc notices, asks from a
     story that has since been closed). They still want a human, so they render
     above the fleet rather than being dropped."""
-    return [sf for sf in (snap.get("surfaces") or []) if sf.get("path")]
+    return [sf for sf in (snap.get("surfaces") or [])
+            if sf.get("path") and not sf.get("project")]
+
+
+def external_projects(snap: dict) -> list[dict]:
+    """Registered sessions grouped by project — the driver's hierarchy of work
+    that is NOT runner-spawned: orchestrator terminal sessions and the design
+    discussions living under them. Orchestrators sort first inside a project;
+    projects sort by most recent activity."""
+    groups: dict[str, list[dict]] = {}
+    for sf in (snap.get("surfaces") or []):
+        if sf.get("project"):
+            groups.setdefault(str(sf["project"]), []).append(sf)
+    out = []
+    for name, rows in groups.items():
+        rows.sort(key=lambda r: (0 if r.get("role") == "orchestrator" else 1,
+                                 -(r.get("opened") or 0)))
+        out.append({"project": name, "rows": rows,
+                    "activity": max((r.get("opened") or 0) for r in rows)})
+    out.sort(key=lambda p: -p["activity"])
+    return out
 
 
 # -------------------------------------------------------------------- render
@@ -355,6 +375,22 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
     now = time.time() if now is None else now
     projects = fleet(snap)
     out = []
+    for ext in external_projects(snap):
+        rows = []
+        for sf in ext["rows"]:
+            role = (f'<span class="badge">{escape(str(sf["role"]))}</span>'
+                    if sf.get("role") else "")
+            link = (f'<div class="links"><a href="{escape(str(sf["path"]))}">'
+                    f'open surface</a></div>' if sf.get("path") else "")
+            rows.append(
+                f'<div class="story"><div class="line">'
+                f'<span class="title">{escape(str(sf.get("title") or sf.get("kind") or ""))}</span>'
+                f'{role}'
+                f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
+                f'</div>{link}</div>')
+        out.append(f'<section class="card project"><h2>'
+                   f'<span class="repo">{escape(ext["project"])}</span></h2>'
+                   f'{"".join(rows)}</section>')
     orphans = orphan_surfaces(snap)
     if orphans:
         rows = "".join(
@@ -366,7 +402,7 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
             f'<a href="{escape(str(sf.get("path")))}">open surface</a></div></div>'
             for sf in orphans)
         out.append(f'<section class="card"><h2>Loose sessions</h2>{rows}</section>')
-    if not projects:
+    if not projects and not out:
         out.append('<section class="card"><p class="empty">No stories in flight. '
                    'Start one with the box above.</p></section>')
     for p in projects:

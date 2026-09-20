@@ -602,6 +602,11 @@ def _sweep_stale(cfg, reg, log) -> None:
     for path, meta in list(sess.items()):
         if not meta.get("open"):
             continue
+        if meta.get("kind") == "external" and not str(path).startswith("/"):
+            # a page-less registration (a terminal session) is keyed
+            # synthetically, not by an artifact path — there is no file whose
+            # absence could mean stale, and the first sweep was closing it
+            continue
         stale = not Path(path).exists()
         if not stale and meta.get("story"):
             st = stories.get(meta["story"])
@@ -637,8 +642,13 @@ def _tick(cfg, reg, ghc, log) -> None:
     # 1) outbox signals -> consume feedback from exactly those sessions
     signalled = {sig.get("key") for sig in _read_outbox(cfg) if sig.get("key")}
     if signalled:
+        # kind="external" is presence-only: those sessions belong to whoever
+        # registered them (an orchestrator terminal session, a design round),
+        # and poll delivery CONSUMES — polling one here would steal the
+        # driver's feedback from the loop that is actually waiting on it.
         by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
-                  for p, m in sess.items() if m.get("open")}
+                  for p, m in sess.items()
+                  if m.get("open") and m.get("kind") != "external"}
         for key in signalled:
             hit = by_key.get(key)
             if hit:
@@ -752,5 +762,31 @@ def status_list(cfg) -> list[dict]:
         if meta.get("open"):
             out.append({"kind": meta.get("kind"), "story": meta.get("story"),
                         "pr": meta.get("pr"), "ticket": meta.get("ticket"),
-                        "path": meta.get("path"), "opened": meta.get("opened")})
+                        "path": meta.get("path"), "opened": meta.get("opened"),
+                        "project": meta.get("project"), "title": meta.get("title"),
+                        "role": meta.get("role")})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
+
+
+def register_external(cfg, path: Path | None, project: str, title: str,
+                      role: str = "", log=print) -> None:
+    """Record a session the runner did NOT spawn — an orchestrator terminal
+    session, a design discussion already open on Review Surface — so the fleet
+    page shows it under its project instead of the driver holding the URLs in
+    their head. With a path the artifact is opened/resumed and linked; without
+    one the row is informational (a terminal session has no page). The runner
+    never polls these: whoever registered the session owns its feedback loop,
+    this is presence in the hierarchy only."""
+    if path is not None:
+        # reuse the normal open path so the URL and key are recorded the same
+        # way as runner-spawned sessions; kind "external" keeps every consumer
+        # (bridge, reaper) from mistaking it for a session it owns
+        open_session(cfg, path, "external", log,
+                     project=project, title=title, role=role)
+        return
+    s = sessions(cfg)
+    s[f"external:{project}:{title}"] = {
+        "kind": "external", "path": "", "key": "", "open": True,
+        "opened": time.time(), "project": project, "title": title, "role": role}
+    _save_sessions(cfg, s)
+    log(f"surface: registered external session {project}/{title}")
