@@ -78,23 +78,42 @@ vocabulary, a schema, or any other indirection between you and the page: this
 workflow renders freeform HTML, and a page that needs a translator to be read is
 a page the driver cannot rule on.
 
-What THIS page must carry, beyond the skill's skeleton:
+## Page anatomy — write for a reader with NO access to this session
 
-- the header says **Round $iteration of $max_rounds** and what happens when the
-  budget runs out (the dialogue escalates to the driver; nothing ships by
-  default);
-- **round 1** opens with the result: what you did, what it does now, and the
-  one judgement call you would most like overruled;
-- **rounds after the first** open with **What changed in round $iteration** —
-  one row per point in `$feedback`: quote the driver's words, say what you
-  changed and where it lives (a path in `$cwd`, or the section of this page), or
-  say plainly why you did not. Then the current state of the work restated in
-  full, so the driver rules off this page alone, with
-  `<span class="chip">changed</span>` on the sections this round touched and
-  nothing on the rest;
-- what you could NOT do and why — refused paths, missing access, anything you
-  guessed at;
-- how to check your claim yourself: the command, in `$cwd`, one line.
+The driver may be someone who never saw the ask dispatched. Sections 1, 2 and
+the verdict form are mandatory at any size; the rest scale with stakes.
+
+1. **Orientation** — the ask restated in full; what kind of decision this is;
+   how reversible it is; what happens on each possible response, including
+   doing nothing. The header says **Round $iteration of $max_rounds** and what
+   happens when the budget runs out (the dialogue escalates to the driver;
+   nothing ships by default). Every pronoun and referent must resolve from the
+   page itself — the reader has none of your session.
+2. **The result** — open with what you did, what it does now, and the one
+   judgement call you would most like overruled. Rounds after the first open
+   instead with **What changed in round $iteration** — one row per point in
+   `$feedback`: quote the driver's words, say what you changed and where it
+   lives (a path in `$cwd`, or the section of this page), or say plainly why
+   you did not; then the current state restated in full with
+   `<span class="chip">changed</span>` on the sections this round touched and
+   nothing on the rest.
+3. **Evidence with every claim** — a factual claim carries its proof inline:
+   `file:line`, the command and what it printed verbatim, a quoted source with
+   a date. A claim you cannot evidence is labeled as your judgement. Put long
+   proof inside `<details>` so the page reads summary-first and drills down.
+4. **Choices, presented honestly** — when you put a decision to the driver,
+   offer a SMALL differentiated set (2–4) stating what each buys and its
+   honest hole; fold dismissed candidates into a `<details>` with one-line
+   dismissal reasons. Label any lean explicitly as your recommendation with
+   your confidence and the reason — a lean presented as neutral fact steers
+   the reader without their consent. When your confidence is genuinely low, or
+   the point is direction-setting and the driver's own judgement is the value,
+   ask the open question FIRST and state your lean after (or withhold it) —
+   free-text before radio buttons. Always include an escape: none of these /
+   not converged.
+5. **What is fine, and what you could not do** — what you checked and found
+   healthy; refused paths, missing access, anything you guessed at.
+6. **Check it yourself** — the command, in `$cwd`, one line.
 
 End the page with EXACTLY this verdict form, with `<TASK>` replaced by
 `$task` (three times) and the JavaScript unaltered. No double quotes inside
