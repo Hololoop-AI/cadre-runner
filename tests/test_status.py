@@ -466,3 +466,71 @@ def test_sweep_leaves_a_pageless_external_alone():
                                       role="orchestrator", log=lambda *a: None)
         surface_mod._sweep_stale(cfg, None, lambda *a: None)
         assert [r["title"] for r in surface_mod.status_list(cfg)] == ["orchestrator"]
+
+
+def test_agent_state_badges_name_the_drivers_states():
+    """Driver ask 2026-09-20: 'unclear whether an agent has started
+    processing, is working, or has errored out.' The badge states are named
+    from the driver's side of the loop, and the stall case — feedback queued
+    with no agent listening — is the one that alarms."""
+    B = statusd.agent_state_badge
+    assert B(None) == ("", "")
+    assert B({"status": "ended"}) == ("ended", "")
+    assert B({"status": "open", "pending_prompts": 2, "presence": "waiting"}) == (
+        "queued — no agent listening", "needs")
+    assert B({"status": "open", "pending_prompts": 1, "presence": "listening"}) == (
+        "delivering to agent", "running")
+    assert B({"status": "open", "pending_prompts": 0, "presence": "working"}) == (
+        "agent working", "running")
+    assert B({"status": "open", "pending_prompts": 0, "presence": "waiting",
+              "last_agent_reply_at": "2026-09-20T08:00:00Z"}) == (
+        "agent replied — your turn", "finished")
+    assert B({"status": "open", "pending_prompts": 0, "presence": "listening"}) == (
+        "awaiting you", "")
+
+
+def test_history_renders_journal_batches_newest_first():
+    with tempfile.TemporaryDirectory() as d:
+        artifact = str(Path(d) / "art.html")
+        # the journal lives in review-surface's STATE dir, one file for all
+        # sessions, records filtered by their artifact path
+        journal = Path(d) / "feedback-journal.jsonl"
+        journal.write_text(
+            json.dumps({"at": "2026-09-20T01:00:00Z", "file": artifact,
+                        "prompts": [{"tag": "decision", "prompt": "round one answer"}]}) + "\n"
+            + json.dumps({"at": "2026-09-20T02:00:00Z", "file": str(Path(d) / "other.html"),
+                          "prompts": [{"prompt": "different surface"}]}) + "\n"
+            + json.dumps({"at": "2026-09-20T03:00:00Z", "file": artifact, "end_session": True,
+                          "prompts": [{"tag": "note", "prompt": "final word"}]}) + "\n")
+        batches = statusd.journal_batches(artifact, state_dir=Path(d))
+        assert [b["at"] for b in batches] == ["2026-09-20T01:00:00Z", "2026-09-20T03:00:00Z"]
+
+        html = statusd.render_history({"title": "d2 — store", "path": "/session/k1"}, batches)
+        # newest first, rounds numbered, the other surface's batch excluded
+        assert html.index("round 2") < html.index("round 1")
+        assert "final word" in html and "round one answer" in html
+        assert "different surface" not in html
+        assert "session ended" in html
+
+
+def test_fleet_rows_carry_live_state_and_history_links():
+    with tempfile.TemporaryDirectory() as d:
+        artifact = str(Path(d) / "art.html")
+        (Path(d) / "feedback-journal.jsonl").write_text(
+            json.dumps({"at": "2026-09-20T01:00:00Z", "file": artifact,
+                        "prompts": [{"prompt": "x"}]}) + "\n")
+        snap = {"surfaces": [
+            {"kind": "external", "path": "/session/k1", "opened": 100.0,
+             "project": "hitl", "title": "d2", "artifact": artifact},
+        ]}
+        import os
+        os.environ["REVIEW_SURFACE_STATE_DIR"] = d
+        html = statusd.render_fleet(snap, now=200.0, statuses={
+            "k1": {"status": "open", "pending_prompts": 0, "presence": "working",
+                   "updated_at": "1970-01-01T00:02:30+00:00"}})
+        assert "agent working" in html
+        assert 'href="/history/k1"' in html and "history (1)" in html
+        assert "upd " in html
+        # and with no statuses (surface server down) the page still renders
+        assert "agent working" not in statusd.render_fleet(snap, now=200.0)
+        del os.environ["REVIEW_SURFACE_STATE_DIR"]

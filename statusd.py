@@ -225,6 +225,112 @@ def fleet(snap: dict) -> list[dict]:
     return projects
 
 
+def fetch_agent_statuses(surfaces: list[dict], base: str | None = None) -> dict:
+    """Live agent state per session key, from review-surface's read-only
+    /api/:key/agent-status (never consumes — safe on every render). One
+    connection failure short-circuits the rest of the batch: if the surface
+    server is down, eight sequential timeouts would stall the page render."""
+    out = {}
+    root = (base or SURFACE).rstrip("/")
+    for sf in surfaces:
+        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
+        if not key:
+            continue
+        try:
+            with urllib.request.urlopen(f"{root}/api/{key}/agent-status",
+                                        timeout=0.5) as resp:
+                out[key] = json.loads(resp.read().decode())
+        except Exception:
+            break
+    return out
+
+
+def agent_state_badge(st: dict | None, now: float | None = None) -> tuple[str, str]:
+    """(label, css class) for a session's live agent state — the driver's
+    question is 'did my answer land, is the agent on it, or did it stall',
+    so the states are named from THEIR side of the loop."""
+    if not st:
+        return ("", "")
+    if st.get("status") == "ended":
+        return ("ended", "")
+    pending = int(st.get("pending_prompts") or 0)
+    presence = st.get("presence")
+    if pending and presence == "waiting":
+        # feedback is sitting in the queue and no agent poll is attached —
+        # the one state that means "stalled", and the one worth alarming on
+        return ("queued — no agent listening", "needs")
+    if pending:
+        return ("delivering to agent", "running")
+    if presence == "working":
+        return ("agent working", "running")
+    if st.get("last_agent_reply_at"):
+        return ("agent replied — your turn", "finished")
+    return ("awaiting you", "")
+
+
+def _iso_epoch(iso: str | None) -> float:
+    if not iso:
+        return 0.0
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
+    """The per-surface answer history: every feedback batch the driver ever
+    sent, from the feedback journal review-surface writes at accept time
+    (append-only, survives delivery — this is the 'versions of my answers'
+    record, already on disk). The journal lives beside review-surface's
+    STATE file (one journal for all sessions), and each record carries the
+    artifact path it belongs to — filter, don't glob."""
+    if not artifact:
+        return []
+    out = []
+    try:
+        root = Path(state_dir) if state_dir is not None else Path(
+            os.environ.get("REVIEW_SURFACE_STATE_DIR")
+            or Path.home() / ".review-surface")
+        journal = root / "feedback-journal.jsonl"
+        for line in journal.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("file") == artifact:
+                out.append(rec)
+    except OSError:
+        pass
+    return out
+
+
+def render_history(sf: dict, batches: list[dict]) -> str:
+    rows = []
+    for i, rec in enumerate(reversed(batches)):
+        n = len(batches) - i
+        when = escape(str(rec.get("at") or ""))
+        items = []
+        for p in rec.get("prompts") or []:
+            text = str(p.get("prompt") or "")
+            items.append(f'<li><span class="stage">{escape(str(p.get("tag") or "note"))}</span>'
+                         f'<span>{escape(text[:400])}</span></li>')
+        rows.append(f'<section class="card"><h2>round {n} · {when}'
+                    f'{" · session ended" if rec.get("end_session") else ""}</h2>'
+                    f'<ul class="agents">{"".join(items)}</ul></section>')
+    title = escape(str(sf.get("title") or sf.get("task") or "surface"))
+    back = '<p class="meta"><a href="/">← fleet</a>'
+    if sf.get("path"):
+        back += f' · <a href="{escape(str(sf["path"]))}">open surface</a>'
+    back += "</p>"
+    body = "".join(rows) or '<section class="card"><p class="empty">No feedback sent on this surface yet.</p></section>'
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{title} — history</title><style>{_CSS}</style></head>'
+            f'<body><div class="wrap"><header><h1>{title}<span class="dot">.</span> history</h1></header>'
+            f'{back}{body}</div></body></html>')
+
+
 def orphan_surfaces(snap: dict) -> list[dict]:
     """Open sessions with no story to live under (ad-hoc notices, asks from a
     story that has since been closed). They still want a human, so they render
@@ -293,8 +399,15 @@ form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
  font-style:italic}
 .project .orch b{color:var(--fg);font-weight:600;font-style:normal}
 .story{padding:.55rem 0}
-.story + .story, a.row + a.row, .story + a.row, a.row + .story{
+.story + .story, .rowline + .rowline, .story + .rowline, .rowline + .story{
  border-top:1px solid var(--border)}
+.rowline{display:flex;align-items:center;gap:.2rem}
+.rowline > a.row{flex:1;min-width:0}
+.hist{font-size:.74rem;color:var(--label);font-family:var(--mono);
+ text-decoration:none;white-space:nowrap;padding:.2rem .4rem;border-radius:6px}
+.hist:hover{color:var(--accent);background:var(--soft)}
+.meta{color:var(--label);font-family:var(--mono);font-size:.78rem}
+.meta a{color:var(--accent);text-decoration:none}
 .story .line{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem}
 .story .id{font-weight:650}
 .story .title{color:var(--muted);font-size:.86rem;flex:1 1 12rem;overflow:hidden;
@@ -388,12 +501,35 @@ def _story_html(view: dict, now: float) -> str:
         f'</div>{agent_html}{_links_html(view)}</div>')
 
 
-def render_fleet(snap: dict, now: float | None = None) -> str:
+def render_fleet(snap: dict, now: float | None = None,
+                 statuses: dict | None = None) -> str:
     """The hierarchy fragment — also what the poll swaps in, so the page and
-    the refresh can never render two different shapes."""
+    the refresh can never render two different shapes. `statuses` is the
+    live agent-state map from fetch_agent_statuses; None renders without
+    live badges (tests, surface server down)."""
     now = time.time() if now is None else now
+    statuses = statuses or {}
     projects = fleet(snap)
     out = []
+
+    def _live(sf) -> str:
+        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
+        st = statuses.get(key)
+        label, cls = agent_state_badge(st, now)
+        bits = ""
+        if label:
+            bits += f'<span class="badge {cls}">{escape(label)}</span>'
+        upd = _iso_epoch((st or {}).get("updated_at"))
+        if upd:
+            bits += f'<span class="badge">upd {escape(_rel_time(upd, now))}</span>'
+        return bits
+
+    def _history_link(sf) -> str:
+        n = len(journal_batches(str(sf.get("artifact") or "")))
+        if not n:
+            return ""
+        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
+        return f'<a class="hist" href="/history/{escape(key)}">history ({n})</a>'
     for ext in external_projects(snap):
         # An orchestrator is the project's parent, not a sibling of the pages
         # under it: it renders as the header's byline. Only page-less
@@ -413,9 +549,11 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
             if sf.get("path"):
                 # the whole row is the click target — a 12px "open surface"
                 # link under each row made every open a precision task
-                rows.append(f'<a class="row" href="{escape(str(sf["path"]))}">'
-                            f'<span class="title">{title}</span>{role}{when}'
-                            f'<span class="go">open →</span></a>')
+                rows.append(f'<div class="rowline">'
+                            f'<a class="row" href="{escape(str(sf["path"]))}">'
+                            f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
+                            f'<span class="go">open →</span></a>'
+                            f'{_history_link(sf)}</div>')
             else:
                 rows.append(f'<div class="story"><div class="line">'
                             f'<span class="title">{title}</span>{role}{when}'
@@ -430,9 +568,11 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
 
     def _orow(sf, label):
         when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
-        return (f'<a class="row" href="{escape(str(sf.get("path")))}">'
-                f'<span class="title">{escape(label)}</span>{when}'
-                f'<span class="go">open →</span></a>')
+        return (f'<div class="rowline">'
+                f'<a class="row" href="{escape(str(sf.get("path")))}">'
+                f'<span class="title">{escape(label)}</span>{_live(sf)}{when}'
+                f'<span class="go">open →</span></a>'
+                f'{_history_link(sf)}</div>')
 
     if tasks:
         # a dialogue task's page is its whole deliverable — a row reading just
@@ -457,7 +597,8 @@ def render_fleet(snap: dict, now: float | None = None) -> str:
     return "".join(out)
 
 
-def render_home(snap: dict, notice: str = "", now: float | None = None) -> str:
+def render_home(snap: dict, notice: str = "", now: float | None = None,
+                statuses: dict | None = None) -> str:
     now = time.time() if now is None else now
     stamp = snap.get("iso") or "—"
     banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
@@ -479,7 +620,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None) -> str:
         '<div class="row">'
         '<input type="text" name="cwd" placeholder="working directory (optional)">'
         '<button type="submit">Dispatch</button></div></form></section>'
-        f'<div id="fleet">{render_fleet(snap, now)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses)}</div>'
         '<footer>Auto-refreshes every 5 s · '
         '<a href="/index.html">legacy dashboard</a></footer>'
         f'</div><script>{_POLL_JS}</script></body></html>')
@@ -584,11 +725,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_home(self, query: dict):
         snap = read_snapshot()
+        statuses = fetch_agent_statuses(snap.get("surfaces") or [])
         if query.get("partial"):
-            self._send_html(render_fleet(snap))
+            self._send_html(render_fleet(snap, statuses=statuses))
             return
         notice = (query.get("notice") or [""])[0]
-        self._send_html(render_home(snap, notice=notice))
+        self._send_html(render_home(snap, notice=notice, statuses=statuses))
+
+    def _serve_history(self, key: str):
+        snap = read_snapshot()
+        sf = next((s for s in (snap.get("surfaces") or [])
+                   if str(s.get("path") or "").rsplit("/", 1)[-1] == key), None)
+        if sf is None:
+            self.send_error(404, "unknown session")
+            return
+        self._send_html(render_history(sf, journal_batches(str(sf.get("artifact") or ""))))
 
     def _same_origin(self) -> bool:
         """A POST that changes the world only comes from this page. There is no
@@ -655,6 +806,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
             self._serve_home(query)
+            return
+        if path.startswith("/history/") and self.command in ("GET", "HEAD"):
+            self._serve_history(path.rsplit("/", 1)[-1])
             return
         p = self._static_path()
         if p is not None:
