@@ -31,6 +31,7 @@ from runnerlib import surface as surface_mod
 from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
+from runnerlib import tasks as tasks_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib import gh
 from runnerlib.gh import NOT_MODIFIED, GitHub
@@ -758,7 +759,14 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
                          # (2026-08-27 driver feedback — never a PR copy).
                          extra_env={"CADRE_STORY": slug, "CADRE_STAGE": stage,
                                     "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid,
+                                    # Workflow #3's page: one path per task, the
+                                    # session rewrites it every round (the same
+                                    # one-page-replaces-itself rule the spec
+                                    # stages follow).
                                     **({"CADRE_SURFACE_OUT":
+                                        str(surface_mod._dir(cfg) / f"task-{slug}.html")}
+                                       if stage == tasks_mod.NODE
+                                       else {"CADRE_SURFACE_OUT":
                                         str(surface_mod._dir(cfg) / f"spec-{slug}.html")}
                                        if stage in SPEC_STAGES
                                        else {"CADRE_SURFACE_OUT":
@@ -1262,6 +1270,24 @@ def cmd_surface(cfg, args):
             print(f"  {s['kind']} {s.get('story')} {s.get('path')}")
 
 
+def cmd_task(cfg, args):
+    """Workflow #3's entry point: ask for a task, read the answer on a surface.
+
+    This writes ONE board event and returns. The daemon's engine pass spawns the
+    task node (config/actions-dialogue.json), the session authors its result as
+    a review surface, and the driver's annotations come back as the next turn —
+    so there is nothing here to wait on, and nothing GitHub-shaped anywhere.
+    """
+    task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title)
+    print(task_id)
+    print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
+          f"  (written by the session, opened when the round finishes)")
+    print(f"board:   {tasks_mod.key_for(task_id)} on cadre/tasks")
+    if engine_seam.mode() == "off":
+        print("NOTE: CADRE_ENGINE is off — the daemon will not pick this up "
+              "until it runs with CADRE_ENGINE=only")
+
+
 def cmd_messages(cfg, args):
     """Driver-side: what the pipeline is waiting on."""
     items = messages.pending(cfg.data_dir, args.story or "")
@@ -1318,6 +1344,10 @@ def main():
     p.add_argument("--text", required=True)
     p = sub.add_parser("messages", help="driver: list unanswered questions")
     p.add_argument("--story")
+    p = sub.add_parser("task", help="workflow #3: ask for a task; read the answer on a surface")
+    p.add_argument("text", help="the ask, in your own words")
+    p.add_argument("--cwd", help="working directory the task targets (default: here)")
+    p.add_argument("--title", help="short title (default: the ask's first line)")
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
     p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect"])
     p.add_argument("--story")
@@ -1332,7 +1362,7 @@ def main():
     poller.use_token(cfg.runner["summon_token"])
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
-     "board-check": cmd_board_check, "surface": cmd_surface,
+     "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

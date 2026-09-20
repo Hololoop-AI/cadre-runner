@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialogue workflow — round 2</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>
+.tldr{border-left:3px solid #8fc7ff;padding:10px 14px;background:#11141a;border-radius:0 8px 8px 0;margin:14px 0}
+.you{border-left:3px solid #d0a85c;padding:8px 12px;background:#15130e;border-radius:0 6px 6px 0;margin:8px 0;font-style:italic}
+.resp{margin:4px 0 16px 12px}
+.explain{border:1px solid #2a3140;background:#0e1218;border-radius:8px;padding:12px 16px;margin:14px 0}
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<h1>Dialogue workflow — round 2</h1>
+<p class="meta">cadre-runner · design proposal, revised after your round-1 feedback · 2026-09-19 · <a href="dialogue-workflow-design-r1.html">round 1</a></p>
+
+<div class="tldr">
+<p><strong>Orientation (no shared context assumed):</strong> cadre-runner is the pipeline daemon that
+runs headless Claude sessions off board events. You proposed replacing our interactive terminal
+sessions entirely: every session runs headless, and <em>this page</em> — a review surface — is the only
+channel between you and the agent. The board feeds your feedback back into the session or advances it
+past approval gates. Round 1 laid out that design; you answered one decision (<strong>full cutover —
+locked</strong>) and redirected three things. This round answers your notes and re-asks what's still open.</p>
+</div>
+
+<section>
+  <h2>What changed since round 1</h2>
+
+  <div class="you">"I don't know what pack 3 is. If you could explain that, that would be really helpful."</div>
+  <div class="resp">Fair — and it's a repeat of the orientation failure you flagged before. Explainer
+  below, and it's moot as a blocker: <strong>Pack 3 shipped and is live</strong>, so the round-1 timing
+  question ("build after Pack 3?") answers itself — we can build now.</div>
+
+  <div class="you">"[HITL] is a CLI or MCP tool on a server that serves interactive web UIs in iframes… we need to find a way to make it consistent… you'll want some sort of authentication so people aren't able to inject into the iframe."</div>
+  <div class="resp">Agreed, and it's bigger than this workflow. Proposal: make it the <strong>HITL
+  architecture round</strong> — HITL is already next on the testbed sequence after Blackboard. Two starting
+  points captured below (a shared surface-runtime JS package; token-gated serving). Decision card asks
+  whether to run that as its own design surface.</div>
+
+  <div class="you">"The long time portion is true only because it's done in a batch… an inline button could send the request to a one-off agent that's really quick — a polling agent, an easy haiku agent, a reference agent."</div>
+  <div class="resp">Adopted as the <strong>quick lane</strong>: surface buttons that emit a distinct event
+  the board routes to a cheap one-off node (haiku, no resume, answers inline on the page) instead of a
+  full session-resume round. Full rounds stay for real work turns.</div>
+
+  <div class="you">"These should not be the only entry point options… it would be the Cadre UI… an agent manager… hierarchy that might be project-oriented or story-oriented… agents that finish rise to the top."</div>
+  <div class="resp">Round 1 framed entry too small (CLI vs board column). Reframed: the entry point is an
+  <strong>agent-manager home page</strong> — statusd already lists sessions and surfaces, so it grows into
+  the hierarchy you described (project → story → agent, notification-sorted, new-task form). The CLI
+  remains plumbing underneath it, not the interface. Scope question below: how much of that manager does
+  v0 of this workflow need?</div>
+
+  <p><strong>Locked from round 1:</strong> terminal escape hatch — <em>full cutover, no hatch</em>.
+  That raises the stakes on the one safety question you didn't answer, so it's re-asked below.</p>
+</section>
+
+<div class="explain">
+  <h2>What "Pack 3" was</h2>
+  <p>The September audits (portability + surface quality) produced three fix packs. Packs 1–2 were
+  surface iteration mechanics and prompt rewrites. <strong>Pack 3 made the runner system-agnostic</strong>,
+  for the work-laptop trial and for this workflow:</p>
+  <ul>
+    <li><strong>Board providers</strong> — trackers (Linear today, Jira later) hand back one neutral issue
+      shape; which column means "go" and what states phases map to is config, not code.</li>
+    <li><strong>Spawn executes the node's command</strong> — the command line that launches a session is
+      data in the node registry, so a different agent CLI (or the dialogue task node) is a config edit,
+      not a code change.</li>
+    <li><strong>Hardcoded edges became config</strong> — summon token, skill requirements, status page
+      bind, event paths.</li>
+  </ul>
+  <p>It landed Sept 17 (with one startup regression, fixed same hour) and the daemon is running on it.
+  This dialogue workflow sits directly on the spawn seam, which is why round 1 wanted Pack 3 first.</p>
+</div>
+
+<section>
+  <h2>The design, as it now stands</h2>
+  <ul>
+    <li><strong>Workflow #3</strong> (<code>config/actions-dialogue.json</code>): task event → spawn a
+      generic task node that does the work and authors its result as a surface; your surface feedback →
+      resume the <em>same</em> session with your annotations as the next turn; approve → done or chain.
+      No GitHub involved anywhere.</li>
+    <li><strong>Quick lane</strong> (new): inline surface buttons dispatch one-off cheap agents for
+      lookups and small questions; the answer renders into the page without a full round.</li>
+    <li><strong>Entry</strong> (reframed): the statusd page becomes the agent-manager home — open
+      agents grouped by project/story, finished ones bubble up, a new-task form on top. CLI underneath.</li>
+    <li><strong>HITL hardening</strong> (proposed as its own round): a shared surface-runtime package
+      every page loads (session binding, queuePrompt, render guarantees — fixes the CLI/MCP
+      disjointedness) and token-gated serving so the surface backend isn't open to iframe injection.</li>
+  </ul>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Start building now?</h2>
+  <form data-review-surface-question="build-now">
+    <label><input type="radio" name="build-now" value="Yes, build workflow #3 now (recommended)"> <strong>Yes — build now</strong>; Pack 3 landed, the blocker is gone.</label>
+    <label><input type="radio" name="build-now" value="Hold, discuss more first"> <strong>Hold</strong> — more design discussion first.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Agent-manager scope for v0</h2>
+  <form data-review-surface-question="manager-scope">
+    <label><input type="radio" name="manager-scope" value="Minimal inbox first (recommended)"> <strong>Minimal inbox first</strong> — statusd lists open agents newest-activity-first with a new-task form; hierarchy/filtering/bubbles come after the workflow proves out.</label>
+    <label><input type="radio" name="manager-scope" value="Full hierarchy up front"> <strong>Full hierarchy up front</strong> — project → story → agent tree, sorting, notification bubbles before cutover.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · HITL architecture as its own round?</h2>
+  <form data-review-surface-question="hitl-round">
+    <label><input type="radio" name="hitl-round" value="Yes, separate design surface (recommended)"> <strong>Yes</strong> — a dedicated design surface for the surface-runtime package + auth model; it's the HITL testbed slot anyway.</label>
+    <label><input type="radio" name="hitl-round" value="Fold into this build"> <strong>Fold it in</strong> — solve runtime + auth inside workflow #3's build.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Working-directory safety (re-asked — unanswered in round 1)</h2>
+  <p>With full cutover, headless sessions run with permissions skipped in whatever directory a task
+  targets. This is the one guardrail question left.</p>
+  <form data-review-surface-question="safety">
+    <label><input type="radio" name="safety" value="Allowlist in config (recommended)"> <strong>Directory allowlist</strong> — tasks may only target configured roots (~/Projects, ~/research…); anything else refuses at spawn and escalates.</label>
+    <label><input type="radio" name="safety" value="No restriction"> <strong>No restriction</strong> — same trust posture as the terminal today.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Verdict</h2>
+  <form data-review-surface-question="verdict">
+    <label><input type="radio" name="verdict" value="approve"> <strong>Approve</strong> — build per my queued answers.</label>
+    <label><input type="radio" name="verdict" value="approve-with-notes"> <strong>Approve with notes</strong> — proceed, incorporating annotations.</label>
+    <label><input type="radio" name="verdict" value="revise"> <strong>Revise</strong> — rework and bring it back.</label>
+    <textarea name="note" placeholder="Anything the radios don't capture…"></textarea>
+    <button type="submit">Queue verdict</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'Dialogue workflow r2 — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision',
+        text: q + ': ' + values.join('; '),
+        element: form,
+        queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+</main>
+</body>
+</html>

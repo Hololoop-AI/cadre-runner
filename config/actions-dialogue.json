@@ -1,0 +1,91 @@
+{
+  "_comment": [
+    "Workflow #3: a dialogue with one session, expressed as actions.",
+    "",
+    "The driver asks for a task; a session does it and authors its result as a",
+    "review surface; the driver's annotations come back as the next TURN of that",
+    "same session; an approve verdict ends it. No GitHub anywhere — board,",
+    "surfaces and sessions only, which is why running this is the strongest",
+    "agnosticism proof the engine has (config/actions-eval.json was the second).",
+    "",
+    "One topic carries a task, and one key carries one dialogue:",
+    "  cadre/tasks/task:<id>  — the whole exchange. A `command` opens it, each",
+    "                           turn writes a `signal`, and the verdict closes",
+    "                           it. Three commands share the topic and are told",
+    "                           apart by `target`, exactly as the pipeline tells",
+    "                           `stage:interrogate` from `stage:revise`:",
+    "",
+    "    target=task           the ask            (runnerlib/tasks.submit_task)",
+    "    target=task:feedback  the driver's next turn, from a surface annotation",
+    "    target=task:verdict   the driver's verdict, from the surface's form",
+    "",
+    "Every one of them carries `story` as well as `task` — the same id under two",
+    "names. `story` is what the spawn seam reads to route a spawn spec, and what",
+    "the node's command template substitutes; `task` is what this workflow calls",
+    "the thing. Duplicating the value here is cheaper than a second seam.",
+    "",
+    "Round caps ride the existing machinery (engine_seam.refuse_past_cap counts",
+    "firings per key) and the causal-depth cap is the loop guard, as everywhere.",
+    "",
+    "Deliberately NOT here: the turn latency escape hatch, and the",
+    "working-directory allowlist the design page asked for. `cwd` travels in the",
+    "payload so a spawner can refuse an unlisted root; nothing in this file can",
+    "express that check — the `where` vocabulary has no path predicate."
+  ],
+
+  "actions": [
+
+    {
+      "name": "task-requested",
+      "_why": "S0 of a dialogue. A `command` on the tasks topic is the driver asking for work; the task node does it and authors the surface the driver will read. `no_event_for_key` on the tasks signal is the once-only guard — the same shape story-to-intake uses, so a re-submitted or replayed command cannot open a second session on the same key.",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task"},
+                            {"op": "no_event_for_key", "namespace": "cadre",
+                             "topic": "tasks", "kind": "signal"}]},
+      "body": {"type": "spawn_node", "node": "task"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "task",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "round 1 — the session authors the surface"}}
+    },
+
+    {
+      "name": "task-feedback-resumes-the-session",
+      "_why": "The driver annotated the surface, so the dialogue takes another turn. Same node, same key — and the spawn is a RESUME rather than a restart: `resume=session` in the payload is what the spawn seam reads to continue the run's session id (runs.session_args -> --resume) instead of minting a new one, so the next turn keeps the context of the last. The grammar has no resume verb; a spawn body plus a payload flag is how that is said here.",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": {"op": "payload_eq", "field": "target",
+                            "value": "task:feedback"}},
+      "body": {"type": "spawn_node", "node": "task"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "task",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "driver feedback is the next turn"}}
+    },
+
+    {
+      "name": "task-approved-done",
+      "_why": "The driver approved on the surface's verdict form: the dialogue is over. Nothing downstream fires — approval is the end of the workflow, not a trigger for more work (the same rule final-merged-story-done keeps for the pipeline). A `continue` verdict is not handled here on purpose: continuing IS a feedback turn, and the surface writes it as one.",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target",
+                             "value": "task:verdict"},
+                            {"op": "payload_eq", "field": "verdict",
+                             "value": "approve"}]},
+      "emitter": [
+        {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+         "kind": "signal",
+         "payload": {"status": "finished", "phase": "done", "stage": "task",
+                     "story": "{payload[story]}", "task": "{payload[task]}"}},
+        {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+         "kind": "notify",
+         "payload": {"message": "task {payload[task]} approved — done",
+                     "story": "{payload[story]}", "task": "{payload[task]}"}}
+      ],
+      "max_depth": 4
+    }
+
+  ]
+}

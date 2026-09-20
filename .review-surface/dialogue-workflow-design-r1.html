@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialogue workflow — sessions over the surface</title>
+<link rel="stylesheet" href="surface-theme.css">
+<style>.tldr{border-left:3px solid #8fc7ff;padding:10px 14px;background:#11141a;border-radius:0 8px 8px 0;margin:14px 0}</style>
+</head>
+<body>
+<main class="wrap">
+
+<h1>Dialogue workflow — sessions over the surface</h1>
+<p class="meta">cadre-runner · design proposal · 2026-09-17</p>
+
+<div class="tldr">
+<p><strong>Orientation:</strong> You asked to replace interactive terminal sessions with headless
+<code>claude -p</code> runs orchestrated by the board, where the review surface is the only channel:
+the board feeds your surface feedback back into the session or advances it past an approval gate.
+This page is the design for that as <strong>workflow #3</strong> on the existing engine —
+no engine changes needed — plus the four decisions that shape it.</p>
+</div>
+
+<section>
+  <h2>What already exists vs what's new</h2>
+  <p><strong>Exists:</strong> the engine runs any workflow given as an actions config (proven by
+  pipeline + eval configs on one tick). Sessions already park on questions and revive with answers;
+  runs support <code>--resume</code>, so a round can continue the <em>same</em> session with its
+  context intact rather than restarting cold. Surfaces already carry feedback with anchors, and
+  rounds now archive (<code>-r&lt;N&gt;</code>).</p>
+  <p><strong>New:</strong> a <code>config/actions-dialogue.json</code> with three actions and one node:</p>
+  <ul>
+    <li><strong>task-requested → spawn task node</strong> — a generic node whose prompt is: do the task,
+      then author your result as a surface via auto-surface, ending with an approve/continue form.</li>
+    <li><strong>surface-feedback → resume task</strong> — your annotations become the next turn; the
+      session resumes (not restarts) with the feedback and rewrites the surface as a new round.</li>
+    <li><strong>approve → done</strong> (or dispatch the next task in a chain). Round caps and
+      escalation ride the existing machinery.</li>
+  </ul>
+  <p>Notably, this workflow needs <em>no GitHub at all</em> — board + surfaces + sessions only.
+  Running it is itself the strongest agnosticism proof yet.</p>
+</section>
+
+<section>
+  <h2>What it costs (the honest part)</h2>
+  <ul>
+    <li><strong>Turn latency.</strong> A terminal exchange is seconds; a surface round is
+      poll-tick + session resume + page rewrite — think ~1-3 minutes per exchange even when healthy.
+      Fine for real work items; heavy for "quick question" traffic. Worth deciding whether an
+      escape hatch stays.</li>
+    <li><strong>Local daemon + permissions.</strong> This runs a runner instance on your main machine,
+      spawning sessions with <code>--dangerously-skip-permissions</code> in whatever directory the task
+      targets. On the throwaway repo that was free risk; on your home directory it is not. The design
+      needs a per-task working-directory allowlist in config before full cutover.</li>
+    <li><strong>Cutover reality.</strong> The surface panel becomes your inbox: statusd page listing
+      open sessions/surfaces is the "UI". Until that's comfortable, terminal remains the fallback —
+      cutover should be earned, not declared.</li>
+  </ul>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Scope and timing</h2>
+  <form data-review-surface-question="scope">
+    <label><input type="radio" name="scope" value="Build after Pack 3 lands (recommended)"> <strong>Build once Pack 3 lands</strong> — Pack 3's spawn-seam change (node argv executed as data) is mid-build and this workflow sits directly on that seam; building on top of the moving part risks rework measured in hours, not days.</label>
+    <label><input type="radio" name="scope" value="Build now in parallel"> <strong>Build now in parallel</strong> — accept possible rebase against the Pack 3 spawn changes.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Entry point</h2>
+  <form data-review-surface-question="entry">
+    <label><input type="radio" name="entry" value="CLI: cadre task 'text' (recommended)"> <strong>CLI</strong> — <code>pipeline.py task "&lt;ask&gt;"</code> writes the command event and prints the surface URL; fastest to reach from anywhere.</label>
+    <label><input type="radio" name="entry" value="Board column too"> <strong>CLI + board column</strong> — also a tracker column like story intake, for queued tasks.</label>
+    <label><input type="radio" name="entry" value="Surface-native inbox"> <strong>Surface-native inbox page</strong> — a standing "new task" surface with a text form; slower to build, purest version of the paradigm.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Terminal escape hatch</h2>
+  <form data-review-surface-question="escape">
+    <label><input type="radio" name="escape" value="Keep terminal for quick traffic (recommended)"> <strong>Keep it</strong> — surfaces for work items with artifacts and gates; terminal stays for quick questions until round latency proves tolerable.</label>
+    <label><input type="radio" name="escape" value="Full cutover, no hatch"> <strong>Full cutover</strong> — everything through surfaces from day one; latency pain is the forcing function that improves the system.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Decision · Working-directory safety</h2>
+  <form data-review-surface-question="safety">
+    <label><input type="radio" name="safety" value="Allowlist in config (recommended)"> <strong>Directory allowlist</strong> — tasks may only target configured roots (~/Projects, ~/research…); anything else refuses at spawn with an escalate event.</label>
+    <label><input type="radio" name="safety" value="No restriction"> <strong>No restriction</strong> — trust the session; same posture as running me in the terminal today.</label>
+    <button type="submit">Queue answer</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<section class="qcard">
+  <h2>Verdict</h2>
+  <form data-review-surface-question="verdict">
+    <label><input type="radio" name="verdict" value="approve"> <strong>Approve</strong> — build per my queued answers.</label>
+    <label><input type="radio" name="verdict" value="approve-with-notes"> <strong>Approve with notes</strong> — proceed, incorporating annotations.</label>
+    <label><input type="radio" name="verdict" value="revise"> <strong>Revise</strong> — rework the design and bring it back.</label>
+    <textarea name="note" placeholder="Anything the radios don't capture…"></textarea>
+    <button type="submit">Queue verdict</button>
+    <div class="queued-note">Queued — send from the conversation panel.</div>
+  </form>
+</section>
+
+<script>
+  document.querySelectorAll('form[data-review-surface-question]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var q = form.getAttribute('data-review-surface-question');
+      var data = new FormData(form);
+      var values = [];
+      data.forEach(function (v, k) { if (k !== 'note' && v) values.push(v); });
+      if (!values.length) return;
+      var note = data.get('note');
+      var msg = 'Dialogue workflow — ' + q + ': ' + values.join('; ') + (note ? ' — note: ' + note : '');
+      window.reviewSurface.queuePrompt(msg, {
+        tag: 'decision',
+        text: q + ': ' + values.join('; '),
+        element: form,
+        queueKey: q,
+        data: { question: q, answer: values, note: note || null }
+      });
+      form.classList.add('answered');
+    });
+  });
+</script>
+
+</main>
+</body>
+</html>

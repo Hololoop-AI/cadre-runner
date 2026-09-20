@@ -57,6 +57,16 @@ MODES = ("off", "shadow", "only")
 ROUND_CAPPED = ("interrogate", "revise", "reconcile")
 DEFAULT_MAX_ROUNDS = 5          # mirrors config.DEFAULTS["limits"]
 
+# Payload fields a trigger event may hand to the rendered prompt as `$vars`.
+# Closed on purpose — a prompt variable is part of a node's contract, so the
+# list of what an event is allowed to inject is readable in one place rather
+# than being "whatever the payload happened to carry". The first three belong
+# to the pipeline; the rest are workflow #3's (config/actions-dialogue.json),
+# whose node has no registry story to read a task, a cwd or a round from.
+PROMPT_VARS = ("story_text", "story_url", "reconcile_base",
+               "task", "task_text", "cwd", "feedback",
+               "iteration", "surface_prev")
+
 _state = {}
 
 
@@ -259,7 +269,7 @@ def run_spawn_spec(cfg, reg, ghc, board: Board, log, run_stage, spec: dict):
         # Only a story whose intake command was written with the text attached
         # gets a complete S0 prompt on this path.
         "extra_vars": {k: v for k, v in payload.items()
-                       if k in ("story_text", "story_url", "reconcile_base")},
+                       if k in PROMPT_VARS},
     }
     log(f"engine: spawning {spec['node']} for {slug} "
         f"(node version {spec['version'][:12]}, firing {spec.get('firing_id')})")
