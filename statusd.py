@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Cadre page server: static status page + reverse proxy to Review Surface.
+"""Cadre page server: agent-manager home page + static assets + reverse proxy
+to Review Surface.
 
 Replaces the bare `python -m http.server` in cadre-status.service, same port,
 per cadre-context decision 2026-08-26-surface-as-driver-channel: ONE exposed
 port on the tailnet; review-surface keeps its loopback default and every
 surface session is reached through this proxy.
 
-Routing rule: a path that resolves to a file in the status directory is
-served statically; everything else is forwarded verbatim to the Review Surface
+Routing rule: `/` is the fleet home page — server-rendered here from the
+daemon's status.json snapshot (project -> story -> stage sessions, sorted so
+the rows that want a human sit on top) with the new-task form at the top;
+`POST /tasks` submits that form. Any other path that resolves to a file in the
+status directory is served statically (the legacy dashboard is still at
+/index.html); everything else is forwarded verbatim to the Review Surface
 server (`surface.upstream()`, loopback by default) — its pages use root-relative
 asset URLs, so prefix-free forwarding is the only shape that works. /shutdown is
 blocked: nothing reachable from the network may stop the surface server.
@@ -21,9 +26,13 @@ Streams responses chunk-by-chunk so the surface's SSE channel (/events/:key)
 works through the proxy.
 """
 
+import json
 import os
 import sys
+import time
+import urllib.parse
 import urllib.request
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -69,6 +78,330 @@ TYPES = {".html": "text/html; charset=utf-8", ".json": "application/json",
          ".css": "text/css", ".js": "text/javascript", ".png": "image/png",
          ".svg": "image/svg+xml"}
 
+HOME_PATH = "/"
+TASKS_PATH = "/tasks"
+MAX_TASK_BYTES = 64 * 1024
+REFRESH_MS = 5000
+
+# Surface session kinds that are a QUESTION to the driver (a verdict, an answer)
+# rather than a report. An open one of these is the strongest "this is waiting
+# on you" signal the runner has, stronger than any phase.
+VERDICT_KINDS = {"risk_hold", "spec_review", "final_review", "ask"}
+# Phases that mean the pipeline has handed the story back to a human.
+ATTENTION_PHASES = {"final-review"}
+DONE_PHASES = {"done"}
+
+# Sort buckets, ascending = higher on the page. The driver's rule: things that
+# want a human first, then things that finished and nobody has acknowledged,
+# then quiet work in progress.
+RANK_NEEDS_HUMAN, RANK_FINISHED, RANK_RUNNING = 0, 1, 2
+RANK_LABELS = {RANK_NEEDS_HUMAN: "needs you",
+               RANK_FINISHED: "finished",
+               RANK_RUNNING: "in progress"}
+
+
+# --------------------------------------------------------------------- model
+
+def read_snapshot(status_dir: Path | None = None) -> dict:
+    """The daemon's status.json, or an empty snapshot. The home page is a
+    read-only view of what the daemon already wrote: statusd never loads the
+    registry itself, so a wedged or absent daemon degrades to an empty fleet
+    instead of taking the page (and the surface proxy) down with it."""
+    d = Path(status_dir) if status_dir is not None else STATUS_DIR
+    try:
+        snap = json.loads((d / "status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return snap if isinstance(snap, dict) else {}
+
+
+def _runs_for(snap: dict, story: dict) -> list[dict]:
+    """In-flight stage sessions belonging to a story. The daemon keys runs by
+    slug; intake runs (no story registered yet) key by the board card id, so
+    story_id is matched too."""
+    keys = {story.get("slug"), story.get("story_id")} - {None}
+    return [r for r in (snap.get("runs") or []) if r.get("story") in keys]
+
+
+def _questions_for(snap: dict, story: dict) -> list[dict]:
+    keys = {story.get("slug"), story.get("story_id")} - {None}
+    return [q for q in (snap.get("questions") or []) if q.get("story") in keys]
+
+
+def _last_activity(snap: dict, story: dict) -> float:
+    """Newest timestamp that touched this story, from any channel the snapshot
+    carries: a running stage, an open surface, a finished run in history."""
+    stamps = [0.0]
+    for r in _runs_for(snap, story):
+        stamps.append(float(r.get("started") or 0))
+    for sf in story.get("surfaces") or []:
+        stamps.append(float(sf.get("opened") or 0))
+    for q in _questions_for(snap, story):
+        stamps.append(float(q.get("asked_at") or 0) if
+                      isinstance(q.get("asked_at"), (int, float)) else 0.0)
+    keys = {story.get("slug"), story.get("story_id")} - {None}
+    for h in snap.get("recent") or []:
+        if h.get("story") in keys:
+            stamps.append(float(h.get("ended") or 0))
+    return max(stamps)
+
+
+def classify(snap: dict, story: dict) -> tuple[int, str]:
+    """(rank, why) for one story. Order of the checks IS the priority: an
+    escalation or an open verdict outranks 'done', which outranks running."""
+    if story.get("status") == "escalated":
+        return RANK_NEEDS_HUMAN, "escalated"
+    open_kinds = [sf.get("kind") for sf in (story.get("surfaces") or [])]
+    waiting = [k for k in open_kinds if k in VERDICT_KINDS]
+    if waiting:
+        return RANK_NEEDS_HUMAN, f"awaiting {waiting[0].replace('_', ' ')}"
+    if _questions_for(snap, story):
+        return RANK_NEEDS_HUMAN, "question pending"
+    if story.get("phase") in ATTENTION_PHASES:
+        return RANK_NEEDS_HUMAN, "final review"
+    if story.get("phase") in DONE_PHASES or story.get("status") == "done":
+        return RANK_FINISHED, "done — unacknowledged"
+    if _runs_for(snap, story):
+        return RANK_RUNNING, "running"
+    return RANK_RUNNING, story.get("phase") or "idle"
+
+
+def _pr_links(story: dict) -> list[dict]:
+    repo = story.get("repo") or ""
+    out = []
+    for n in story.get("prs") or ([story["planning_pr"]] if story.get("planning_pr") else []):
+        try:
+            num = int(n)
+        except (TypeError, ValueError):
+            continue
+        out.append({"pr": num,
+                    "url": f"https://github.com/{repo}/pull/{num}" if repo else ""})
+    return out
+
+
+def story_view(snap: dict, story: dict) -> dict:
+    rank, why = classify(snap, story)
+    runs = _runs_for(snap, story)
+    return {
+        "slug": story.get("slug") or "",
+        "story_id": story.get("story_id") or story.get("slug") or "?",
+        "title": story.get("title") or "",
+        "repo": story.get("repo") or "(unassigned)",
+        "phase": story.get("phase") or "—",
+        "status": story.get("status") or "—",
+        "rank": rank,
+        "why": why,
+        "activity": _last_activity(snap, story),
+        # stage sessions: the agents themselves, deep-linked to their surface
+        # when one is open.
+        "runs": [{"stage": r.get("stage") or "stage", "slice": r.get("slice"),
+                  "pr": r.get("pr"), "started": r.get("started")} for r in runs],
+        "surfaces": [{"kind": sf.get("kind") or "surface", "path": sf.get("path") or "",
+                      "pr": sf.get("pr"), "opened": sf.get("opened")}
+                     for sf in (story.get("surfaces") or [])],
+        "questions": _questions_for(snap, story),
+        "prs": _pr_links(story),
+    }
+
+
+def fleet(snap: dict) -> list[dict]:
+    """The whole hierarchy, sorted. Projects inherit the urgency of their most
+    urgent story, so a repo with an escalation cannot hide below a quiet one."""
+    groups: dict[str, list[dict]] = {}
+    for st in snap.get("stories") or []:
+        view = story_view(snap, st)
+        groups.setdefault(view["repo"], []).append(view)
+    projects = []
+    for repo, stories in groups.items():
+        stories.sort(key=lambda s: (s["rank"], -s["activity"], s["story_id"]))
+        projects.append({
+            "repo": repo,
+            "stories": stories,
+            "rank": min(s["rank"] for s in stories),
+            "activity": max(s["activity"] for s in stories),
+            "attention": sum(1 for s in stories if s["rank"] == RANK_NEEDS_HUMAN),
+        })
+    projects.sort(key=lambda p: (p["rank"], -p["activity"], p["repo"]))
+    return projects
+
+
+def orphan_surfaces(snap: dict) -> list[dict]:
+    """Open sessions with no story to live under (ad-hoc notices, asks from a
+    story that has since been closed). They still want a human, so they render
+    above the fleet rather than being dropped."""
+    return [sf for sf in (snap.get("surfaces") or []) if sf.get("path")]
+
+
+# -------------------------------------------------------------------- render
+
+_CSS = """
+:root{--bg:#faf9f6;--fg:#1c1e21;--muted:#6b6f76;--card:#fff;--border:#e4e1da;
+ --ok:#15803d;--run:#b45309;--hot:#b91c1c;--accent:#c2410c;--soft:#00000008}
+@media (prefers-color-scheme:dark){:root{--bg:#131417;--fg:#e8e6e1;--muted:#9a9ea6;
+ --card:#1b1d22;--border:#2a2d34;--ok:#4ade80;--run:#fbbf24;--hot:#f87171;
+ --accent:#fb923c;--soft:#ffffff08}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+ font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:52rem;margin:0 auto;padding:1.2rem 1.2rem 3rem}
+header{display:flex;align-items:baseline;gap:.8rem;margin-bottom:1rem}
+h1{font-size:1.15rem;margin:0;letter-spacing:-.01em}h1 .dot{color:var(--accent)}
+header .updated{margin-left:auto;color:var(--muted);font-size:.78rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+ padding:.9rem 1.1rem;margin-bottom:.9rem}
+.card h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;
+ color:var(--muted);margin:0 0 .6rem}
+form.newtask textarea{width:100%;min-height:4.5rem;resize:vertical;padding:.6rem .7rem;
+ border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--fg);font:inherit}
+form.newtask .row{display:flex;gap:.6rem;align-items:center;margin-top:.6rem;flex-wrap:wrap}
+form.newtask input[type=text]{flex:1 1 18rem;padding:.45rem .6rem;border:1px solid var(--border);
+ border-radius:9px;background:var(--bg);color:var(--fg);font:inherit;
+ font-family:ui-monospace,Menlo,monospace;font-size:.82rem}
+form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
+ padding:.5rem 1.1rem;background:var(--accent);color:#fff;cursor:pointer}
+.project{margin-bottom:1rem}
+.project > h2{display:flex;align-items:baseline;gap:.6rem}
+.project .repo{font-family:ui-monospace,Menlo,monospace;text-transform:none;
+ letter-spacing:0;font-size:.9rem;color:var(--fg);font-weight:650}
+.story{padding:.55rem 0}
+.story + .story{border-top:1px solid var(--border)}
+.story .line{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem}
+.story .id{font-weight:650}
+.story .title{color:var(--muted);font-size:.86rem;flex:1 1 12rem;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+.badge{font-size:.72rem;padding:.1rem .55rem;border-radius:99px;border:1px solid var(--border);
+ color:var(--muted);white-space:nowrap}
+.badge.needs{border-color:var(--hot);color:var(--hot)}
+.badge.finished{border-color:var(--ok);color:var(--ok)}
+.badge.running{border-color:var(--run);color:var(--run)}
+.agents{margin:.35rem 0 0;padding:0;list-style:none;font-size:.82rem}
+.agents li{display:flex;flex-wrap:wrap;gap:.5rem;padding:.15rem 0;color:var(--muted)}
+.agents .stage{font-family:ui-monospace,Menlo,monospace;color:var(--fg)}
+.links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
+.links a:hover{text-decoration:underline}
+.empty{color:var(--muted);font-size:.88rem}
+footer{color:var(--muted);font-size:.75rem;margin-top:1.4rem}
+"""
+
+_POLL_JS = """
+(function(){
+ var ms=%d;
+ setInterval(function(){
+  var a=document.activeElement;
+  if(a&&a.closest&&a.closest('form.newtask'))return;   // never eat a half-typed task
+  fetch('/?partial=1',{cache:'no-store'}).then(function(r){return r.text()})
+   .then(function(h){var el=document.getElementById('fleet');if(el)el.innerHTML=h})
+   .catch(function(){});
+ },ms);
+})();
+""" % REFRESH_MS
+
+
+def _rel_time(ts: float, now: float | None = None) -> str:
+    if not ts:
+        return ""
+    delta = max(0, int((now if now is not None else time.time()) - ts))
+    if delta < 60:
+        return f"{delta}s ago"
+    if delta < 3600:
+        return f"{delta // 60}m ago"
+    if delta < 86400:
+        return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+
+def _links_html(view: dict) -> str:
+    bits = []
+    for sf in view["surfaces"]:
+        label = sf["kind"].replace("_", " ")
+        bits.append(f'<a href="{escape(sf["path"])}">surface: {escape(label)}</a>')
+    for pr in view["prs"]:
+        if pr["url"]:
+            bits.append(f'<a href="{escape(pr["url"])}" rel="noreferrer">PR #{pr["pr"]}</a>')
+        else:
+            bits.append(f'<span>PR #{pr["pr"]}</span>')
+    return f'<div class="links">{"".join(bits)}</div>' if bits else ""
+
+
+def _story_html(view: dict, now: float) -> str:
+    cls = {RANK_NEEDS_HUMAN: "needs", RANK_FINISHED: "finished",
+           RANK_RUNNING: "running"}[view["rank"]]
+    agents = []
+    for r in view["runs"]:
+        where = " ".join(x for x in [r.get("slice"),
+                                     f'PR #{r["pr"]}' if r.get("pr") else ""] if x)
+        agents.append(
+            f'<li><span class="stage">{escape(str(r["stage"]))}</span>'
+            f'<span>{escape(where)}</span>'
+            f'<span>{escape(_rel_time(r.get("started") or 0, now))}</span></li>')
+    for q in view["questions"]:
+        agents.append(f'<li><span class="stage">question</span>'
+                      f'<span>{escape(str(q.get("question") or ""))[:160]}</span></li>')
+    agent_html = f'<ul class="agents">{"".join(agents)}</ul>' if agents else ""
+    return (
+        f'<div class="story">'
+        f'<div class="line">'
+        f'<span class="id">{escape(view["story_id"])}</span>'
+        f'<span class="title">{escape(view["title"])}</span>'
+        f'<span class="badge {cls}">{escape(view["why"])}</span>'
+        f'<span class="badge">{escape(view["phase"])}</span>'
+        f'<span class="badge">{escape(_rel_time(view["activity"], now))}</span>'
+        f'</div>{agent_html}{_links_html(view)}</div>')
+
+
+def render_fleet(snap: dict, now: float | None = None) -> str:
+    """The hierarchy fragment — also what the poll swaps in, so the page and
+    the refresh can never render two different shapes."""
+    now = time.time() if now is None else now
+    projects = fleet(snap)
+    out = []
+    orphans = orphan_surfaces(snap)
+    if orphans:
+        rows = "".join(
+            f'<div class="story"><div class="line">'
+            f'<span class="id">{escape(str(sf.get("kind") or "surface"))}</span>'
+            f'<span class="title">{escape(str(sf.get("story") or ""))}</span>'
+            f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
+            f'</div><div class="links">'
+            f'<a href="{escape(str(sf.get("path")))}">open surface</a></div></div>'
+            for sf in orphans)
+        out.append(f'<section class="card"><h2>Loose sessions</h2>{rows}</section>')
+    if not projects:
+        out.append('<section class="card"><p class="empty">No stories in flight. '
+                   'Start one with the box above.</p></section>')
+    for p in projects:
+        flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
+                if p["attention"] else "")
+        rows = "".join(_story_html(s, now) for s in p["stories"])
+        out.append(f'<section class="card project"><h2>'
+                   f'<span class="repo">{escape(p["repo"])}</span>{flag}</h2>{rows}</section>')
+    return "".join(out)
+
+
+def render_home(snap: dict, notice: str = "", now: float | None = None) -> str:
+    now = time.time() if now is None else now
+    stamp = snap.get("iso") or "—"
+    banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Cadre — Agent Fleet</title>'
+        f'<style>{_CSS}</style></head><body><div class="wrap">'
+        '<header><h1>Cadre<span class="dot">.</span> agent fleet</h1>'
+        f'<span class="updated">snapshot {escape(str(stamp))}</span></header>'
+        f'{banner}'
+        '<section class="card"><h2>New task</h2>'
+        f'<form class="newtask" method="post" action="{TASKS_PATH}">'
+        '<textarea name="text" placeholder="What should the fleet do?" '
+        'required autofocus></textarea>'
+        '<div class="row">'
+        '<input type="text" name="cwd" placeholder="working directory (optional)">'
+        '<button type="submit">Dispatch</button></div></form></section>'
+        f'<div id="fleet">{render_fleet(snap, now)}</div>'
+        '<footer>Auto-refreshes every 5 s · '
+        '<a href="/index.html">legacy dashboard</a></footer>'
+        f'</div><script>{_POLL_JS}</script></body></html>')
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -90,7 +423,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":   # a HEAD body puts stray bytes on the wire
+            self.wfile.write(data)
 
     def _proxy(self):
         if self.path.split("?", 1)[0] in BLOCKED:
@@ -152,14 +486,101 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             resp.close()
 
+    # ---------------------------------------------------------------- home
+
+    def _send_html(self, body: str, code: int = 200, headers: dict | None = None):
+        data = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def _serve_home(self, query: dict):
+        snap = read_snapshot()
+        if query.get("partial"):
+            self._send_html(render_fleet(snap))
+            return
+        notice = (query.get("notice") or [""])[0]
+        self._send_html(render_home(snap, notice=notice))
+
+    def _same_origin(self) -> bool:
+        """A POST that changes the world only comes from this page. There is no
+        session to forge against, but the proxy is reachable on the tailnet, so
+        a cross-origin form post from a page in the same browser is the one real
+        risk — an Origin that is not this host is refused. A missing Origin
+        (curl, the CLI) is allowed: this is the same posture the surface proxy
+        already takes."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = (self.headers.get("Host") or "").strip()
+        return urllib.parse.urlsplit(origin).netloc == host
+
+    def _new_task(self):
+        """Form contract: POST /tasks, application/x-www-form-urlencoded,
+        `text` (required) and `cwd` (optional). Hands off to
+        runnerlib.tasks.submit_task(cfg, text, cwd) and redirects back home."""
+        if not self._same_origin():
+            self.send_error(403, "cross-origin post")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_TASK_BYTES:
+            self.send_error(413, "task too large")
+            return
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        form = urllib.parse.parse_qs(raw, keep_blank_values=True)
+        text = (form.get("text") or [""])[0].strip()
+        cwd = (form.get("cwd") or [""])[0].strip() or None
+        if not text:
+            self._redirect_home("A task needs some text.")
+            return
+        # Imported per request, not at module load: the task submitter is a
+        # separate moving part and the page server must come up (and keep
+        # proxying the surface) whether or not it is installed yet.
+        try:
+            from runnerlib import tasks as tasks_mod
+        except ImportError:
+            self._redirect_home("Task submission is not installed on this runner.")
+            return
+        try:
+            result = tasks_mod.submit_task(_CFG, text, cwd)
+        except Exception as e:                      # a bad task must not 500 the page
+            self._redirect_home(f"Task rejected: {e}")
+            return
+        self._redirect_home(f"Task submitted{f': {result}' if result else '.'}")
+
+    def _redirect_home(self, notice: str):
+        # 303 so a refresh after submitting does not re-post the task.
+        target = HOME_PATH + "?" + urllib.parse.urlencode({"notice": notice})
+        self.send_response(303)
+        self.send_header("Location", target)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    # --------------------------------------------------------------- routing
+
     def _route(self):
+        path, _, raw_query = self.path.partition("?")
+        query = urllib.parse.parse_qs(raw_query)
+        if path == TASKS_PATH and self.command == "POST":
+            self._new_task()
+            return
+        if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
+            self._serve_home(query)
+            return
         p = self._static_path()
         if p is not None:
             self._serve_static(p)
         else:
             self._proxy()
 
-    do_GET = do_POST = do_PUT = do_DELETE = _route
+    do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = _route
 
 
 def main():

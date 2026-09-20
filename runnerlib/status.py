@@ -141,9 +141,21 @@ def _questions(cfg) -> list[dict]:
         return []
 
 
+def _all_stories(reg) -> dict:
+    """Active work plus anything escalated. An escalation is the one state that
+    MOST wants a human, and filtering the snapshot to `active` hid those rows
+    from the page entirely. Fakes with a no-argument stories() still work."""
+    merged = dict(reg.stories())
+    try:
+        merged.update(reg.stories("escalated"))
+    except TypeError:
+        pass
+    return merged
+
+
 def _stories(reg) -> list[dict]:
     out = []
-    for slug, s in reg.stories().items():
+    for slug, s in _all_stories(reg).items():
         out.append({
             "slug": slug,
             "story_id": s.get("story_id"),
@@ -157,8 +169,21 @@ def _stories(reg) -> list[dict]:
                 name: {r: bool(sl.get(f"{r}_merged")) for r in ("contract", "tests", "build")}
                 for name, sl in s.get("slices", {}).items()
             },
+            # Every PR the story owns, flattened: the fleet page links them
+            # from the story row and has no other route to a slice's PR number.
+            "prs": _story_prs(s),
         })
     return out
+
+
+def _story_prs(s: dict) -> list[int]:
+    seen = []
+    for n in ([s.get("planning_pr")] +
+              [sl.get(f"{r}_pr") for sl in s.get("slices", {}).values()
+               for r in ("contract", "tests", "build")]):
+        if isinstance(n, int) and n not in seen:
+            seen.append(n)
+    return seen
 
 
 def _log_tail(log_path: Path) -> list[str]:

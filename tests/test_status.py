@@ -1,14 +1,23 @@
-"""Smoke tests for the status snapshot writer.
-Run directly: python3 tests/test_status.py"""
+"""Smoke tests for the status snapshot writer and the fleet home page statusd
+renders from it. Run directly: python3 tests/test_status.py"""
 
 import json
 import sys
 import tempfile
+import threading
+import time
+import types
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from runnerlib import status
+import runnerlib
+import statusd
+from runnerlib import messages, status
 
 
 class FakeCfg:
@@ -66,8 +75,301 @@ def test_never_raises():
         status.write_status(FakeCfg(root), BrokenReg())  # must not raise
 
 
+# ------------------------------------------------------------- fleet page
+
+NOW = 1_700_000_000.0
+
+
+class FleetReg:
+    """Synthetic registry: two repos, one of them holding the work that wants a
+    human. Mirrors Registry.stories(status=...) so the escalated story is only
+    visible to a caller that asks for it."""
+
+    ALL = {
+        "esc": {"story_id": "NEX-1", "title": "Escalated thing", "repo": "o/hot",
+                "status": "escalated", "phase": "slices", "planning_pr": 11,
+                "slices": {}},
+        "verdict": {"story_id": "NEX-2", "title": "Awaiting a verdict", "repo": "o/hot",
+                    "status": "active", "phase": "slices", "planning_pr": 12,
+                    "slices": {"a": {"build_pr": 99, "build_merged": False}}},
+        "fin": {"story_id": "NEX-3", "title": "Finished, unacknowledged", "repo": "o/hot",
+                "status": "active", "phase": "done", "slices": {}},
+        "busy": {"story_id": "NEX-4", "title": "Building right now", "repo": "o/hot",
+                 "status": "active", "phase": "slices", "slices": {}},
+        "quiet": {"story_id": "NEX-5", "title": "Nothing happening", "repo": "o/calm",
+                  "status": "active", "phase": "slices", "slices": {}},
+    }
+
+    def stories(self, status="active"):
+        return {k: v for k, v in self.ALL.items() if v["status"] == status}
+
+
+def _fleet_snapshot(root):
+    """A real snapshot: written by status.write_status off the synthetic
+    registry, with a surface session, a question and an in-flight run seeded
+    into the data dir the way the daemon seeds them."""
+    cfg = FakeCfg(root)
+    surf_dir = cfg.data_dir / "surfaces"
+    surf_dir.mkdir(parents=True, exist_ok=True)
+    (surf_dir / "sessions.json").write_text(json.dumps({
+        "/a.html": {"kind": "final_review", "story": "verdict", "pr": 99,
+                    "path": "/s/abc", "key": "abc", "open": True, "opened": NOW - 30},
+        "/b.html": {"kind": "notice", "story": "busy", "path": "/s/zzz",
+                    "key": "zzz", "open": True, "opened": NOW - 10},
+        "/c.html": {"kind": "ask", "story": "gone", "path": "/s/orph",
+                    "key": "orph", "open": True, "opened": NOW - 5},
+    }))
+    messages.ask(cfg.data_dir, "esc", "Which way?")
+    runs = [{"stage": "build", "story": "busy", "slice": "a", "pr": 77,
+             "started": NOW - 5}]
+    status.write_status(cfg, FleetReg(), run=runs[0], runs=runs)
+    return json.loads((cfg.data_dir / "status" / "status.json").read_text())
+
+
+def test_escalated_stories_reach_the_snapshot():
+    with tempfile.TemporaryDirectory() as root:
+        snap = _fleet_snapshot(root)
+        assert {s["slug"] for s in snap["stories"]} == set(FleetReg.ALL)
+        verdict = next(s for s in snap["stories"] if s["slug"] == "verdict")
+        assert verdict["prs"] == [12, 99]          # planning + slice PRs, flattened
+
+
+def test_hierarchy_groups_and_sorts():
+    with tempfile.TemporaryDirectory() as root:
+        projects = statusd.fleet(_fleet_snapshot(root))
+        assert [p["repo"] for p in projects] == ["o/hot", "o/calm"]
+        hot = projects[0]
+        assert hot["attention"] == 2               # escalated + awaiting a verdict
+        # needs-human first (escalated / open verdict / pending question),
+        # then finished-but-unacknowledged, then quiet in-progress.
+        assert [s["rank"] for s in hot["stories"]] == [0, 0, 1, 2]
+        assert {s["slug"] for s in hot["stories"][:2]} == {"esc", "verdict"}
+        assert [s["slug"] for s in hot["stories"][2:]] == ["fin", "busy"]
+        assert [s["slug"] for s in projects[1]["stories"]] == ["quiet"]
+
+
+def test_finished_outranks_running_and_activity_breaks_ties():
+    with tempfile.TemporaryDirectory() as root:
+        snap = _fleet_snapshot(root)
+        by_slug = {s["slug"]: s for p in statusd.fleet(snap) for s in p["stories"]}
+        assert by_slug["esc"]["rank"] == statusd.RANK_NEEDS_HUMAN
+        assert by_slug["verdict"]["why"] == "awaiting final review"
+        assert by_slug["fin"]["rank"] == statusd.RANK_FINISHED
+        # "busy" is the most recently active story and still sorts below "fin"
+        assert by_slug["busy"]["rank"] == statusd.RANK_RUNNING
+        assert by_slug["busy"]["activity"] > by_slug["fin"]["activity"]
+        hot = statusd.fleet(snap)[0]["stories"]
+        assert hot.index(by_slug["fin"]) < hot.index(by_slug["busy"])
+        # within the needs-human bucket, most recent first
+        needs = [s for s in hot if s["rank"] == statusd.RANK_NEEDS_HUMAN]
+        assert [s["activity"] for s in needs] == sorted(
+            (s["activity"] for s in needs), reverse=True)
+
+
+def test_rendering_links_surfaces_and_prs():
+    with tempfile.TemporaryDirectory() as root:
+        html = statusd.render_home(_fleet_snapshot(root), now=NOW)
+        assert 'href="/s/abc"' in html                 # deep link to the live surface
+        assert 'https://github.com/o/hot/pull/99' in html
+        assert 'href="/s/orph"' in html                # orphan session still reachable
+        assert "Loose sessions" in html
+        assert "o/hot" in html and "o/calm" in html
+        assert f'action="{statusd.TASKS_PATH}"' in html
+
+
+def test_page_renders_with_zero_stories():
+    html = statusd.render_home({})
+    assert "No stories in flight" in html
+    assert 'name="text"' in html and 'name="cwd"' in html
+    assert statusd.render_fleet({}).strip() != ""
+
+
+def test_snapshot_survives_a_missing_or_broken_file():
+    with tempfile.TemporaryDirectory() as root:
+        assert statusd.read_snapshot(Path(root)) == {}
+        d = Path(root) / "status"
+        d.mkdir()
+        (d / "status.json").write_text("{not json")
+        assert statusd.read_snapshot(d.parent) == {}
+
+
+# ------------------------------------------------------------- http surface
+
+class _Server:
+    """statusd's real handler on an ephemeral loopback port."""
+
+    def __init__(self, status_dir):
+        self.keep = statusd.STATUS_DIR
+        statusd.STATUS_DIR = Path(status_dir)
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), statusd.Handler)
+        self.base = "http://127.0.0.1:%d" % self.srv.server_address[1]
+        self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        statusd.STATUS_DIR = self.keep
+
+    def get(self, path):
+        with urllib.request.urlopen(self.base + path, timeout=5) as r:
+            return r.status, r.read().decode()
+
+    def post(self, path, fields, headers=None):
+        req = urllib.request.Request(
+            self.base + path, method="POST",
+            data=urllib.parse.urlencode(fields).encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     **(headers or {})})
+        try:
+            # no redirect following: the Location IS the result under test
+            with urllib.request.build_opener(_NoRedirect).open(req, timeout=5) as r:
+                return r.status, r.headers.get("Location") or ""
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers.get("Location") or ""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _hide_tasks():
+    """Make `from runnerlib import tasks` raise ImportError, whether or not the
+    real module is installed — the page must degrade to a notice either way."""
+    sys.modules["runnerlib.tasks"] = None
+    if hasattr(runnerlib, "tasks"):
+        del runnerlib.tasks
+
+
+def _stub_tasks(calls, exc=None):
+    """runnerlib.tasks is owned by another workstream — these tests must never
+    depend on it being importable, nor call the real submitter (which writes a
+    task onto the live board)."""
+    mod = types.ModuleType("runnerlib.tasks")
+
+    def submit_task(cfg, text, cwd):
+        calls.append((cfg, text, cwd))
+        if exc:
+            raise exc
+        return "task-1"
+
+    mod.submit_task = submit_task
+    sys.modules["runnerlib.tasks"] = mod
+    runnerlib.tasks = mod
+
+
+def _unstub_tasks():
+    sys.modules.pop("runnerlib.tasks", None)
+    if hasattr(runnerlib, "tasks"):
+        del runnerlib.tasks
+
+
+def test_home_and_partial_are_served():
+    with tempfile.TemporaryDirectory() as root:
+        _fleet_snapshot(root)
+        srv = _Server(Path(root) / "status")
+        try:
+            code, body = srv.get("/")
+            assert code == 200 and "agent fleet" in body and "o/hot" in body
+            code, frag = srv.get("/?partial=1")
+            assert code == 200 and "<html" not in frag and "o/hot" in frag
+        finally:
+            srv.close()
+
+
+def test_new_task_endpoint_calls_submit_task():
+    calls = []
+    _stub_tasks(calls)
+    with tempfile.TemporaryDirectory() as root:
+        srv = _Server(Path(root) / "status")
+        opener = urllib.request.build_opener(_NoRedirect)
+        try:
+            req = urllib.request.Request(
+                srv.base + statusd.TASKS_PATH, method="POST",
+                data=urllib.parse.urlencode(
+                    {"text": "ship the thing", "cwd": "/tmp/repo"}).encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            try:
+                opener.open(req, timeout=5)
+                raise AssertionError("expected a redirect")
+            except urllib.error.HTTPError as e:
+                assert e.code == 303
+                assert e.headers["Location"].startswith("/?notice=")
+                assert "task-1" in urllib.parse.unquote_plus(e.headers["Location"])
+            assert len(calls) == 1
+            _cfg, text, cwd = calls[0]
+            assert text == "ship the thing" and cwd == "/tmp/repo"
+        finally:
+            srv.close()
+            _unstub_tasks()
+
+
+def test_new_task_blank_text_and_missing_module_and_failures_are_notices():
+    with tempfile.TemporaryDirectory() as root:
+        srv = _Server(Path(root) / "status")
+        try:
+            _hide_tasks()
+            code, loc = srv.post(statusd.TASKS_PATH, {"text": "   ", "cwd": ""})
+            assert code == 303 and "needs+some+text" in loc
+
+            code, loc = srv.post(statusd.TASKS_PATH, {"text": "do it"})
+            assert code == 303 and "not+installed" in loc
+
+            calls = []
+            _stub_tasks(calls, exc=ValueError("no such directory"))
+            code, loc = srv.post(statusd.TASKS_PATH, {"text": "do it", "cwd": "/nope"})
+            assert code == 303 and "no+such+directory" in loc
+            assert calls and calls[0][2] == "/nope"
+
+            # cwd is optional: an empty field reaches submit_task as None
+            calls.clear()
+            _stub_tasks(calls)
+            srv.post(statusd.TASKS_PATH, {"text": "do it", "cwd": ""})
+            assert calls[0][2] is None
+        finally:
+            srv.close()
+            _unstub_tasks()
+
+
+def test_cross_origin_post_is_refused():
+    calls = []
+    _stub_tasks(calls)
+    with tempfile.TemporaryDirectory() as root:
+        srv = _Server(Path(root) / "status")
+        try:
+            code, _ = srv.post(statusd.TASKS_PATH, {"text": "x"},
+                               headers={"Origin": "http://evil.example"})
+            assert code == 403 and not calls
+        finally:
+            srv.close()
+            _unstub_tasks()
+
+
+def test_legacy_dashboard_is_still_static():
+    with tempfile.TemporaryDirectory() as root:
+        d = Path(root) / "status"
+        d.mkdir(parents=True)
+        (d / "index.html").write_text("<p>legacy</p>")
+        srv = _Server(d)
+        try:
+            assert srv.get("/index.html") == (200, "<p>legacy</p>")
+            home = srv.get("/")[1]                     # / is the fleet page now
+            assert "<p>legacy</p>" not in home and "agent fleet" in home
+        finally:
+            srv.close()
+
+
+def test_rel_time_reads_as_activity():
+    assert statusd._rel_time(0) == ""
+    assert statusd._rel_time(NOW - 5, NOW) == "5s ago"
+    assert statusd._rel_time(NOW - 300, NOW) == "5m ago"
+    assert statusd._rel_time(NOW - 7200, NOW) == "2h ago"
+    assert statusd._rel_time(NOW - 2 * 86400, NOW) == "2d ago"
+
+
 if __name__ == "__main__":
-    test_write_and_shape()
-    test_log_tail_bounded()
-    test_never_raises()
+    for name, fn in sorted(list(globals().items())):
+        if name.startswith("test_") and callable(fn):
+            fn()
     print("status smoke tests: all passed")
