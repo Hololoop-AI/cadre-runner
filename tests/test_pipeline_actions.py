@@ -281,7 +281,9 @@ def test_story_walk_intake_to_assembly():
     spawns, _ = walk()
     assert [s["node"] for s in spawns] == ["intake"]
     assert spawns[0]["version"] == n.active("intake")["version"]
-    assert "--story" in spawns[0]["argv"] and "nex-1" in spawns[0]["argv"]
+    # story id reaches the run through the event key and prompt vars, never
+    # as a claude flag (claude has no --story)
+    assert "--story" not in spawns[0]["argv"]
 
     # once-only: the started signal the emitter wrote closes the guard
     b.write("cadre", "stories", "story:nex-1", "command",
@@ -1206,3 +1208,19 @@ def test_a_revived_session_re_enters_through_the_same_command():
                      "--session-id", "sid-1", "--dangerously-skip-permissions"]
     assert revived == ["my-agent", "--file", "carry on",
                        "--resume", "sid-1", "--permission-mode", "acceptEdits"]
+
+
+def test_seed_command_uses_only_flags_the_claude_cli_accepts():
+    """The seeded command IS a real `claude` invocation once the engine spawns
+    it (Pack 3: spawn executes node argv verbatim). A template token claude
+    does not recognize is fatal at spawn time and invisible to every fake-bin
+    test — the first real dialogue-task spawn died on a vestigial `--story`.
+    Story/task text travels inside the rendered prompt, never as a flag."""
+    from runnerlib import seed_nodes
+
+    cmd = seed_nodes.command_for("high")
+    allowed = {"-p", "--model", "--effort", "--output-format"}
+    flags = {tok for tok in cmd.split()
+             if tok.startswith("-") and not tok.startswith("{")}
+    assert flags <= allowed, f"unknown claude flags in seed command: {flags - allowed}"
+    assert "--story" not in cmd

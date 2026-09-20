@@ -148,7 +148,14 @@ def tick_pass(cfg, reg, ghc, log, run_stage) -> dict:
     must not import pipeline.py (which imports the seam), and the daemon owns
     the spawn machinery either way."""
     st = state(cfg)
-    board, nodes, actions = st["board"], st["nodes"], st["actions"]
+    board, actions = st["board"], st["actions"]
+    # The node registry is re-opened every pass, never cached: `Nodes.__init__`
+    # reads index.json once and holds it, so a cached handle in a daemon that
+    # runs for weeks would pin every node's command and active prompt version
+    # at daemon-start — a CLI re-seed or an explicit `promote` would not reach
+    # traffic until a restart. One small JSON read per pass buys the registry's
+    # own contract back: promotion is what puts a version in front of traffic.
+    nodes = Nodes(cfg.data_dir)
 
     for slug, story in reg.data["stories"].items():
         adopt_story(board, slug, story)

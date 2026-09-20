@@ -59,9 +59,12 @@ STAGES = {
     "risk-triage": {"reads": ["signal:risk-high"], "emits": ["signal", "propose"]},
 }
 
+# The story/task text reaches the session through the rendered prompt; the
+# claude CLI has no --story flag, so nothing besides its own options may
+# appear here (first proven fatal by the first real spawn through the Pack 3
+# argv path, 2026-09-20).
 COMMAND = ("%(bin)s -p {prompt} --model {model} --effort %(effort)s "
-           "--output-format json {session} {permission} "
-           "--story {payload[story]}")
+           "--output-format json {session} {permission}")
 
 DEFAULT_BIN = "claude"
 

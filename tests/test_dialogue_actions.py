@@ -143,8 +143,9 @@ def test_a_task_request_spawns_the_task_node_once():
     assert [s["node"] for s in spawns] == ["task"]
     assert spawns[0]["key"] == "task:task-demo"
     assert spawns[0]["version"] == n.active("task")["version"]
-    # the node's command is formatted from the event, like any other node's
-    assert "--story" in spawns[0]["argv"] and "task-demo" in spawns[0]["argv"]
+    # the task id reaches the spawn through the event key, never as a claude
+    # flag — claude has no --story, and the text rides inside the prompt
+    assert "--story" not in spawns[0]["argv"]
     assert [f["outcome"] for f in firings] == ["fired"]
 
     started = b.peek(topic="tasks", kind="signal")
@@ -637,3 +638,39 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("dialogue-as-actions tests: all passed")
+
+
+def test_tick_pass_reopens_the_node_registry_every_pass():
+    """A daemon runs for weeks; the CLI re-seeds and `promote` retargets nodes
+    from other processes. The engine pass must read the registry as it is NOW
+    — a handle cached at daemon start pins every command and active prompt at
+    boot, which turns 'promotion puts a version in front of traffic' into
+    'promotion waits for a restart' (first hit live: a re-seeded task command
+    was invisible until the daemon bounced)."""
+    d = scratch()
+    cfg = FakeCfg(d)
+    engine_seam.reset()
+    engine_seam.state(cfg)  # daemon start: seeds and warms the cache
+
+    # another process edits the node after the daemon is up
+    Nodes(cfg.data_dir).register(
+        "task", "new prompt", "opus",
+        "claude -p {prompt} --model {model} --flag-added-later "
+        "{session} {permission}", replace=True)
+
+    class FakeReg:
+        data = {"stories": {}}
+
+    seen = {}
+    real_tick = engine.tick
+    def spy(board, actions, nodes, data_dir):
+        seen["command"] = nodes.active("task")["command"]
+        return [], []
+    engine.tick = spy
+    try:
+        engine_seam.tick_pass(cfg, FakeReg(), None, lambda *a: None, None)
+    finally:
+        engine.tick = real_tick
+        engine_seam.reset()
+
+    assert "--flag-added-later" in seen["command"]
