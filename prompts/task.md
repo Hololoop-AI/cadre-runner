@@ -90,7 +90,10 @@ read as slower than hand-coding it. Two rules keep small pages readable:
 when you mention a file, a change, or an earlier decision, restate in one
 plain sentence what it is and does — a bare filename or a compressed
 LLM-style reference forces the driver to go reconstruct your context from
-memory; and say each thing once, in words a person skimming can follow.
+memory; say each thing once, in words a person skimming can follow; and
+never use internal codenames or shorthand labels for other documents or
+discussions ("d7", "the stack round") — name the thing by what it is about
+("the discussion on how surfaces are organized into projects").
 
 1. **Orientation** — the ask restated in full; what kind of decision this is;
    how reversible it is; what happens on each possible response, including
