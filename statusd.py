@@ -431,6 +431,16 @@ a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
+details.fold{margin-top:.35rem}
+details.fold summary{cursor:pointer;color:var(--label);font-family:var(--mono);
+ font-size:.74rem;padding:.35rem 0;list-style:none}
+details.fold summary::before{content:'▸ ';color:var(--ok)}
+details.fold[open] summary::before{content:'▾ '}
+details.fold summary:hover{color:var(--fg)}
+#filter{width:100%;padding:.5rem .7rem;margin-bottom:.9rem;
+ border:1px solid var(--border);border-radius:9px;background:var(--card);
+ color:var(--fg);font:inherit;font-size:.88rem}
+#filter::placeholder{color:var(--label)}
 footer{color:var(--label);font-size:.74rem;font-family:var(--mono);margin-top:1.4rem}
 footer a{color:var(--accent)}
 """
@@ -438,11 +448,34 @@ footer a{color:var(--accent)}
 _POLL_JS = """
 (function(){
  var ms=%d;
+ function applyFilter(){
+  var f=document.getElementById('filter');
+  var q=(f&&f.value||'').toLowerCase();
+  document.querySelectorAll('#fleet section.card').forEach(function(sec){
+   var any=false, rows=sec.querySelectorAll('.rowline,.story');
+   rows.forEach(function(r){
+    var hit=!q||r.textContent.toLowerCase().indexOf(q)>-1;
+    r.style.display=hit?'':'none'; if(hit)any=true;
+   });
+   sec.style.display=(!q||any||!rows.length)?'':'none';
+  });
+  // a match hidden inside a closed fold is a match the driver can't see
+  if(q)document.querySelectorAll('#fleet details.fold').forEach(function(d){d.open=true});
+ }
+ var f=document.getElementById('filter');
+ if(f)f.addEventListener('input',applyFilter);
  setInterval(function(){
   var a=document.activeElement;
   if(a&&a.closest&&a.closest('form.newtask'))return;   // never eat a half-typed task
   fetch('/?partial=1',{cache:'no-store'}).then(function(r){return r.text()})
-   .then(function(h){var el=document.getElementById('fleet');if(el)el.innerHTML=h})
+   .then(function(h){
+    var el=document.getElementById('fleet');if(!el)return;
+    var open={};  // fold state is DOM state — carry it across the swap
+    el.querySelectorAll('details.fold[open]').forEach(function(d){open[d.dataset.fold]=1});
+    el.innerHTML=h;
+    el.querySelectorAll('details.fold').forEach(function(d){if(open[d.dataset.fold])d.open=true});
+    applyFilter();
+   })
    .catch(function(){});
  },ms);
 })();
@@ -545,7 +578,7 @@ def render_fleet(snap: dict, now: float | None = None,
         byline = "".join(
             f'<p class="orch">orchestrated by <b>{escape(str(sf.get("title") or ""))}</b>'
             f' · {escape(_rel_time(sf.get("opened") or 0, now))}</p>' for sf in orch)
-        rows = []
+        rows, decided = [], []
         for sf in rows_src:
             role = (f'<span class="badge">{escape(str(sf["role"]))}</span>'
                     if sf.get("role") else "")
@@ -554,19 +587,25 @@ def render_fleet(snap: dict, now: float | None = None,
             if sf.get("path"):
                 # the whole row is the click target — a 12px "open surface"
                 # link under each row made every open a precision task
-                rows.append(f'<div class="rowline">'
-                            f'<a class="row" href="{escape(str(sf["path"]))}">'
-                            f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
-                            f'<span class="go">open →</span></a>'
-                            f'{_history_link(sf)}</div>')
+                row = (f'<div class="rowline">'
+                       f'<a class="row" href="{escape(str(sf["path"]))}">'
+                       f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
+                       f'<span class="go">open →</span></a>'
+                       f'{_history_link(sf)}</div>')
             else:
-                rows.append(f'<div class="story"><div class="line">'
-                            f'<span class="title">{title}</span>{role}{when}'
-                            f'</div></div>')
+                row = (f'<div class="story"><div class="line">'
+                       f'<span class="title">{title}</span>{role}{when}'
+                       f'</div></div>')
+            # Settled surfaces stay reachable but stop occupying the driver's
+            # scan: the list was becoming every decision ever made.
+            (decided if "DECIDED" in str(sf.get("title") or "") else rows).append(row)
+        fold = (f'<details class="fold" data-fold="{escape(ext["project"])}">'
+                f'<summary>{len(decided)} decided</summary>'
+                f'{"".join(decided)}</details>') if decided else ""
         count = f'<span class="badge">{len(rows_src)} session{"s" if len(rows_src) != 1 else ""}</span>'
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(ext["project"])}</span>{count}</h2>'
-                   f'{byline}{"".join(rows)}</section>')
+                   f'{byline}{"".join(rows)}{fold}</section>')
     orphans = orphan_surfaces(snap)
     tasks = [sf for sf in orphans if sf.get("kind") == "task"]
     orphans = [sf for sf in orphans if sf.get("kind") != "task"]
@@ -582,8 +621,15 @@ def render_fleet(snap: dict, now: float | None = None,
     if tasks:
         # a dialogue task's page is its whole deliverable — a row reading just
         # "task" with no identity was noise, not a link worth clicking
+        live = [sf for sf in tasks if "DECIDED" not in str(sf.get("title") or "")]
+        done = [sf for sf in tasks if sf not in live]
         rows = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
-                                     or "task")) for sf in tasks)
+                                     or "task")) for sf in live)
+        if done:
+            inner = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
+                                          or "task")) for sf in done)
+            rows += (f'<details class="fold" data-fold="tasks">'
+                     f'<summary>{len(done)} decided</summary>{inner}</details>')
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">tasks</span></h2>{rows}</section>')
     if orphans:
@@ -625,6 +671,8 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<div class="row">'
         '<input type="text" name="cwd" placeholder="working directory (optional)">'
         '<button type="submit">Dispatch</button></div></form></section>'
+        '<input id="filter" type="search" '
+        'placeholder="filter surfaces — title, project, state…">'
         f'<div id="fleet">{render_fleet(snap, now, statuses=statuses)}</div>'
         '<footer>Auto-refreshes every 5 s · '
         '<a href="/index.html">legacy dashboard</a></footer>'

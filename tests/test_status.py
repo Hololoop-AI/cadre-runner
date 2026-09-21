@@ -548,3 +548,25 @@ def test_decided_title_overrides_presence_badge():
                 "last_agent_reply_at": "2026-09-20T00:00:00Z"}})
     assert "decided — nothing needs you" in html
     assert "your turn" not in html
+
+
+def test_decided_surfaces_fold_and_active_ones_stay_in_the_scan():
+    """The fleet was becoming every decision ever made: settled surfaces never
+    leave. Decided rows collapse into a per-project fold; active rows render
+    outside it; the filter input ships on the page."""
+    snap = {"stories": {}, "tasks": {}, "surfaces": [
+        {"path": "/session/aaa", "title": "framework choice (DECIDED: axum)",
+         "project": "hitl", "kind": "external", "role": "discussion",
+         "artifact": "", "opened": 1789900000.0},
+        {"path": "/session/bbb", "title": "workspace organization",
+         "project": "hitl", "kind": "external", "role": "discussion",
+         "artifact": "", "opened": 1789900000.0},
+    ]}
+    from statusd import render_fleet, render_home
+    html = render_fleet(snap, now=0)
+    fold = html[html.index('<details class="fold"'):html.index('</details>')]
+    assert "1 decided" in fold and "DECIDED: axum" in fold
+    assert "workspace organization" not in fold          # active row outside
+    assert "workspace organization" in html
+    page = render_home(snap, now=0)
+    assert 'id="filter"' in page and "applyFilter" in page
