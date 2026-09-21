@@ -54,12 +54,15 @@ def key_for(task_id: str) -> str:
 
 
 def new_id(title: str, now: float | None = None) -> str:
-    """`task-<slug>-<HHMMSS>`. Readable in a log line and unique per second —
-    the key is what the whole dialogue hangs off, so it must never collide with
-    a task submitted earlier today."""
+    """`task-<slug>-<HHMMSS>-<suffix>`. Readable in a log line and unique even
+    when several tasks with the same opening words are submitted in the same
+    second — five batch dispatches collided on slug+second once, and the board
+    key is what the whole dialogue hangs off, so the id carries real entropy."""
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now or time.time()))
+    suffix = uuid.uuid4().hex[:6]
     slug = slugify(title)[:24].strip("-")
-    return f"task-{slug}-{stamp}" if slug else f"task-{stamp}"
+    base = f"task-{slug}-{stamp}" if slug else f"task-{stamp}"
+    return f"{base}-{suffix}"
 
 
 # --------------------------------------------------------------------------- node

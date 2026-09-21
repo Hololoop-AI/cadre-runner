@@ -1224,3 +1224,10 @@ def test_seed_command_uses_only_flags_the_claude_cli_accepts():
              if tok.startswith("-") and not tok.startswith("{")}
     assert flags <= allowed, f"unknown claude flags in seed command: {flags - allowed}"
     assert "--story" not in cmd
+
+
+def test_task_ids_do_not_collide_within_one_second():
+    from runnerlib import tasks
+    ids = {tasks.new_id("you own this design disc", now=1789000000.0)
+           for _ in range(50)}
+    assert len(ids) == 50
