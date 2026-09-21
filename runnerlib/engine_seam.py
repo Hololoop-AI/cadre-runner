@@ -39,7 +39,7 @@ import os
 import time
 from pathlib import Path
 
-from . import engine, seed_nodes
+from . import claude_run, engine, seed_nodes
 from .blackboard import Board
 from .nodes import Nodes
 
@@ -332,6 +332,12 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         # daemon happens to be — refuse it here rather than find out from the
         # session's transcript.
         raise RuntimeError(f"task {task_id}: cwd {cwd!r} is not an absolute path")
+    try:
+        linked = claude_run.install_task_skills(cwd, cfg.skills_source)
+        if linked:
+            log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
+    except Exception as e:
+        log(f"engine: task skill install failed for {cwd}: {e}")
     session_id, resume = tasks.session_for(
         reg, task_id, payload.get("resume") == "session")
     action = {

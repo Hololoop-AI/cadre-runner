@@ -23,6 +23,36 @@ PIPELINE_SKILLS = [
 ]
 
 
+# Skills a task dialogue's session invokes by name (prompts/task.md says
+# "invoke the auto-surface skill"). Dialogues run in whatever directory the ask
+# names — none of the checkout preparation above happens for them, so a page
+# written without this skill drops the whole authoring contract (the driver
+# reported a round that lost the decided layer this way).
+TASK_SKILLS = ["auto-surface"]
+
+
+def install_task_skills(cwd, skills_source) -> list[str]:
+    """Best-effort symlink of TASK_SKILLS into `<cwd>/.claude/skills`.
+
+    Unlike `install_skills` this never raises and never touches git config —
+    the cwd is the driver's own directory, not a checkout the runner owns."""
+    linked = []
+    for name in TASK_SKILLS:
+        src = Path(skills_source).expanduser() / name
+        if not src.is_dir():
+            continue
+        dest = Path(cwd) / ".claude" / "skills"
+        dest.mkdir(parents=True, exist_ok=True)
+        link = dest / name
+        if link.is_symlink() and not link.exists():
+            link.unlink()          # source tree moved; re-link below
+        elif link.is_symlink() or link.exists():
+            continue
+        link.symlink_to(src)
+        linked.append(name)
+    return linked
+
+
 def sh(args, cwd=None, check=True, capture=True):
     return subprocess.run(args, cwd=cwd, check=check, text=True,
                           capture_output=capture)

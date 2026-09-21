@@ -89,6 +89,28 @@ def test_missing_skills_fail_loudly_by_default_and_are_survivable_by_config():
     assert (checkout / ".claude" / "skills" / linked[0]).is_symlink()
 
 
+def test_task_dialogues_get_their_skills_in_any_cwd():
+    """A dialogue runs in whatever directory the ask names — no checkout
+    preparation happens for it, so the skills its prompt invokes by name must
+    be linked there at spawn. A round written without auto-surface silently
+    drops the whole authoring contract (decided layer included)."""
+    source = scratch()
+    for name in claude_run.TASK_SKILLS:
+        (source / name).mkdir(parents=True)
+    cwd = scratch() / "some-project"          # NOT a git repo — must still work
+    cwd.mkdir()
+
+    linked = claude_run.install_task_skills(cwd, source)
+    assert linked == claude_run.TASK_SKILLS
+    for name in claude_run.TASK_SKILLS:
+        assert (cwd / ".claude" / "skills" / name).is_symlink()
+
+    # idempotent: a second spawn links nothing and raises nothing
+    assert claude_run.install_task_skills(cwd, source) == []
+    # a missing source is a no-op, never an error in the spawn path
+    assert claude_run.install_task_skills(cwd, scratch() / "gone") == []
+
+
 # --------------------------------------------------------------------------- hosts and paths
 
 
