@@ -549,8 +549,17 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
     if approve:
         tasks_mod.write_verdict(cfg, task_id, "approve")
         if notes:
+            # The dialogue is closed, so no session will read these — but the
+            # driver wrote them, so they are kept verbatim where the task's
+            # logs live, not just truncated into a log line.
+            kept = Path(cfg.data_dir) / "logs" / task_id / "closing-annotations.json"
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_text(json.dumps(
+                [{"text": n.get("text") or "", "prompt": n.get("prompt") or ""}
+                 for n in notes], indent=1))
             log(f"surface: {task_id} approved with {len(notes)} annotation(s) "
-                f"alongside — the dialogue is closed, they start no new turn: "
+                f"alongside — the dialogue is closed, they start no new turn; "
+                f"kept in full at {kept}: "
                 + " | ".join((n.get("text") or "")[:120] for n in notes))
         log(f"surface: {task_id} approved via surface — dialogue closed")
         end_session(cfg, path, log)

@@ -607,6 +607,26 @@ def test_a_continue_verdict_is_a_feedback_turn_and_approve_ends_the_dialogue():
     assert spawns == [] and [f["outcome"] for f in firings] == ["fired"]
 
 
+def test_approve_with_annotations_keeps_them_in_full_on_disk():
+    """Approve closes the dialogue and the notes ride along — they must land
+    verbatim in the task's log dir, not only truncated into a log line."""
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
+    long_note = "styling thread: " + "x" * 300
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, None, lambda *a: None,
+                             str(d / "task-task-demo.html"), meta, poll_json(
+            note(long_note, "Styling"),
+            note("CADRE_DECISION gate=task story=task-demo task=task-demo "
+                 "verdict=approve")))
+    kept = Path(cfg.data_dir) / "logs" / "task-demo" / "closing-annotations.json"
+    assert kept.exists()
+    saved = json.loads(kept.read_text())
+    assert any(long_note in (r.get("text") or "") + (r.get("prompt") or "")
+               for r in saved)
+
+
 def test_the_bridge_never_touches_a_surface_it_does_not_own():
     """Scope: one session kind. A pipeline surface keeps mirroring to its PR
     and writing `surface_feedback`, and writes NOTHING on the tasks topic."""

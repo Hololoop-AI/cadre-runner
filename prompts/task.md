@@ -83,6 +83,15 @@ a page the driver cannot rule on.
 The driver may be someone who never saw the ask dispatched. Sections 1, 2 and
 the verdict form are mandatory at any size; the rest scale with stakes.
 
+The reading budget is the hard constraint: the driver's time reading this
+page IS the cost of the round, and a small change earns a small page — a
+one-line fix gets one screen, and padding it to look thorough makes the work
+read as slower than hand-coding it. Two rules keep small pages readable:
+when you mention a file, a change, or an earlier decision, restate in one
+plain sentence what it is and does — a bare filename or a compressed
+LLM-style reference forces the driver to go reconstruct your context from
+memory; and say each thing once, in words a person skimming can follow.
+
 1. **Orientation** — the ask restated in full; what kind of decision this is;
    how reversible it is; what happens on each possible response, including
    doing nothing. The header says **Round $iteration of $max_rounds** and what
