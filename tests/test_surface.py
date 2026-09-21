@@ -249,3 +249,27 @@ class TemplateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_open_session_prefers_the_quiet_http_path(tmp_path, monkeypatch):
+    """The daemon must not pop a browser tab for every surface it opens: the
+    running server gets a plain POST, and the CLI (which opens a tab) is only
+    the cold-start fallback."""
+    from runnerlib import surface as sf
+    calls = {"cli": 0, "http": 0}
+    monkeypatch.setattr(sf, "_create_session_quietly",
+                        lambda p: (calls.__setitem__("http", calls["http"] + 1)
+                                   or "/session/abc123"))
+    monkeypatch.setattr(sf, "_run_cli",
+                        lambda a, timeout=25: (calls.__setitem__("cli", calls["cli"] + 1)
+                                               or 'url: "http://x/session/zzz"'))
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **k: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    art = tmp_path / "page.html"
+    art.write_text("<!doctype html>")
+    sf.open_session(Cfg(), art, "task", lambda *a: None)
+    assert calls == {"http": 1, "cli": 0}
+    sess = sf.sessions(Cfg())
+    assert sess[str(art)]["key"] == "abc123"

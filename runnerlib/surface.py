@@ -261,14 +261,32 @@ def _run_cli(args: list[str], timeout: int = 25) -> str:
     return (r.stdout or "") + (r.stderr or "")
 
 
+def _create_session_quietly(path: Path) -> str:
+    """POST the artifact straight to the running server and return the session
+    URL path. No browser tab: the daemon works in the background, and the
+    driver arrives from the fleet page when they choose — a tab stealing focus
+    for every finished round was the complaint that made this the default.
+    Raises when the server isn't up; the caller falls back to the CLI, which
+    spawns the server (and does open a tab — the cold-start case only)."""
+    import urllib.request
+    req = urllib.request.Request(
+        upstream() + "/api/sessions", method="POST",
+        data=json.dumps({"file": str(path)}).encode(),
+        headers={"content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        url = json.loads(r.read()).get("url") or ""
+    return re.sub(r"^https?://[^/]+", "", url)
+
+
 def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
     """Open (or resume) the artifact and record the session. Never raises."""
     try:
-        out = _run_cli([str(path)])
-        m = re.search(r'url: "([^"]+)"', out)
-        url_path = ""
-        if m:
-            url_path = re.sub(r"^https?://[^/]+", "", m.group(1))
+        try:
+            url_path = _create_session_quietly(path)
+        except Exception:
+            out = _run_cli([str(path)])
+            m = re.search(r'url: "([^"]+)"', out)
+            url_path = re.sub(r"^https?://[^/]+", "", m.group(1)) if m else ""
         key = url_path.rsplit("/", 1)[-1] if url_path else ""
         s = sessions(cfg)
         s[str(path)] = {"kind": kind, "path": url_path, "key": key, "open": True,
