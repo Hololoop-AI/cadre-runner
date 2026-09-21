@@ -1350,7 +1350,7 @@ def cmd_surface(cfg, args):
         if path is not None and not path.exists():
             print(f"no such artifact: {path}"); return
         surface_mod.register_external(cfg, path, args.project, args.s_title,
-                                      role=args.role, log=log)
+                                      role=args.role, cwd=args.s_cwd, log=log)
         return
     if args.action == "hold":
         if not (args.story and args.pr):
@@ -1498,6 +1498,9 @@ def main():
                                   "page-less row, e.g. a terminal session)")
     p.add_argument("--project", help="register: hierarchy group on the fleet page")
     p.add_argument("--role", default="", help="register: e.g. orchestrator, discussion")
+    p.add_argument("--cwd", dest="s_cwd", default="",
+                   help="register: make the row a dispatch target — clicking it "
+                        "on the fleet prefills the task box with this directory")
 
     args = ap.parse_args()
     cfg = config_mod.load(args.config)

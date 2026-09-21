@@ -792,12 +792,13 @@ def status_list(cfg) -> list[dict]:
                         "path": meta.get("path"), "opened": meta.get("opened"),
                         "project": meta.get("project"), "title": meta.get("title"),
                         "role": meta.get("role"), "task": meta.get("task"),
+                        "cwd": meta.get("cwd"),
                         "artifact": path if str(path).startswith("/") else ""})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
 
 
 def register_external(cfg, path: Path | None, project: str, title: str,
-                      role: str = "", log=print) -> None:
+                      role: str = "", cwd: str = "", log=print) -> None:
     """Record a session the runner did NOT spawn — an orchestrator terminal
     session, a design discussion already open on Review Surface — so the fleet
     page shows it under its project instead of the driver holding the URLs in
@@ -810,11 +811,15 @@ def register_external(cfg, path: Path | None, project: str, title: str,
         # way as runner-spawned sessions; kind "external" keeps every consumer
         # (bridge, reaper) from mistaking it for a session it owns
         open_session(cfg, path, "external", log,
-                     project=project, title=title, role=role)
+                     project=project, title=title, role=role, cwd=cwd)
         return
     s = sessions(cfg)
     s[f"external:{project}:{title}"] = {
         "kind": "external", "path": "", "key": "", "open": True,
-        "opened": time.time(), "project": project, "title": title, "role": role}
+        "opened": time.time(), "project": project, "title": title, "role": role,
+        # A pathless row with a cwd is a DISPATCH TARGET: the fleet renders it
+        # clickable and clicking prefills the task box's working directory —
+        # a bare presence row the driver cannot click reads as broken.
+        "cwd": cwd}
     _save_sessions(cfg, s)
     log(f"surface: registered external session {project}/{title}")

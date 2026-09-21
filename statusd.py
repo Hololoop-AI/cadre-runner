@@ -431,6 +431,11 @@ a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
+.story.dispatch{cursor:pointer;border-radius:8px;padding:.55rem .5rem;margin:0 -.5rem;
+ transition:background .15s ease}
+.story.dispatch:hover,.story.dispatch:focus-visible{background:var(--soft)}
+.story.dispatch .go{color:var(--accent);font-size:.78rem;font-family:var(--mono);
+ margin-left:auto}
 details.fold{margin-top:.35rem}
 details.fold summary{cursor:pointer;color:var(--label);font-family:var(--mono);
  font-size:.74rem;padding:.35rem 0;list-style:none}
@@ -464,6 +469,24 @@ _POLL_JS = """
  }
  var f=document.getElementById('filter');
  if(f)f.addEventListener('input',applyFilter);
+ // Dispatch-target rows: click (or Enter) prefills the task box's cwd.
+ // Delegated on document so it survives every partial swap.
+ function dispatchTo(el){
+  var form=document.querySelector('form.newtask');if(!form)return;
+  var cwd=form.querySelector('input[name=cwd]'),txt=form.querySelector('textarea');
+  if(cwd)cwd.value=el.dataset.cwd||'';
+  form.scrollIntoView({behavior:'smooth',block:'center'});
+  if(txt)txt.focus();
+ }
+ document.addEventListener('click',function(e){
+  var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
+  if(r)dispatchTo(r);
+ });
+ document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter')return;
+  var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
+  if(r)dispatchTo(r);
+ });
  setInterval(function(){
   var a=document.activeElement;
   if(a&&a.closest&&a.closest('form.newtask'))return;   // never eat a half-typed task
@@ -592,6 +615,15 @@ def render_fleet(snap: dict, now: float | None = None,
                        f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
                        f'<span class="go">open →</span></a>'
                        f'{_history_link(sf)}</div>')
+            elif sf.get("cwd"):
+                # A dispatch target: clicking prefills the task box's cwd.
+                # A row that shows up as a "session" but responds to nothing
+                # reads as broken — every pathless row needs a reason to exist.
+                row = (f'<div class="story dispatch" role="button" tabindex="0" '
+                       f'data-cwd="{escape(str(sf["cwd"]))}"><div class="line">'
+                       f'<span class="title">{title}</span>{role}{when}'
+                       f'<span class="go">new task →</span>'
+                       f'</div></div>')
             else:
                 row = (f'<div class="story"><div class="line">'
                        f'<span class="title">{title}</span>{role}{when}'

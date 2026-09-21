@@ -570,3 +570,20 @@ def test_decided_surfaces_fold_and_active_ones_stay_in_the_scan():
     assert "workspace organization" in html
     page = render_home(snap, now=0)
     assert 'id="filter"' in page and "applyFilter" in page
+
+
+def test_registered_checkout_rows_are_dispatch_targets():
+    """A pathless project row used to render as an inert 'session' the driver
+    could not click (reported as broken). With a cwd it becomes a dispatch
+    target: clickable, carrying the directory the task box should prefill."""
+    snap = {"stories": {}, "tasks": {}, "surfaces": [
+        {"path": "", "title": "code checkout", "project": "cadre",
+         "kind": "external", "role": "checkout",
+         "cwd": "/home/x/Projects/cadre/cadre",
+         "artifact": "", "opened": 1789900000.0},
+    ]}
+    from statusd import render_fleet, render_home
+    html = render_fleet(snap, now=0)
+    assert 'data-cwd="/home/x/Projects/cadre/cadre"' in html
+    assert 'class="story dispatch"' in html and 'new task' in html
+    assert "dispatchTo" in render_home(snap, now=0)
