@@ -587,3 +587,73 @@ def test_registered_checkout_rows_are_dispatch_targets():
     assert 'data-cwd="/home/x/Projects/cadre/cadre"' in html
     assert 'class="story dispatch"' in html and 'new task' in html
     assert "dispatchTo" in render_home(snap, now=0)
+
+
+def test_stranded_rows_carry_a_loud_badge_and_the_dead_letter_link():
+    """The strand must be visible the moment it happens: a needs-class badge
+    on the row, one link per dead-lettered batch — and never folded away with
+    the decided surfaces, because hiding the alarm defeats it."""
+    snap = {"stories": {}, "tasks": {}, "surfaces": [
+        {"path": "/session/d7", "title": "workspace organization",
+         "project": "hitl", "kind": "external", "artifact": "", "opened": 100.0,
+         "stranded": ["20260921-1-a.json", "20260921-2-a.json"]},
+        {"path": "/session/d8", "title": "report anatomy (DECIDED: adopted)",
+         "project": "hitl", "kind": "external", "artifact": "", "opened": 100.0,
+         "stranded": ["20260921-3-b.json"]},
+        {"path": "/session/t1", "title": "", "task": "task-x", "kind": "task",
+         "artifact": "", "opened": 100.0, "stranded": ["20260921-4-c.json"]},
+    ]}
+    html = statusd.render_fleet(snap, now=200.0, statuses={
+        "d7": {"status": "open", "pending_prompts": 0, "presence": "waiting"}})
+    assert html.count('class="badge needs">stranded — feedback reached no one') == 3
+    assert "(2)" in html
+    for n in ("20260921-1-a.json", "20260921-2-a.json", "20260921-3-b.json",
+              "20260921-4-c.json"):
+        assert f'href="/stranded/{n}"' in html
+    # the decided-but-stranded row stays in the scan, badge instead of "decided"
+    assert '<details class="fold"' not in html
+    assert "decided — nothing needs you" not in html
+
+
+def test_a_stranded_story_surface_ranks_the_story_as_needing_you():
+    story = {"slug": "nex-9", "repo": "o/r", "status": "active", "phase": "slices",
+             "surfaces": [{"kind": "notice", "path": "/session/n1",
+                           "stranded": ["20260921-5-n.json"]}]}
+    snap = {"stories": [story]}
+    assert statusd.classify(snap, story) == (statusd.RANK_NEEDS_HUMAN,
+                                             "feedback stranded")
+    html = statusd.render_fleet(snap, now=0)
+    assert 'href="/stranded/20260921-5-n.json"' in html
+
+
+def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
+    with tempfile.TemporaryDirectory() as root:
+        _fleet_snapshot(root)
+        sdir = Path(root) / "surfaces" / "stranded"
+        sdir.mkdir(parents=True)
+        long_answer = "keep the fold per project " + "y" * 2500
+        (sdir / "20260921-1-d7.json").write_text(json.dumps({
+            "at": 0, "artifact": "/x/hitl-d7.html",
+            "reason": "external session with no task id and no PR to mirror to",
+            "session": {"title": "d7 — workspace", "path": "/session/d7"},
+            "prompts": [{"prompt": long_answer, "tag": "p", "text": "Which grouping?"}],
+            "raw": '{"prompts": []}'}))
+        (Path(root) / "secret.json").write_text("{}")
+        keep = statusd.STRANDED_DIR
+        statusd.STRANDED_DIR = sdir
+        srv = _Server(Path(root) / "status")
+        try:
+            code, body = srv.get("/stranded/20260921-1-d7.json")
+            assert code == 200 and long_answer in body       # nothing truncated
+            assert "Which grouping?" in body and "no PR to mirror to" in body
+            assert 'href="/session/d7"' in body
+            for bad in ("/stranded/..%2Fsecret.json", "/stranded/nope.json",
+                        "/stranded/.hidden.json", "/stranded/x.txt"):
+                try:
+                    srv.get(bad)
+                    assert False, bad
+                except urllib.error.HTTPError as e:
+                    assert e.code == 404, bad
+        finally:
+            srv.close()
+            statusd.STRANDED_DIR = keep

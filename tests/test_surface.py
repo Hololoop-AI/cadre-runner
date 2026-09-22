@@ -5,6 +5,7 @@ exists so that class of bug cannot recur."""
 
 import json
 import unittest
+from pathlib import Path
 
 from runnerlib import dispatcher, surface
 from runnerlib.surface import _classify_prompts, _parse_feedback
@@ -273,3 +274,201 @@ def test_open_session_prefers_the_quiet_http_path(tmp_path, monkeypatch):
     assert calls == {"http": 1, "cli": 0}
     sess = sf.sessions(Cfg())
     assert sess[str(art)]["key"] == "abc123"
+
+
+# ------------------------------------------------------------ stranded guard
+
+def _strand_consume(tmp_path, monkeypatch, meta, prompts, status="feedback"):
+    """One consume pass on a registered session; returns (events, cfg)."""
+    from runnerlib import surface as sf
+    events = []
+    monkeypatch.setattr(sf.board_events, "emit",
+                        lambda kind, **kw: events.append((kind, kw)))
+    monkeypatch.setattr(sf, "_run_cli",
+                        lambda *a, **kw: poll_line(status, prompts))
+
+    class Cfg:
+        data_dir = tmp_path
+    art = tmp_path / "hitl-d7-workspace.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(Cfg(), {str(art): {"open": True, **meta}})
+    sf._consume(Cfg(), None, None, lambda m: None, str(art), meta)
+    return events, Cfg(), str(art)
+
+
+def test_feedback_with_no_task_and_no_pr_is_dead_lettered_verbatim(tmp_path, monkeypatch):
+    """The black-hole page (three discussion pages, 2026-09): an external
+    session with no task and no PR had its feedback consumed into board events
+    nobody reads. The whole batch must land verbatim in a dead-letter file and
+    a board event must name that file."""
+    prompts = [{"uid": "4", "prompt": "Option B, but keep the fold per project",
+                "tag": "p", "text": "Which grouping?"},
+               {"uid": "", "prompt": "and a second, longer answer " + "x" * 3000}]
+    events, cfg, art = _strand_consume(
+        tmp_path, monkeypatch, {"kind": "external", "project": "hitl",
+                                "title": "d7 — workspace"}, prompts)
+    from runnerlib import surface as sf
+    stranded = [kw for k, kw in events if k == "surface_stranded"]
+    assert len(stranded) == 1
+    dead = Path(stranded[0]["dead_letter"])
+    assert dead.parent == sf.stranded_dir(cfg) and dead.exists()
+    rec = json.loads(dead.read_text())
+    assert rec["prompts"] == prompts          # verbatim — the 3000-char tail too
+    assert rec["artifact"] == art and "no PR" in rec["reason"]
+    assert rec["raw"].startswith("{")
+    # the existing board record still fires; the guard adds, never replaces
+    assert "surface_feedback" in [k for k, _ in events]
+    # and the fleet can see it
+    row = sf.status_list(cfg)[0]
+    assert row["stranded"] == [dead.name]
+
+
+def test_routed_feedback_is_not_stranded(tmp_path, monkeypatch):
+    """A PR-mirrored page and a token-only batch both have an owner."""
+    from runnerlib import surface as sf
+
+    class GH:
+        def comment(self, *a):
+            pass
+    events = []
+    monkeypatch.setattr(sf.board_events, "emit",
+                        lambda kind, **kw: events.append(kind))
+    monkeypatch.setattr(sf, "_run_cli", lambda *a, **kw: poll_line(
+        "feedback", [{"prompt": "narrow this"}]))
+
+    class Cfg:
+        data_dir = tmp_path
+    sf._consume(Cfg(), None, GH(), lambda m: None, str(tmp_path / "a.html"),
+                {"kind": "spec_review", "story": "s", "pr": 3, "repo": "o/r"})
+    assert "surface_stranded" not in events
+    assert not sf.stranded_dir(Cfg()).exists() or not any(sf.stranded_dir(Cfg()).iterdir())
+
+    # decision/answer tokens carry their own routing, so no strand either
+    assert sf._strand_reason({"kind": "ask"}, []) == ""
+    assert sf._strand_reason({"kind": "external"}, [{"text": "  "}]) == ""
+
+
+def test_task_pages_strand_only_without_a_task_id():
+    from runnerlib import surface as sf
+    assert sf._strand_reason({"kind": "task", "task": "t-1"}, [{"text": "x"}]) == ""
+    assert "no task id" in sf._strand_reason({"kind": "task"}, [])
+    # a notice has a story but nothing mirrors its notes — the ask's rule
+    # (no task id, no PR) calls that stranded too
+    assert sf._strand_reason({"kind": "notice", "story": "s"}, [{"text": "x"}])
+
+
+def test_strand_outlives_the_session_until_the_file_is_removed(tmp_path, monkeypatch):
+    """'Send & End' is how a final batch gets stranded: the session closes in
+    the same poll. The badge must survive that, and deleting the dead letter
+    (the driver has routed it) is what clears it — no new state anywhere."""
+    events, cfg, art = _strand_consume(
+        tmp_path, monkeypatch, {"kind": "external", "project": "hitl"},
+        [{"prompt": "last word"}], status="ended")
+    from runnerlib import surface as sf
+    assert sf.sessions(cfg)[art]["open"] is False
+    rows = sf.status_list(cfg)
+    assert len(rows) == 1 and rows[0]["stranded"]
+    (sf.stranded_dir(cfg) / rows[0]["stranded"][0]).unlink()
+    assert sf.status_list(cfg) == []
+
+
+def test_dead_letter_write_failure_never_raises(tmp_path, monkeypatch):
+    from runnerlib import surface as sf
+    monkeypatch.setattr(sf, "stranded_dir", lambda cfg: (_ for _ in ()).throw(OSError("ro")))
+    logs = []
+
+    class Cfg:
+        data_dir = tmp_path
+    assert sf._dead_letter(Cfg(), logs.append, "/x/a.html", {}, "{}", {}, "r") is None
+    assert "dead-letter write failed" in logs[0]
+
+
+# ------------------------------------------------------- adoption of orphans
+
+def _adopt_run(tmp_path, monkeypatch, meta, status, prompts, submit=None):
+    """One tick-time adoption pass over a single registered session."""
+    from runnerlib import surface as sf
+    from runnerlib import tasks as tasks_mod
+    events, submitted = [], []
+    monkeypatch.setattr(sf.board_events, "emit",
+                        lambda kind, **kw: events.append((kind, kw)))
+    monkeypatch.setattr(sf, "agent_status", lambda key: status)
+    monkeypatch.setattr(sf, "_run_cli", lambda *a, **kw: poll_line("feedback", prompts))
+    monkeypatch.setattr(tasks_mod, "submit_task", submit or (
+        lambda cfg, text, cwd=None, title=None:
+        (submitted.append({"text": text, "cwd": cwd}) or "task-adopted-1")))
+
+    class Reg:
+        data = {"stories": {}}
+        saved = False
+
+        def save(self):
+            Reg.saved = True
+
+    class Cfg:
+        data_dir = tmp_path
+    art = tmp_path / "hitl-d1-topology.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(Cfg(), {str(art): {"open": True, "key": "abc", **meta}})
+    sf._adopt_unowned(Cfg(), Reg(), lambda m: None, sf.sessions(Cfg()))
+    return events, submitted, Cfg(), str(art), Reg
+
+
+def test_queued_feedback_with_no_listener_gets_a_dialogue_automatically(tmp_path, monkeypatch):
+    """The driver's rule: the system recognises this itself. A page registered
+    presence-only collects answers no loop is waiting for — 'queued, no agent
+    listening'. The daemon must consume that batch once and dispatch a
+    dialogue that owns the page from then on, with no human routing it."""
+    events, submitted, cfg, art, Reg = _adopt_run(
+        tmp_path, monkeypatch,
+        {"kind": "external", "project": "hitl", "title": "d1 — topology"},
+        {"status": "open", "presence": "waiting", "pending_prompts": 2},
+        [{"uid": "1", "prompt": "Option B — own store", "tag": "choice",
+          "text": "Where does state live?"},
+         {"uid": "2", "prompt": "and ship the thin signals first"}])
+    from runnerlib import surface as sf
+
+    assert len(submitted) == 1
+    ask = submitted[0]["text"]
+    assert art in ask                       # the page it must rewrite in place
+    assert "Option B — own store" in ask    # the driver's words travel with it
+    assert "ship the thin signals first" in ask
+    assert "Where does state live?" in ask  # ...under what they were attached to
+    assert submitted[0]["cwd"] == str(tmp_path)
+
+    row = sf.sessions(cfg)[art]
+    assert row["kind"] == "task" and row["task"] == "task-adopted-1"
+    assert Reg.saved                        # page ownership survives a restart
+    assert [kw for k, kw in events if k == "surface_adopted"]
+
+
+def test_adoption_leaves_owned_and_quiet_sessions_alone(tmp_path, monkeypatch):
+    """Polling consumes, so adoption must fire ONLY on the stranded state: a
+    page someone owns, or one with nothing queued, must never be touched."""
+    for meta, status in (
+            ({"kind": "task", "task": "t-1"},
+             {"status": "open", "presence": "waiting", "pending_prompts": 3}),
+            ({"kind": "external"},
+             {"status": "open", "presence": "working", "pending_prompts": 1}),
+            ({"kind": "external"},
+             {"status": "open", "presence": "waiting", "pending_prompts": 0}),
+            ({"kind": "external"}, {"status": "ended", "pending_prompts": 4}),
+            ({"kind": "external"}, None)):          # server unreachable
+        _, submitted, _, _, _ = _adopt_run(
+            tmp_path, monkeypatch, meta, status, [{"prompt": "hi"}])
+        assert submitted == [], (meta, status)
+
+
+def test_a_consumed_batch_is_never_lost_when_dispatch_fails(tmp_path, monkeypatch):
+    """Adoption consumes before it dispatches. If the dispatch then fails, the
+    driver's words must land in the dead-letter file rather than evaporate."""
+    def boom(*a, **kw):
+        raise RuntimeError("board down")
+
+    events, submitted, cfg, art, _ = _adopt_run(
+        tmp_path, monkeypatch, {"kind": "external"},
+        {"status": "open", "presence": "waiting", "pending_prompts": 1},
+        [{"prompt": "my answer"}], submit=boom)
+    strand = [kw for k, kw in events if k == "surface_stranded"]
+    assert strand and "adoption dispatch failed" in strand[0]["reason"]
+    assert "my answer" in Path(strand[0]["dead_letter"]).read_text()

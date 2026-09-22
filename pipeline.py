@@ -793,14 +793,17 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         _reap_runs(cfg, reg, ghc, slug, story)
 
 
-def surface_out(cfg, stage, slug, pr=None) -> Path | None:
+def surface_out(cfg, stage, slug, pr=None, page=None) -> Path | None:
     """Where THIS stage's session writes the driver's page, or None when the
     stage authors none. One page per touchpoint, rewritten in place every round
     (the session authors the briefing — never a PR copy; driver decision
     2026-08-27)."""
     d = surface_mod._dir(cfg)
     if stage == tasks_mod.NODE:
-        return d / f"task-{slug}.html"          # workflow #3: one page per task
+        # An adopted dialogue takes over the page it adopted: that page is the
+        # driver's bookmark, and authoring a second one for the same
+        # conversation would put two rows on the fleet for one thread.
+        return Path(page) if page else d / f"task-{slug}.html"
     if stage in SPEC_STAGES:
         return d / f"spec-{slug}.html"
     if stage == "assembly":
@@ -810,8 +813,8 @@ def surface_out(cfg, stage, slug, pr=None) -> Path | None:
     return None
 
 
-def _surface_env(cfg, stage, slug, pr=None) -> dict:
-    path = surface_out(cfg, stage, slug, pr)
+def _surface_env(cfg, stage, slug, pr=None, page=None) -> dict:
+    path = surface_out(cfg, stage, slug, pr, page)
     return {"CADRE_SURFACE_OUT": str(path)} if path else {}
 
 
@@ -865,7 +868,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
                                     "CADRE_RUN_ID": rid,
-                                    **_surface_env(cfg, stage, task_id)})
+                                    **_surface_env(cfg, stage, task_id,
+                                                   page=rec.get("page"))})
     active[rid] = {
         "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
         "repo": "", "branch": "", "model": model, "effort": effort,
@@ -906,7 +910,7 @@ def _reap_tasks(cfg, reg):
             rec["last_result"] = (result or "")[:500]
             log(f"{task_id}: turn {run.get('iteration')} "
                 f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
-            art = surface_out(cfg, run["stage"], task_id)
+            art = surface_out(cfg, run["stage"], task_id, page=rec.get("page"))
             if ok and art and art.exists() and surface_mod.available():
                 # `task` is the meta the feedback bridge scopes on: only a
                 # session opened here is a dialogue turn's page.

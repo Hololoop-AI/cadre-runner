@@ -28,6 +28,7 @@ works through the proxy.
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -67,6 +68,10 @@ def _runner(key):
 STATUS_DIR = Path(os.environ.get("CADRE_STATUS_DIR") or
                   (_CFG.data_dir / "status" if _CFG
                    else Path(os.path.expanduser(_DEFAULTS["data_dir"])) / "status"))
+# Where the daemon dead-letters feedback batches nothing routed (surface.py
+# `_dead_letter`). Same data dir as the status snapshot, by the same rule.
+STRANDED_DIR = (_CFG.data_dir if _CFG else
+                Path(os.path.expanduser(_DEFAULTS["data_dir"]))) / "surfaces" / "stranded"
 SURFACE = surface_mod.upstream()
 BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
@@ -151,6 +156,8 @@ def classify(snap: dict, story: dict) -> tuple[int, str]:
     escalation or an open verdict outranks 'done', which outranks running."""
     if story.get("status") == "escalated":
         return RANK_NEEDS_HUMAN, "escalated"
+    if any(sf.get("stranded") for sf in (story.get("surfaces") or [])):
+        return RANK_NEEDS_HUMAN, "feedback stranded"
     open_kinds = [sf.get("kind") for sf in (story.get("surfaces") or [])]
     waiting = [k for k in open_kinds if k in VERDICT_KINDS]
     if waiting:
@@ -197,7 +204,8 @@ def story_view(snap: dict, story: dict) -> dict:
         "runs": [{"stage": r.get("stage") or "stage", "slice": r.get("slice"),
                   "pr": r.get("pr"), "started": r.get("started")} for r in runs],
         "surfaces": [{"kind": sf.get("kind") or "surface", "path": sf.get("path") or "",
-                      "pr": sf.get("pr"), "opened": sf.get("opened")}
+                      "pr": sf.get("pr"), "opened": sf.get("opened"),
+                      "stranded": sf.get("stranded") or []}
                      for sf in (story.get("surfaces") or [])],
         "questions": _questions_for(snap, story),
         "prs": _pr_links(story),
@@ -276,6 +284,75 @@ def _iso_epoch(iso: str | None) -> float:
         return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
     except Exception:
         return 0.0
+
+
+def stranded_badge(sf: dict) -> str:
+    """The black-hole alarm: the daemon consumed this page's feedback and
+    nothing routed it. Loud on purpose — it outranks every other state on the
+    row, DECIDED included, because the driver's words are sitting in a file
+    nobody reads. One link per dead-lettered batch, newest first."""
+    names = list(sf.get("stranded") or [])
+    if not names:
+        return ""
+    links = "".join(f'<a class="hist" href="/stranded/{escape(n)}">'
+                    f'dead letter {i}</a>'
+                    for i, n in zip(range(len(names), 0, -1), reversed(names)))
+    return (f'<span class="badge needs">stranded — feedback reached no one'
+            f'{f" ({len(names)})" if len(names) > 1 else ""}</span>{links}')
+
+
+_DEAD_LETTER_NAME = re.compile(r"^[\w.-]+\.json$")
+
+
+def read_dead_letter(name: str, stranded_dir: Path | None = None) -> dict | None:
+    """One dead-lettered batch by file name, or None. The name is checked
+    against a strict pattern — this is served on the tailnet and must never
+    read outside the stranded directory."""
+    if not _DEAD_LETTER_NAME.match(name or "") or name.startswith("."):
+        return None
+    d = Path(stranded_dir) if stranded_dir is not None else STRANDED_DIR
+    try:
+        return json.loads((d / name).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def render_dead_letter(name: str, rec: dict) -> str:
+    """The stranded batch, verbatim: each prompt in full with what it was
+    attached to, then the raw poll response — the thing the driver hand-routes
+    from, so nothing is truncated."""
+    items = []
+    for p in rec.get("prompts") or []:
+        if not isinstance(p, dict):
+            p = {"prompt": str(p)}
+        anchor = str(p.get("text") or "").strip()
+        items.append(
+            f'<li><span class="stage">{escape(str(p.get("tag") or "note"))}</span>'
+            f'<span>{escape(str(p.get("prompt") or ""))}'
+            f'{f"<br><span class=meta>on: {escape(anchor[:400])}</span>" if anchor else ""}'
+            f'</span></li>')
+    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(rec.get("at") or 0))
+    sess = rec.get("session") or {}
+    title = escape(str(sess.get("title") or Path(str(rec.get("artifact") or name)).name))
+    back = '<p class="meta"><a href="/">← fleet</a>'
+    if sess.get("path"):
+        back += f' · <a href="{escape(str(sess["path"]))}">open surface</a>'
+    back += "</p>"
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{title} — stranded feedback</title><style>{_CSS}</style></head>'
+            f'<body><div class="wrap"><header><h1>{title}<span class="dot">.</span>'
+            f' stranded feedback</h1></header>{back}'
+            f'<section class="card"><h2>why it reached no one · {escape(when)}</h2>'
+            f'<p>{escape(str(rec.get("reason") or ""))}</p>'
+            f'<p class="meta">artifact {escape(str(rec.get("artifact") or ""))}<br>'
+            f'dead letter {escape(str(STRANDED_DIR / name))} — delete or move it '
+            f'once routed and the fleet badge clears</p></section>'
+            f'<section class="card"><h2>the driver\'s words · {len(items)} item(s)</h2>'
+            f'<ul class="agents">{"".join(items) or "<li>(no prompts parsed)</li>"}</ul></section>'
+            f'<section class="card"><details><summary class="meta">raw poll response</summary>'
+            f'<pre>{escape(str(rec.get("raw") or ""))}</pre></details></section>'
+            f'</div></body></html>')
 
 
 def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
@@ -523,6 +600,8 @@ def _links_html(view: dict) -> str:
     for sf in view["surfaces"]:
         label = sf["kind"].replace("_", " ")
         bits.append(f'<a href="{escape(sf["path"])}">surface: {escape(label)}</a>')
+        for name in sf.get("stranded") or []:
+            bits.append(f'<a href="/stranded/{escape(name)}">stranded feedback</a>')
     for pr in view["prs"]:
         if pr["url"]:
             bits.append(f'<a href="{escape(pr["url"])}" rel="noreferrer">PR #{pr["pr"]}</a>')
@@ -569,15 +648,16 @@ def render_fleet(snap: dict, now: float | None = None,
     out = []
 
     def _live(sf) -> str:
+        strand = stranded_badge(sf)
         # Interim lifecycle marker until the HITL store carries real state
         # (d7): a surface registered with DECIDED in its title is settled —
         # presence churn on it must not read as "your turn".
         if "DECIDED" in str(sf.get("title") or ""):
-            return '<span class="badge finished">decided — nothing needs you</span>'
+            return strand or '<span class="badge finished">decided — nothing needs you</span>'
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
         st = statuses.get(key)
         label, cls = agent_state_badge(st, now)
-        bits = ""
+        bits = strand
         if label:
             bits += f'<span class="badge {cls}">{escape(label)}</span>'
         upd = _iso_epoch((st or {}).get("updated_at"))
@@ -629,8 +709,10 @@ def render_fleet(snap: dict, now: float | None = None,
                        f'<span class="title">{title}</span>{role}{when}'
                        f'</div></div>')
             # Settled surfaces stay reachable but stop occupying the driver's
-            # scan: the list was becoming every decision ever made.
-            (decided if "DECIDED" in str(sf.get("title") or "") else rows).append(row)
+            # scan: the list was becoming every decision ever made. A strand
+            # is never folded away — hiding the alarm defeats it.
+            settled = "DECIDED" in str(sf.get("title") or "") and not sf.get("stranded")
+            (decided if settled else rows).append(row)
         fold = (f'<details class="fold" data-fold="{escape(ext["project"])}">'
                 f'<summary>{len(decided)} decided</summary>'
                 f'{"".join(decided)}</details>') if decided else ""
@@ -653,7 +735,8 @@ def render_fleet(snap: dict, now: float | None = None,
     if tasks:
         # a dialogue task's page is its whole deliverable — a row reading just
         # "task" with no identity was noise, not a link worth clicking
-        live = [sf for sf in tasks if "DECIDED" not in str(sf.get("title") or "")]
+        live = [sf for sf in tasks if "DECIDED" not in str(sf.get("title") or "")
+                or sf.get("stranded")]
         done = [sf for sf in tasks if sf not in live]
         rows = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
                                      or "task")) for sf in live)
@@ -817,6 +900,13 @@ class Handler(BaseHTTPRequestHandler):
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(snap, notice=notice, statuses=statuses))
 
+    def _serve_dead_letter(self, name: str):
+        rec = read_dead_letter(name)
+        if rec is None:
+            self.send_error(404, "no such dead letter")
+            return
+        self._send_html(render_dead_letter(name, rec))
+
     def _serve_history(self, key: str):
         snap = read_snapshot()
         sf = next((s for s in (snap.get("surfaces") or [])
@@ -891,6 +981,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
             self._serve_home(query)
+            return
+        if path.startswith("/stranded/") and self.command in ("GET", "HEAD"):
+            self._serve_dead_letter(path.rsplit("/", 1)[-1])
             return
         if path.startswith("/history/") and self.command in ("GET", "HEAD"):
             self._serve_history(path.rsplit("/", 1)[-1])

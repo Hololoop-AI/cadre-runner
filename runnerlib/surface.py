@@ -22,6 +22,10 @@ to the BLACKBOARD as that workflow's own commands and nowhere near GitHub.
 The scope is one session kind — a session opened as `kind="task"` — so every
 pipeline surface keeps the flow above untouched.
 
+A batch the daemon consumes that NOTHING routes — no task id, no PR to
+mirror to — is STRANDED: `_dead_letter` writes it verbatim under
+surfaces/stranded/ and the fleet badges the row. A tripwire, not a router.
+
 sessions.json is the durable session list; the outbox cursor is a byte
 offset persisted next to it, so a daemon restart re-reads nothing and loses
 nothing. All entry points swallow exceptions — the surface must never take
@@ -497,6 +501,12 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
         board_events.emit("surface_unparsed", artifact=path, raw_file=str(keep))
         log(f"surface: feedback arrived but parsed to NOTHING — raw kept at {keep}")
         return
+    reason = _strand_reason(meta, free)
+    if reason:
+        # The consume already happened — poll delivery is destructive — so the
+        # driver's words exist only in this response now. Keep them verbatim
+        # and make the fleet say so; the board events below still fire.
+        _dead_letter(cfg, log, path, meta, raw, payload, reason)
     if meta.get("kind") == "task":
         # Workflow #3 owns this page. Its feedback goes to the blackboard as
         # the dialogue's own commands and NOWHERE else — no PR mirror, no
@@ -526,6 +536,181 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
 
 
+def _strand_reason(meta: dict, free: list[dict]) -> str:
+    """Why this batch reached no reader, or "" when something owns it.
+
+    A task page routes by its task id; every other page routes its free text
+    only by mirroring to a PR. Without either, the driver's annotations become
+    board events nothing reads — the black-hole page. Decision and answer
+    tokens carry their own routing (story+pr, ticket), so a batch of only
+    those is never stranded."""
+    if meta.get("kind") == "task":
+        return "" if meta.get("task") else "task page with no task id"
+    if not any((f.get("text") or "").strip() for f in free):
+        return ""
+    if meta.get("pr") and meta.get("repo"):
+        return ""
+    return f"{meta.get('kind') or 'unknown'} session with no task id and no PR to mirror to"
+
+
+def stranded_dir(cfg) -> Path:
+    return _dir(cfg) / "stranded"
+
+
+def agent_status(key: str) -> dict | None:
+    """Read-only session state from the surface server. Never consumes — which
+    is the whole reason this endpoint exists, and why the daemon may ask it
+    about sessions it does not own."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"{upstream()}/api/{key}/agent-status", timeout=8) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+ADOPT_ASK = """You now own the review surface page at {path}
+
+The driver answered on that page and nobody was listening: it was registered
+as a presence-only session with no agent behind it, so their words were
+queued with no loop to deliver them to. You are that loop from now on.
+
+Their queued feedback, verbatim:
+
+{feedback}
+
+Do this:
+
+1. Read the page at {path} in full. It is the whole context you have — treat
+   it as a document written for a reader with no session history, because
+   that is what you are.
+2. Act on what they said. If they answered questions, those answers are
+   DECIDED: record them as settled, with the date, and do not reargue them.
+   If they asked for something, do it. If a point is wrong, push back with
+   your reasoning rather than complying silently.
+3. Rewrite that same page in place at that exact path — it is the driver's
+   bookmark and it must stay one page, not a new one. Follow the authoring
+   contract (invoke the auto-surface skill): what changed this round at the
+   top, the settled answers pinned in a green decided block, and the verdict
+   form last.
+
+From here this is an ordinary dialogue: their next annotation on that page
+reaches you as the next turn of this session."""
+
+
+def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
+    """Feedback queued on a page nobody owns: give it an owner, automatically.
+
+    `kind="external"` sessions are presence-only — the daemon never polls them,
+    because polling CONSUMES and would steal feedback from whichever loop is
+    waiting on it. The hole that leaves: a page registered without a dialogue
+    behind it has no such loop, so the driver's answers sit in the queue
+    forever while the fleet says "no agent listening". Three discussion pages
+    lost answers that way, each rescued by hand from the journal.
+
+    Hand-rescue is not a lifecycle layer. The read-only status endpoint can
+    tell us the exact stranded state without consuming anything, so the daemon
+    recognises it, consumes the batch once, and dispatches a dialogue that owns
+    the page from then on — the driver's next annotation is an ordinary
+    feedback turn. Nothing here needs a human to notice first.
+    """
+    from . import tasks as tasks_mod
+    for path, meta in list(sess.items()):
+        if (not meta.get("open") or meta.get("kind") != "external"
+                or meta.get("task")):
+            continue
+        if not str(path).startswith("/") or not Path(path).exists():
+            continue                    # a page-less presence row owns nothing
+        key = str(meta.get("key") or "")
+        st = agent_status(key) if key else None
+        if not st or st.get("status") == "ended":
+            continue
+        if (not int(st.get("pending_prompts") or 0)
+                or st.get("presence") != "waiting"):
+            continue                    # "queued — no agent listening", exactly
+        try:
+            raw = _run_cli(["poll", path, "--timeout-ms", "4000", "--json"],
+                           timeout=30)
+        except Exception as e:
+            log(f"surface: adoption poll failed for {Path(path).name}: {e}")
+            continue
+        payload, structured, free = _parse_feedback(raw)
+        notes = [{"anchor": i.get("anchor") or "",
+                  "text": (i.get("text") or "").strip()}
+                 for i in [*structured, *free]]
+        notes = [n for n in notes if n["text"]]
+        if not notes:
+            # The batch is consumed and gone; keep it where a human can read it
+            # rather than let a parse miss become the silent loss all over.
+            _dead_letter(cfg, log, path, meta, raw, payload,
+                         "adoption found no readable feedback")
+            continue
+        try:
+            task_id = tasks_mod.submit_task(
+                cfg, ADOPT_ASK.format(
+                    path=path, feedback=tasks_mod.format_feedback(notes)),
+                cwd=str(Path(path).parent),
+                title=f"adopt {Path(path).stem}")
+        except Exception as e:
+            _dead_letter(cfg, log, path, meta, raw, payload,
+                         f"adoption dispatch failed: {e}")
+            continue
+        # The dialogue rewrites the page it adopted rather than opening a
+        # second one: the driver's bookmark IS the conversation.
+        rec = tasks_mod.record(reg, task_id)
+        rec["page"] = str(path)
+        rec["cwd"] = str(Path(path).parent)
+        if hasattr(reg, "save"):
+            reg.save()
+        s = sessions(cfg)
+        if path in s:
+            s[path].update(kind="task", task=task_id, adopted=time.time())
+            _save_sessions(cfg, s)
+        board_events.emit("surface_adopted", artifact=path, task=task_id,
+                          prompts=len(notes),
+                          project=meta.get("project") or "",
+                          title=meta.get("title") or "")
+        log(f"surface: ADOPTED {Path(path).name} — {len(notes)} queued note(s) "
+            f"had no listener; dialogue {task_id} owns it now")
+
+
+def _dead_letter(cfg, log, path: str, meta: dict, raw: str,
+                 payload: dict | None, reason: str) -> Path | None:
+    """Write the whole consumed batch where a human can find it, record the
+    file on the session so the fleet row can badge it, and say so on the
+    board. Deleting (or moving) the file is the acknowledgement: status_list
+    only reports dead letters that still exist."""
+    try:
+        d = stranded_dir(cfg)
+        d.mkdir(parents=True, exist_ok=True)
+        stem = re.sub(r"[^\w.-]", "_", Path(path).stem)[:80] or "session"
+        out = d / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}.json"
+        n = 1
+        while out.exists():
+            n += 1
+            out = d / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}-{n}.json"
+        out.write_text(json.dumps({
+            "at": time.time(), "artifact": path, "reason": reason,
+            "session": meta, "prompts": (payload or {}).get("prompts") or [],
+            "raw": raw}, ensure_ascii=False, indent=1), encoding="utf-8")
+        s = sessions(cfg)
+        if path in s:
+            s[path]["stranded"] = [*(s[path].get("stranded") or []), out.name]
+            _save_sessions(cfg, s)
+        board_events.emit("surface_stranded", artifact=path, dead_letter=str(out),
+                          reason=reason,
+                          prompts=len((payload or {}).get("prompts") or []),
+                          project=meta.get("project") or "",
+                          title=meta.get("title") or "")
+        log(f"surface: STRANDED feedback on {Path(path).name} ({reason}) — "
+            f"batch kept verbatim at {out}")
+        return out
+    except Exception as e:
+        log(f"surface: dead-letter write failed for {Path(path).name}: {e}")
+        return None
+
+
 def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                  free: list[dict]) -> None:
     """Surface -> board, for workflow #3's pages only.
@@ -552,7 +737,7 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
     from . import tasks as tasks_mod
     task_id = meta.get("task") or ""
     if not task_id:
-        log(f"surface: task feedback on {Path(path).name} with no task id — dropped")
+        log(f"surface: task feedback on {Path(path).name} with no task id — not routed (dead-lettered)")
         return
     notes = list(free)
     approve = asked_to_continue = False
@@ -682,6 +867,10 @@ def _tick(cfg, reg, ghc, log) -> None:
                 _consume(cfg, reg, ghc, log, hit[0], hit[1])
         sess = sessions(cfg)  # consuming may close sessions
 
+    # 1b) feedback queued on a page with no owner gets one
+    _adopt_unowned(cfg, reg, log, sess)
+    sess = sessions(cfg)
+
     # 2) new pending questions get artifacts. Only OPEN sessions suppress
     # re-authoring — counting closed ones meant a question whose surface got
     # swept could never come back, leaving a parked session waiting on an
@@ -785,14 +974,19 @@ def status_list(cfg) -> list[dict]:
     """Open sessions for the status page — served through the statusd proxy,
     so the stored path fragment is directly linkable."""
     out = []
+    sdir = stranded_dir(cfg)
     for path, meta in sessions(cfg).items():
-        if meta.get("open"):
+        stranded = [n for n in (meta.get("stranded") or []) if (sdir / n).exists()]
+        # a strand keeps its row even after the session closed — "Send & End"
+        # is exactly how a final batch gets stranded, and the badge must not
+        # vanish with the session
+        if meta.get("open") or stranded:
             out.append({"kind": meta.get("kind"), "story": meta.get("story"),
                         "pr": meta.get("pr"), "ticket": meta.get("ticket"),
                         "path": meta.get("path"), "opened": meta.get("opened"),
                         "project": meta.get("project"), "title": meta.get("title"),
                         "role": meta.get("role"), "task": meta.get("task"),
-                        "cwd": meta.get("cwd"),
+                        "cwd": meta.get("cwd"), "stranded": stranded,
                         "artifact": path if str(path).startswith("/") else ""})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
 
