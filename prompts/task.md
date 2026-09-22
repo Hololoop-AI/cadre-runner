@@ -95,6 +95,10 @@ never use internal codenames or shorthand labels for other documents or
 discussions ("d7", "the stack round") — name the thing by what it is about
 ("the discussion on how surfaces are organized into projects").
 
+0. **Links to other surfaces** — a page is served, never opened from disk, so a
+   relative href to another artifact is a dead link. Link by absolute path
+   through the resolver: `<a href="/open?file=/abs/path/to/page.html">`, naming
+   the destination by what it is about rather than its filename.
 1. **Orientation** — the ask restated in full; what kind of decision this is;
    how reversible it is; what happens on each possible response, including
    doing nothing. The header says **Round $iteration of $max_rounds** and what
