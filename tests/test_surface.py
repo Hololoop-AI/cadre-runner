@@ -472,3 +472,30 @@ def test_a_consumed_batch_is_never_lost_when_dispatch_fails(tmp_path, monkeypatc
     strand = [kw for k, kw in events if k == "surface_stranded"]
     assert strand and "adoption dispatch failed" in strand[0]["reason"]
     assert "my answer" in Path(strand[0]["dead_letter"]).read_text()
+
+
+def test_reopening_a_page_keeps_where_it_belongs(tmp_path, monkeypatch):
+    """A page's project, title and role outlive the turn that opens it. An
+    adopted discussion used to fall out of its project group and render as a
+    bare task id the moment its new dialogue wrote a round."""
+    from runnerlib import surface as sf
+    monkeypatch.setattr(sf, "_create_session_quietly", lambda p: "/session/k1")
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **kw: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    art = tmp_path / "hitl-d1-topology.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(Cfg(), {str(art): {
+        "kind": "external", "open": True, "project": "hitl",
+        "title": "d1 — topology", "role": "discussion"}})
+
+    sf.open_session(Cfg(), art, "task", lambda m: None, task="task-1")
+    row = sf.sessions(Cfg())[str(art)]
+    assert row["project"] == "hitl" and row["title"] == "d1 — topology"
+    assert row["role"] == "discussion"
+    assert row["kind"] == "task" and row["task"] == "task-1"
+
+    # an explicit new title still wins — carrying is a fallback, not a lock
+    sf.open_session(Cfg(), art, "task", lambda m: None, title="d1 (DECIDED)")
+    assert sf.sessions(Cfg())[str(art)]["title"] == "d1 (DECIDED)"

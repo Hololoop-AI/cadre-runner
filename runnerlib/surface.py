@@ -293,8 +293,15 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
             url_path = re.sub(r"^https?://[^/]+", "", m.group(1)) if m else ""
         key = url_path.rsplit("/", 1)[-1] if url_path else ""
         s = sessions(cfg)
+        # Where a page BELONGS outlives any one turn that opens it. Re-opening
+        # used to replace the record wholesale, so an adopted page dropped out
+        # of its project the moment its new dialogue wrote a round and showed
+        # up as a bare task id under "loose" — the driver lost the thread.
+        prior = s.get(str(path)) or {}
+        keep = {k: prior[k] for k in ("project", "title", "role")
+                if prior.get(k) and k not in meta}
         s[str(path)] = {"kind": kind, "path": url_path, "key": key, "open": True,
-                        "opened": time.time(), **meta}
+                        "opened": time.time(), **keep, **meta}
         _save_sessions(cfg, s)
         board_events.emit("surface_opened", session_kind=kind, artifact=str(path),
                           session=url_path, **{k: v for k, v in meta.items()
