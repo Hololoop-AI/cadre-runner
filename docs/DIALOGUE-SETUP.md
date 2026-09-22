@@ -43,13 +43,25 @@ mkdir -p ~/.local/bin
 ln -sf ~/Projects/review-surface/dist/cli.mjs ~/.local/bin/review-surface
 chmod +x ~/Projects/review-surface/dist/cli.mjs
 
-# 4. the skills an authoring session loads (auto-surface owns page quality)
+# 4. the skills sessions load
 git clone https://github.com/BrandonPerez-Dev/ai-dev-skills.git \
     ~/dev-config/ai-workflow-config
+bash ~/dev-config/ai-workflow-config/scripts/setup-claude.sh
 ```
 
-If you skip step 4, set `require_skills = false` (below) and pages still get
-written — they just lose the authoring contract that makes them readable.
+Skills reach a session two different ways, and you want both:
+
+- **A dialogue's own skills** are symlinked into the working directory at spawn
+  by the runner — today that is `auto-surface`, which owns page quality (the
+  contract that makes a page readable to someone with no session history). This
+  needs only `skills_source` below to point at the clone; nothing else.
+- **Everything a session invokes by name** (`investigating`, `verification`,
+  `systematic-debugging`, and ~80 others) is loaded from `~/.claude/skills`,
+  which `setup-claude.sh` fills with symlinks into the same clone. Skip it and a
+  session that reaches for one of those silently does without.
+
+If you skip step 4 entirely, set `require_skills = false` (below) and pages
+still get written — they just lose the authoring contract.
 
 ## Configure
 
