@@ -24,12 +24,13 @@ The command template IS what the runner executes (`runs.spawn`), so it carries
 the whole invocation:
 
     <bin> -p {prompt} --model M --effort E --output-format json
-          {session} {permission} --story <story>
+          {session} {permission} {dirs} --story <story>
 
 Three kinds of placeholder appear there. `{model}` and `{payload[story]}` are
 resolved by the registry when the action fires; `{prompt}`, `{session}` and
-`{permission}` are `nodes.SPAWN_VARS`, filled by the spawner with the rendered
-prompt, the session-resume flags and the permission flags (values that only
+`{permission}` and `{dirs}` are `nodes.SPAWN_VARS`, filled by the spawner with
+the rendered prompt, the session-resume flags, the permission flags and the
+project's extra readable directories (values that only
 exist at the moment a process starts). `{payload[story]}` is on purpose: a spawn
 event that does not name a story is a definition error, and the registry catches
 it at `command_argv` rather than letting a story-less session start.
@@ -64,7 +65,7 @@ STAGES = {
 # appear here (first proven fatal by the first real spawn through the Pack 3
 # argv path, 2026-09-20).
 COMMAND = ("%(bin)s -p {prompt} --model {model} --effort %(effort)s "
-           "--output-format json {session} {permission}")
+           "--output-format json {session} {permission} {dirs}")
 
 DEFAULT_BIN = "claude"
 

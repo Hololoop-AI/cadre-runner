@@ -174,13 +174,18 @@ def test_rendering_links_surfaces_and_prs():
         assert 'href="/s/orph"' in html                # orphan session still reachable
         assert "Loose sessions" in html
         assert "o/hot" in html and "o/calm" in html
-        assert f'action="{statusd.TASKS_PATH}"' in html
+        # work is launched from a project page, not a fleet-wide task box
+        assert f'action="{statusd.TASKS_PATH}"' not in html
 
 
 def test_page_renders_with_zero_stories():
     html = statusd.render_home({})
     assert "No stories in flight" in html
-    assert 'name="text"' in html and 'name="cwd"' in html
+    # There is no fleet-wide task box any more: work is launched from a
+    # project, which knows its own directory, so no absolute path is typed.
+    assert 'name="cwd"' not in html
+    assert 'New project' in html
+    assert 'id="dirsug"' in html            # the directory field completes
     assert statusd.render_fleet({}).strip() != ""
 
 
@@ -199,8 +204,10 @@ class _Server:
     """statusd's real handler on an ephemeral loopback port."""
 
     def __init__(self, status_dir):
-        self.keep = statusd.STATUS_DIR
+        self.keep = statusd.STATUS_DIR, statusd.DATA_DIR
         statusd.STATUS_DIR = Path(status_dir)
+        # the project store and session store beside it, never the live ones
+        statusd.DATA_DIR = Path(status_dir).parent
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), statusd.Handler)
         self.base = "http://127.0.0.1:%d" % self.srv.server_address[1]
         self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
@@ -209,7 +216,7 @@ class _Server:
     def close(self):
         self.srv.shutdown()
         self.srv.server_close()
-        statusd.STATUS_DIR = self.keep
+        statusd.STATUS_DIR, statusd.DATA_DIR = self.keep
 
     def get(self, path):
         with urllib.request.urlopen(self.base + path, timeout=5) as r:

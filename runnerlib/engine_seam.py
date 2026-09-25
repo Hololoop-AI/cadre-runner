@@ -39,7 +39,7 @@ import os
 import time
 from pathlib import Path
 
-from . import claude_run, engine, seed_nodes
+from . import claude_run, engine, projects, seed_nodes
 from .blackboard import Board
 from .nodes import Nodes
 
@@ -343,13 +343,25 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         # daemon happens to be — refuse it here rather than find out from the
         # session's transcript.
         raise RuntimeError(f"task {task_id}: cwd {cwd!r} is not an absolute path")
+    rec = tasks.record(reg, task_id)
+    first = payload.get("target") == tasks.TARGET_REQUEST
+    if first:
+        # The project and the launch choice ride only the ask; every later
+        # turn (feedback, a route) reads them back from the record.
+        for k in ("project", "run"):
+            if payload.get(k):
+                rec[k] = payload[k]
+    projs = projects.load(cfg.data_dir)
+    pid = rec.get("project") if rec.get("project") in projs else None
+    skills = list((projs.get(pid) or {}).get("skills") or [])
+    if str(rec.get("run") or "").startswith("skill:"):
+        skills.append(rec["run"].split(":", 1)[1])
     try:
-        linked = claude_run.install_task_skills(cwd, cfg.skills_source)
+        linked = claude_run.install_task_skills(cwd, cfg.skills_source, extra=skills)
         if linked:
             log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
     except Exception as e:
         log(f"engine: task skill install failed for {cwd}: {e}")
-    rec = tasks.record(reg, task_id)
     if payload.get("target") == tasks.TARGET_ROUTE:
         # The driver pointed this task at another node. That node's turns get
         # their own page (per-node surface awareness) and a session of their
@@ -368,6 +380,9 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # ...and the exact form lines for them, so the choice renders the same
     # words on every page instead of whatever the author improvised.
     extra["route_options"] = tasks.route_options(routes)
+    # The project this task runs in: what else it may read, and where the
+    # project's brief and recorded decisions live.
+    extra["project"] = projects.prompt_block(projs, pid, cwd)
     action = {
         "type": "run_task",
         "stage": spec["node"],
@@ -383,6 +398,13 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         "firing_id": spec.get("firing_id"),
         "correlation_id": spec.get("correlation_id"),
         "extra_vars": extra,
+        # Group crossover: sibling directories reach the session as extra
+        # readable directories (`{dirs}` in the node's command).
+        "add_dirs": projects.read_dirs(projs, pid, cwd) if pid else [],
+        # What the ask picked to run, as the prefix of the FIRST prompt only:
+        # a resumed turn already has it loaded, and a route starts a
+        # different node's work.
+        "invoke": str(payload.get("invoke") or "") if first else "",
     }
     log(f"engine: spawning {spec['node']} turn for {task_id} in {cwd} "
         f"({'resuming' if resume else 'new'} session {session_id[:8]}, "

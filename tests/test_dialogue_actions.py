@@ -260,10 +260,16 @@ def test_submit_task_writes_an_event_the_engine_consumes():
     assert len(events) == 1
     ev = events[0]
     assert ev["key"] == f"task:{task_id}"
-    assert ev["payload"] == {"target": "task", "task": task_id, "story": task_id,
-                             "title": "tidy flags",
-                             "task_text": "tidy the exporter's flags",
-                             "cwd": str(d), "iteration": "1"}
+    # Working in a directory registers it as a project, so the event files
+    # under one even when nobody created it by hand — that is what keeps a
+    # project on the fleet after its last page is ruled on.
+    payload = dict(ev["payload"])
+    project = payload.pop("project", None)
+    assert project, "a task in an unregistered directory should register one"
+    assert payload == {"target": "task", "task": task_id, "story": task_id,
+                       "title": "tidy flags",
+                       "task_text": "tidy the exporter's flags",
+                       "cwd": str(d), "iteration": "1"}
 
     # and it is a real trigger, not just a well-shaped row
     spawns, _ = engine.tick(b, actions(), Nodes(d), d)

@@ -153,7 +153,9 @@ def test_dispatch_rows_give_visible_feedback():
                           "cwd": "/home/x/cadre", "opened": 1.0}]}
     page = statusd.render_home(snap, now=0)
     assert 'data-name="fedora-1 system"' in page and 'aria-pressed="false"' in page
-    assert 'class="target" role="status"' in page
+    # The row used to prefill a fleet-wide task box with this checkout's path.
+    # That box is gone — a project knows its own directory, so there is no
+    # path to prefill — and the row's job is now to open the project.
     for hook in ("markPicked", "showTarget", "classList.add('flash')", "selected ✓"):
         assert hook in page
     assert ".card.flash" in page and ".story.dispatch.picked" in page

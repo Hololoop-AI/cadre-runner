@@ -53,11 +53,12 @@ COMMAND_VARS = ("prompt_path", "model", "node", "version", "event", "payload")
 
 # Placeholders the RUNNER fills when it actually starts the process, not here:
 # the rendered prompt text, the session flags that revive a stopped session,
-# and the permission flags. They are known only at spawn time, so
+# the permission flags, and the extra directories a project lets a session
+# read (`{dirs}`, empty for everything else). They are known only at spawn time, so
 # `command_argv` passes them through verbatim for the spawner to expand (see
 # `runs.expand_spawn_argv`). Naming them here is what keeps a template using
 # them from reading as a definition error.
-SPAWN_VARS = ("prompt", "session", "permission")
+SPAWN_VARS = ("prompt", "session", "permission", "dirs")
 
 
 class NodeError(Exception):

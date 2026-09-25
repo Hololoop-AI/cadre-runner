@@ -43,6 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
+from runnerlib import library as library_mod
+from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 
 
@@ -64,6 +66,10 @@ def _runner(key):
     return _CFG.runner[key] if _CFG else _DEFAULTS[key]
 
 
+def _skills_source():
+    return _CFG.skills_source if _CFG else Path(os.path.expanduser(_DEFAULTS["skills_source"]))
+
+
 # Env wins over config wins over the defaults: a unit file overrides one dial
 # without a config edit, and the config is what keeps the served directory the
 # SAME directory the daemon writes its status into (they drifted while this was
@@ -78,6 +84,8 @@ STRANDED_DIR = (_CFG.data_dir if _CFG else
 # The panel's repair log: link records in review-surface's link-store shape,
 # read last so a repair made here wins over what any other store says.
 PANEL_LINKS = STRANDED_DIR.parent / "panel-links.jsonl"
+# The durable project records (runnerlib/projects.py), same data dir.
+DATA_DIR = STRANDED_DIR.parent.parent
 SURFACE = surface_mod.upstream()
 BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
@@ -92,6 +100,8 @@ TYPES = {".html": "text/html; charset=utf-8", ".json": "application/json",
 HOME_PATH = "/"
 TASKS_PATH = "/tasks"
 REPAIR_PATH = "/repair"
+PROJECTS_PATH = "/projects"
+LIBRARY_PATH = "/library"
 STREAM_PATH = "/fleet/events"
 MAX_TASK_BYTES = 64 * 1024
 # The page is pushed, not polled: it refreshes when the fleet stream says
@@ -464,6 +474,36 @@ def external_projects(snap: dict) -> list[dict]:
     return out
 
 
+def load_projects(data_dir: Path | None = None) -> dict:
+    return projects_mod.load(DATA_DIR if data_dir is None else data_dir)
+
+
+def closed_pages(projs: dict, data_dir: Path | None = None) -> dict:
+    """{project id: [closed page sessions, newest first]} from the runner's
+    session store — pages whose session ended stay on record there with
+    open False. A page files under a project by its recorded project, else
+    by the project owning its working directory."""
+    d = DATA_DIR if data_dir is None else data_dir
+    try:
+        store = json.loads((Path(d) / "surfaces" / "sessions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    by_name = {n: pid for pid in projs for n in projects_mod.names_of(projs, pid)}
+    out: dict[str, list] = {}
+    for artifact, meta in (store.items() if isinstance(store, dict) else ()):
+        if not isinstance(meta, dict) or meta.get("open") or not meta.get("key"):
+            continue
+        pid = by_name.get(str(meta.get("project") or ""))
+        if pid is None and not meta.get("project"):
+            owner = projects_mod.for_dir(projs, meta.get("cwd"))
+            pid = owner["id"] if owner else None
+        if pid:
+            out.setdefault(pid, []).append({**meta, "artifact": artifact})
+    for rows in out.values():
+        rows.sort(key=lambda m: -(m.get("opened") or 0))
+    return out
+
+
 # -------------------------------------------------------------------- render
 
 _CSS = """
@@ -537,6 +577,13 @@ a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
+.dirwrap{position:relative}
+.sug{position:relative;margin:.25rem 0 0;padding:0;list-style:none;max-height:15rem;
+ overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+.sug li{padding:.35rem .6rem;font-family:ui-monospace,monospace;font-size:.85rem;
+ cursor:pointer}
+.sug li:hover,.sug li.on{background:var(--line)}
+.sug li.none{color:var(--muted);cursor:default;font-style:italic}
 .story.dispatch{cursor:pointer;border-radius:8px;padding:.55rem .5rem;margin:0 -.5rem;
  transition:background .15s ease}
 .story.dispatch:hover,.story.dispatch:focus-visible{background:var(--soft)}
@@ -580,6 +627,21 @@ form.newtask input[name=cwd]:not(:placeholder-shown){border-color:var(--accent)}
 .repair button.danger{border-color:var(--hot);color:var(--hot)}
 .repair button:disabled{opacity:.4;cursor:default}
 .repair p{margin:0;flex-basis:100%;color:var(--muted);font-size:.8rem}
+.project h2 a.repo{color:var(--fg);text-decoration:none}
+.project h2 a.repo:hover{color:var(--accent)}
+.project .member{margin:.4rem 0 0 .2rem;padding-left:.8rem;border-left:2px solid var(--border)}
+.project .member h3{font-size:.8rem;margin:.2rem 0;font-family:var(--mono);font-weight:600}
+.project .member h3 a{color:var(--muted);text-decoration:none}
+form.newtask select,form.newtask input[name=name],form.newtask input[name=context]{
+ padding:.45rem .6rem;border:1px solid var(--border);border-radius:9px;
+ background:var(--bg);color:var(--fg);font:inherit;font-size:.84rem}
+pre.brief{white-space:pre-wrap;font-family:var(--mono);font-size:.78rem;color:var(--muted);
+ max-height:18rem;overflow:auto;margin:.3rem 0}
+table.lib{width:100%;border-collapse:collapse;font-size:.82rem}
+table.lib td{padding:.3rem .4rem;border-top:1px solid var(--border);vertical-align:top}
+table.lib td.inv{font-family:var(--mono);white-space:nowrap;color:var(--fg)}
+table.lib td.scope{font-family:var(--mono);color:var(--label);font-size:.74rem}
+table.lib td.desc{color:var(--muted)}
 """
 
 _PAGE_JS = """
@@ -769,13 +831,17 @@ def load_graph() -> tuple[list, dict, dict]:
 
 
 def render_fleet(snap: dict, now: float | None = None,
-                 statuses: dict | None = None, graph: tuple | None = None) -> str:
+                 statuses: dict | None = None, graph: tuple | None = None,
+                 projs: dict | None = None, finished: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
     renders without live badges (tests, surface server down). `graph` is
     load_graph()'s (links, holders, pages): with it, a conversation's rounds
-    fold into one row; without it, pages still fold by their dialogue task."""
+    fold into one row; without it, pages still fold by their dialogue task.
+    `projs` is the durable project store (projects.load) and `finished` the
+    count of closed pages per project id; every live project gets a section
+    even with nothing open in it."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     records, holders, pages = graph or ([], {}, {})
@@ -819,13 +885,15 @@ def render_fleet(snap: dict, now: float | None = None,
         n = len(sf.get("earlier") or [])
         label = f"{n} earlier round{'s' if n != 1 else ''}" if n else "manage"
         return f'<a class="hist" href="/page/{escape(key)}">{label}</a>'
-    for ext in external_projects(snap):
+    def _group_rows(ext_rows):
+        """(byline, live rows, settled rows, row count) for one project's
+        registered sessions."""
         # An orchestrator is the project's parent, not a sibling of the pages
         # under it: it renders as the header's byline. Only page-less
         # orchestrators lift — one WITH a page is still a row you can open.
-        orch = [sf for sf in ext["rows"]
+        orch = [sf for sf in ext_rows
                 if sf.get("role") == "orchestrator" and not sf.get("path")]
-        rows_src = [sf for sf in ext["rows"] if sf not in orch]
+        rows_src = [sf for sf in ext_rows if sf not in orch]
         byline = "".join(
             f'<p class="orch">orchestrated by <b>{escape(str(sf.get("title") or ""))}</b>'
             f' · {escape(_rel_time(sf.get("opened") or 0, now))}</p>' for sf in orch)
@@ -862,10 +930,50 @@ def render_fleet(snap: dict, now: float | None = None,
             # is never folded away — hiding the alarm defeats it.
             settled = "DECIDED" in str(sf.get("title") or "") and not sf.get("stranded")
             (decided if settled else rows).append(row)
+        return byline, rows, decided, len(rows_src)
+
+    exts = external_projects(snap)
+    projs = projs or {}
+    finished = finished or {}
+    claimed = set()
+    # Durable projects first: a section per top-level project, drawn whether
+    # or not anything is open in it. Members fold into their group's section.
+    # Finished work is not listed here — it is a count linking to the page.
+    tops = [p for p in projects_mod.live(projs)
+            if not (p.get("group") and (projs.get(p["group"]) or {}).get("archived") is False)]
+    for p in tops:
+        parts, n_live, n_done = [], 0, 0
+        for m in [p, *[m for m in projects_mod.members(projs, p["id"]) if not m.get("archived")]]:
+            names = projects_mod.names_of(projs, m["id"])
+            src = [sf for e in exts if e["project"] in names for sf in e["rows"]]
+            claimed |= names
+            byline, rows, decided, _ = _group_rows(src)
+            n_live += len(rows)
+            n_done += len(decided) + int(finished.get(m["id"]) or 0)
+            if m is p:
+                parts.insert(0, byline + "".join(rows))
+            else:
+                parts.append(f'<div class="member"><h3><a href="/project/{escape(m["id"])}">'
+                             f'{escape(m["name"])}</a></h3>{byline}{"".join(rows)}'
+                             + ("" if rows else '<p class="empty">nothing running</p>')
+                             + '</div>')
+        count = f'<span class="badge">{n_live} running</span>' if n_live else ""
+        done = (f'<a class="hist" href="/project/{escape(p["id"])}#finished">'
+                f'{n_done} finished</a>') if n_done else ""
+        empty = ("" if n_live or len(parts) > 1 else
+                 '<p class="empty">Nothing running in this project.</p>')
+        out.append(f'<section class="card project durable"><h2>'
+                   f'<a class="repo" href="/project/{escape(p["id"])}">{escape(p["name"])}</a>'
+                   f'{count}{done}<a class="hist" href="/project/{escape(p["id"])}#launch">'
+                   f'new work →</a></h2>{"".join(parts)}{empty}</section>')
+    for ext in exts:
+        if ext["project"] in claimed:
+            continue
+        byline, rows, decided, n_src = _group_rows(ext["rows"])
         fold = (f'<details class="fold" data-fold="{escape(ext["project"])}">'
                 f'<summary>{len(decided)} decided</summary>'
                 f'{"".join(decided)}</details>') if decided else ""
-        count = f'<span class="badge">{len(rows_src)} session{"s" if len(rows_src) != 1 else ""}</span>'
+        count = f'<span class="badge">{n_src} session{"s" if n_src != 1 else ""}</span>'
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(ext["project"])}</span>{count}</h2>'
                    f'{byline}{"".join(rows)}{fold}</section>')
@@ -899,7 +1007,8 @@ def render_fleet(snap: dict, now: float | None = None,
 
 
 def render_home(snap: dict, notice: str = "", now: float | None = None,
-                statuses: dict | None = None, graph: tuple | None = None) -> str:
+                statuses: dict | None = None, graph: tuple | None = None,
+                projs: dict | None = None, finished: dict | None = None) -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
     fragment is re-fetched when the fleet stream reports a change."""
     now = time.time() if now is None else now
@@ -917,22 +1026,262 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<span class="updated">snapshot {escape(str(stamp))}</span>'
         '<span id="live" class="live">connecting…</span></header>'
         f'{banner}'
-        '<section class="card"><h2>New task</h2>'
-        f'<form class="newtask" method="post" action="{TASKS_PATH}">'
-        '<textarea name="text" placeholder="What should the fleet do?" '
-        'required autofocus></textarea>'
-        '<div class="row">'
-        '<input type="text" name="cwd" placeholder="working directory (optional) — '
-        'or click a checkout below">'
-        '<button type="submit">Dispatch</button></div>'
-        '<p class="target" role="status" aria-live="polite" hidden></p></form></section>'
+        # No fleet-wide task box: work belongs to a project, and the box asked
+        # the driver to type a raw absolute path, which is what tab-complete
+        # exists to avoid. Launch from a project instead — it knows its own
+        # directory, so there is no path to type.
+        f'{_new_project_form(projs or {})}'
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
         '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished)}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
+        f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
         f'</div><script>{_PAGE_JS}</script></body></html>')
+
+
+def _group_options(projs: dict, selected: str = "", exclude: str = "") -> str:
+    return "".join(
+        f'<option value="{escape(p["id"])}"{" selected" if p["id"] == selected else ""}>'
+        f'{escape(p["name"])}</option>'
+        for p in projects_mod.live(projs) if p["id"] != exclude)
+
+
+def _known_dirs() -> list[str]:
+    """Directories the runner has already worked in. These seed the field
+    before the driver types; once they type, completions come from the real
+    filesystem via /fs."""
+    seen = []
+    try:
+        sess = surface_mod.sessions(_CFG)
+    except Exception:
+        return seen
+    for meta in sess.values():
+        d = str((meta or {}).get("cwd") or "").strip()
+        if d and d not in seen:
+            seen.append(d)
+    return sorted(seen)
+
+
+def complete_dirs(prefix: str, limit: int = 40) -> list[str]:
+    """Real directories on this machine matching `prefix`, the way a shell
+    would complete them. A browser datalist can only offer a list we gave it
+    up front; reading the filesystem per keystroke is what makes this behave
+    like tab-complete instead of a guess at what the driver might want.
+
+    Directories only — a task runs in one — and never follows into a
+    directory it cannot read.
+    """
+    raw = (prefix or "").strip()
+    if not raw:
+        return []
+    p = Path(raw).expanduser()
+    # "/home/me/Pro" means: list /home/me, keep the names starting with "Pro".
+    # A trailing slash means the directory itself is complete; list inside it.
+    parent, stem = (p, "") if raw.endswith("/") else (p.parent, p.name)
+    try:
+        if not parent.is_dir():
+            return []
+        names = sorted(
+            str(c) + "/" for c in parent.iterdir()
+            if c.name.startswith(stem) and not c.name.startswith(".") and c.is_dir())
+    except (OSError, PermissionError):
+        return []
+    return names[:limit]
+
+
+def _new_project_form(projs: dict) -> str:
+    seeded = " · ".join(_known_dirs()[:3])
+    hint = (f'<p class="meta">worked in before: {escape(seeded)}</p>' if seeded else "")
+    return (
+        # Open by default: this is the one control that creates the thing the
+        # whole page is organised around, and a collapsed summary made it read
+        # as an advanced option.
+        '<details class="card" open><summary class="meta">New project — a durable home '
+        'for work, kept on the fleet until you archive it</summary>'
+        f'<form class="newtask" method="post" action="{PROJECTS_PATH}">'
+        '<div class="row"><input name="name" required maxlength="64" '
+        'placeholder="name, e.g. Cadre"></div>'
+        '<div class="row dirwrap"><input name="dir1" id="dir1" '
+        'autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" '
+        'aria-autocomplete="list" aria-controls="dirsug" '
+        'placeholder="directory — type / or ~ to complete from this machine"></div>'
+        '<ul id="dirsug" class="sug" role="listbox" hidden></ul>'
+        f'{hint}'
+        # A real completion list rather than a datalist: a datalist only opens
+        # when the browser feels like it and filters full paths badly, so it
+        # read as "no autocomplete at all". This draws every keystroke's
+        # matches, supports arrow keys and Enter, and shows "no match" rather
+        # than going silent — the feedback the driver asked for.
+        '<script>(function(){'
+        'var i=document.getElementById("dir1"),box=document.getElementById("dirsug");'
+        'if(!i||!box)return;var t,items=[],cur=-1;'
+        'function hide(){box.hidden=true;i.setAttribute("aria-expanded","false");cur=-1;}'
+        'function draw(dirs){items=dirs;box.innerHTML="";'
+        'if(!dirs.length){box.innerHTML="<li class=\\"none\\">no directory matches</li>";'
+        'box.hidden=false;i.setAttribute("aria-expanded","true");return;}'
+        'dirs.forEach(function(p,n){var li=document.createElement("li");'
+        'li.textContent=p;li.setAttribute("role","option");li.dataset.n=n;'
+        'li.addEventListener("mousedown",function(e){e.preventDefault();pick(n);});'
+        'box.appendChild(li);});'
+        'box.hidden=false;i.setAttribute("aria-expanded","true");}'
+        'function pick(n){if(n<0||n>=items.length)return;i.value=items[n];hide();'
+        'i.focus();load();}'
+        'function mark(){Array.prototype.forEach.call(box.children,function(li,n){'
+        'li.className=(n===cur?"on":"");});}'
+        'function load(){var v=i.value;if(!v){hide();return;}'
+        'fetch("/fs?q="+encodeURIComponent(v)).then(function(r){return r.json();})'
+        '.then(function(d){draw(d.dirs||[]);}).catch(hide);}'
+        'i.addEventListener("input",function(){clearTimeout(t);t=setTimeout(load,80);});'
+        'i.addEventListener("focus",function(){if(i.value)load();});'
+        'i.addEventListener("blur",function(){setTimeout(hide,120);});'
+        'i.addEventListener("keydown",function(e){'
+        'if(box.hidden||!items.length){if(e.key==="ArrowDown"){load();}return;}'
+        'if(e.key==="ArrowDown"){e.preventDefault();cur=(cur+1)%items.length;mark();}'
+        'else if(e.key==="ArrowUp"){e.preventDefault();'
+        'cur=(cur<=0?items.length:cur)-1;mark();}'
+        'else if(e.key==="Enter"&&cur>=0){e.preventDefault();pick(cur);}'
+        'else if(e.key==="Tab"&&items.length===1){e.preventDefault();pick(0);}'
+        'else if(e.key==="Escape"){hide();}});'
+        '})();</script>'
+        '<textarea name="dirs" placeholder="more directories, one absolute path per '
+        'line (optional)"></textarea>'
+        '<div class="row"><select name="group"><option value="">no group</option>'
+        f'{_group_options(projs)}</select>'
+        '<input name="context" type="text" placeholder="context store path (optional): '
+        'a folder with brief.md and decisions/">'
+        '<button type="submit">Create</button></div></form></details>')
+
+
+def render_library(entries: list[dict], scanned: list[str]) -> str:
+    """Everything installed that a launch can pick, found by scanning — so
+    nobody has to know where a skill lives to use it."""
+    kinds = [("skill", "Skills"), ("workflow", "Workflows"), ("agent", "Agents"),
+             ("flow", "Cadre flows")]
+    cards = []
+    for kind, label in kinds:
+        rows = [e for e in entries if e["kind"] == kind]
+        if not rows:
+            continue
+        body = "".join(
+            f'<tr><td class="inv">{escape(e["invoke"] or e["name"])}</td>'
+            f'<td class="scope">{escape(e["scope"])}</td>'
+            f'<td class="desc">{"<b>broken link</b> " if e["broken"] else ""}'
+            f'{escape(e["description"][:180])}</td></tr>' for e in rows)
+        cards.append(f'<section class="card"><h2>{label} · {len(rows)}</h2>'
+                     f'<table class="lib">{body}</table></section>')
+    where = ", ".join(scanned) or "none"
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>Cadre — library</title><style>{_CSS}</style></head>'
+        '<body><div class="wrap"><header><h1>Library<span class="dot">.</span></h1></header>'
+        '<p class="meta"><a href="/">← fleet</a> · found by scanning ~/.claude, the '
+        f'runner\'s skills tree and these project directories: {escape(where)}</p>'
+        '<section class="card"><p class="empty">Launch any of these from a project page, or '
+        '<code>pipeline.py task "…" --run kind:name</code>. Skills and workflows start as '
+        '<code>/name</code> at the front of the prompt, agents as <code>@agent-name</code>; '
+        'flows are listed for reference — every launch runs as a dialogue today.</p></section>'
+        f'{"".join(cards)}</div></body></html>')
+
+
+def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
+                   entries: list[dict], notice: str = "", now: float | None = None) -> str:
+    """One project's own page: the launcher, what runs in it, what finished,
+    and what a task launched here is told."""
+    now = time.time() if now is None else now
+    pid = p["id"]
+    group = projs.get(p.get("group") or "")
+    mem = projects_mod.members(projs, pid)
+    meta = ['<a href="/">← fleet</a>']
+    if group:
+        meta.append(f'in <a href="/project/{escape(group["id"])}">{escape(group["name"])}</a>')
+    if mem:
+        meta.append("group of " + ", ".join(
+            f'<a href="/project/{escape(m["id"])}">{escape(m["name"])}</a>' for m in mem))
+    if p.get("archived"):
+        meta.append("<b>archived</b>")
+    banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
+    try:
+        where = projects_mod.workdir(projs, pid)
+    except projects_mod.ProjectError:
+        where = ""
+    dirs = [d for m in [p, *mem] for d in m.get("dirs") or ()]
+    dir_opts = "".join(f'<option value="{escape(d)}"{" selected" if d == where else ""}>'
+                       f'{escape(d)}</option>' for d in dict.fromkeys(dirs))
+    picks = ['<option value="">plain dialogue — no skill, workflow or agent</option>']
+    for kind, label in (("skill", "Skills"), ("workflow", "Workflows"), ("agent", "Agents")):
+        opts = "".join(
+            f'<option value="{kind}:{escape(e["name"])}"'
+            f'{" selected" if p.get("launch") == kind + ":" + e["name"] else ""}>'
+            f'{escape(e["invoke"])} — {escape(e["description"][:70])}</option>'
+            for e in entries if e["kind"] == kind and not e["broken"])
+        if opts:
+            picks.append(f'<optgroup label="{label}">{opts}</optgroup>')
+    if p.get("archived"):
+        form = '<p class="empty">Archived — restore it to launch work here.</p>'
+    elif not where:
+        form = '<p class="empty">This project has no directory to run work in.</p>'
+    else:
+        form = (f'<form class="newtask" method="post" action="{PROJECTS_PATH}/{escape(pid)}/tasks">'
+                '<textarea name="text" required placeholder="What should run in this project?">'
+                '</textarea><div class="row">'
+                f'<select name="run">{"".join(picks)}</select>'
+                f'<select name="cwd">{dir_opts}</select>'
+                '<button type="submit">Launch</button></div>'
+                f'<p class="meta">everything installed: <a href="{LIBRARY_PATH}">library</a></p>'
+                '</form>')
+    launch = f'<section class="card" id="launch"><h2>new work</h2>{form}</section>'
+    done = "".join(
+        f'<div class="rowline"><a class="row" href="/session/{escape(str(m["key"]))}">'
+        f'<span class="title">{escape(str(m.get("title") or m.get("task") or m["key"]))}</span>'
+        f'<span class="badge">{escape(_rel_time(m.get("opened") or 0, now))}</span>'
+        f'<span class="go">open →</span></a></div>' for m in closed[:100])
+    ctx = projects_mod.context_path(projs, pid)
+    if ctx:
+        bpath, btext = projects_mod.brief(ctx)
+        dec = projects_mod.decisions(ctx)
+        context = (f'<p class="meta">{escape(ctx)}</p>'
+                   + (f'<pre class="brief">{escape(btext[:4000])}</pre>' if btext
+                      else '<p class="empty">No brief.md or README.md in it yet.</p>')
+                   + (f'<details class="fold"><summary>{len(dec)} recorded decisions</summary>'
+                      + "".join(f'<p class="meta">{escape(Path(d).name)}</p>' for d in dec)
+                      + '</details>' if dec else '<p class="empty">No decisions recorded yet.</p>'))
+    else:
+        context = ('<p class="empty">No context store. Point one at a folder holding brief.md '
+                   f'and decisions/: <code>pipeline.py project set {escape(pid)} --context PATH</code>'
+                   '</p>')
+    defaults = []
+    if p.get("skills"):
+        defaults.append("default skills: " + ", ".join(escape(s) for s in p["skills"]))
+    if p.get("launch"):
+        defaults.append(f"default launch: {escape(p['launch'])}")
+    arch = "0" if p.get("archived") else "1"
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>{escape(p["name"])} — project</title><style>{_CSS}</style></head>'
+        f'<body><div class="wrap"><header><h1>{escape(p["name"])}<span class="dot">.</span>'
+        '</h1></header>'
+        f'<p class="meta">{" · ".join(meta)}</p>{banner}{launch}'
+        f'<section class="card project"><h2>running</h2>'
+        f'{rows_html or "<p class=empty>Nothing running.</p>"}</section>'
+        f'<section class="card" id="finished"><h2>finished · {len(closed)}</h2>'
+        f'{done or "<p class=empty>Nothing finished yet.</p>"}</section>'
+        f'<section class="card"><h2>context</h2>{context}'
+        f'<details class="fold"><summary>what a task launched here is told</summary>'
+        f'<pre class="brief">{escape(projects_mod.prompt_block(projs, pid, where))}</pre>'
+        '</details></section>'
+        '<section class="card"><h2>project</h2>'
+        + "".join(f'<p class="meta">{d}</p>' for d in defaults)
+        + "".join(f'<p class="meta">{escape(d)}</p>' for d in dirs)
+        + f'<form class="repair" method="post" action="{PROJECTS_PATH}/{escape(pid)}/archive">'
+        f'<input type="hidden" name="archived" value="{arch}">'
+        f'<button type="submit"{" class=danger" if arch == "1" else ""}>'
+        f'{"Archive" if arch == "1" else "Restore"}</button>'
+        '<p>Archiving hides the project from the fleet and keeps its record.</p></form>'
+        '</section></div></body></html>')
 
 
 def render_found(query: str, hits: list[dict], now: float | None = None) -> str:
@@ -1069,7 +1418,7 @@ def _local_signature() -> str:
         h.update(json.dumps(snap, sort_keys=True, default=str).encode())
     except (OSError, ValueError):
         h.update(b"no-snapshot")
-    for f in conv_mod.link_files(PANEL_LINKS):
+    for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE]:
         try:
             st = os.stat(f)
             h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
@@ -1290,11 +1639,133 @@ class Handler(BaseHTTPRequestHandler):
         # statuses for the rows that will actually render — a conversation's
         # newest round may be a page the runner's snapshot never listed
         statuses = fetch_agent_statuses(conv_mod.collapse(snap.get("surfaces") or [], *graph))
+        projs = load_projects()
+        finished = {pid: len(rows) for pid, rows in closed_pages(projs).items()}
         if query.get("partial"):
-            self._send_html(render_fleet(snap, statuses=statuses, graph=graph))
+            self._send_html(render_fleet(snap, statuses=statuses, graph=graph,
+                                         projs=projs, finished=finished))
             return
         notice = (query.get("notice") or [""])[0]
-        self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph))
+        self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph,
+                                    projs=projs, finished=finished))
+
+    def _serve_project(self, pid: str, query: dict):
+        projs = load_projects()
+        p = projects_mod.resolve(projs, pid)
+        if p is None:
+            self.send_error(404, "no such project")
+            return
+        mine = {m["id"]: m for m in [p, *projects_mod.members(projs, p["id"])]}
+        names = set().union(*(projects_mod.names_of(projs, k) for k in mine))
+        snap = read_snapshot()
+        graph = load_graph()
+        rows = [r for r in conv_mod.collapse(snap.get("surfaces") or [], *graph)
+                if str(r.get("project") or "") in names]
+        # This project's section exactly as the fleet draws it, without the
+        # finished count (the page lists finished work itself).
+        rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
+                                 projs={**mine, p["id"]: {**p, "group": None, "archived": False}}) if rows else ""
+        closed_all = closed_pages(projs)
+        closed = sorted((m for k in mine for m in closed_all.get(k, [])),
+                        key=lambda m: -(m.get("opened") or 0))
+        dirs = [d for m in mine.values() for d in m.get("dirs") or ()]
+        entries = library_mod.scan(dirs=dirs[:1], skills_source=_skills_source())
+        self._send_html(render_project(p, projs, rows_html, closed, entries,
+                                       notice=(query.get("notice") or [""])[0]))
+
+    def _serve_library(self):
+        dirs = [d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()]
+        dirs = list(dict.fromkeys(dirs))
+        self._send_html(render_library(
+            library_mod.scan(dirs=dirs, skills_source=_skills_source()), dirs))
+
+    def _form(self) -> dict | None:
+        """A same-origin url-encoded POST body as {field: first value}, or
+        None after answering the request with an error."""
+        if not self._same_origin():
+            self.send_error(403, "cross-origin post")
+            return None
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_TASK_BYTES:
+            self.send_error(413, "too large")
+            return None
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        return {k: v[0].strip() for k, v in
+                urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
+
+    def _projects_post(self, path: str):
+        """POST /projects (create: name, dirs one per line, group, context) ·
+        /projects/<id>/tasks (launch: text, run, cwd) · /projects/<id>/archive
+        (archived=1|0). Every outcome lands on a page with what happened."""
+        form = self._form()
+        if form is None:
+            return
+        parts = [p for p in path.split("/") if p][1:]
+        if not _CFG:
+            self._redirect("/", "No runner config: projects cannot be changed from here.")
+            return
+        if not parts:
+            try:
+                rec = projects_mod.create(_CFG.data_dir, form.get("name", ""),
+                                          # dir1 is the completing field and
+                                          # comes first: it is the directory
+                                          # launched work runs in.
+                                          dirs=([form.get("dir1", "").strip()]
+                                                + form.get("dirs", "").splitlines()),
+                                          group=form.get("group") or None,
+                                          context=form.get("context", ""))
+            except projects_mod.ProjectError as e:
+                self._redirect("/", f"Project not created: {e}")
+                return
+            self._redirect(f"/project/{rec['id']}", f"Created {rec['name']}.")
+            return
+        pid, verb = urllib.parse.unquote(parts[0]), (parts[1] if len(parts) > 1 else "")
+        back = f"/project/{urllib.parse.quote(pid)}"
+        if verb == "archive":
+            try:
+                rec = projects_mod.archive(_CFG.data_dir, pid, form.get("archived") == "1")
+            except projects_mod.ProjectError as e:
+                self._redirect(back, f"Refused: {e}")
+                return
+            self._redirect(back, "Archived: hidden from the fleet, record kept."
+                           if rec["archived"] else "Restored to the fleet.")
+            return
+        if verb != "tasks":
+            self.send_error(404, "unknown project action")
+            return
+        if not form.get("text"):
+            self._redirect(back, "A task needs some text.")
+            return
+        try:
+            from runnerlib import tasks as tasks_mod
+            result = tasks_mod.submit_task(_CFG, form["text"], form.get("cwd") or None,
+                                           project=pid, run=form.get("run") or None)
+        except Exception as e:                      # a bad launch must not 500 the page
+            self._redirect(back, f"Not launched: {e}")
+            return
+        self._redirect(back, f"Launched {result}. Its page appears under running when "
+                             "the first round finishes.")
+
+    def _redirect(self, where: str, notice: str):
+        self.send_response(303)
+        self.send_header("Location", where + "?" + urllib.parse.urlencode({"notice": notice}))
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _serve_fs(self, query: dict):
+        """Directory completions for the project form, read live off this
+        machine. Local-only like the rest of this server, and it returns
+        directory names only — never file contents."""
+        q = (query.get("q") or [""])[0][:400]
+        body = json.dumps({"dirs": complete_dirs(q)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _serve_find(self, query: dict):
         q = (query.get("q") or [""])[0].strip()[:200]
@@ -1484,8 +1955,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == REPAIR_PATH and self.command == "POST":
             self._repair()
             return
+        if (path == PROJECTS_PATH or path.startswith(PROJECTS_PATH + "/")) \
+                and self.command == "POST":
+            self._projects_post(path)
+            return
+        if path.startswith("/project/") and self.command in ("GET", "HEAD"):
+            self._serve_project(urllib.parse.unquote(path.split("/", 2)[2].strip("/")), query)
+            return
+        if path == LIBRARY_PATH and self.command in ("GET", "HEAD"):
+            self._serve_library()
+            return
         if path == STREAM_PATH and self.command == "GET":
             self._serve_stream()
+            return
+        if path == "/fs" and self.command in ("GET", "HEAD"):
+            self._serve_fs(query)
             return
         if path == "/find" and self.command in ("GET", "HEAD"):
             self._serve_find(query)

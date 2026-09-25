@@ -34,7 +34,7 @@ import uuid
 from html import escape
 from pathlib import Path
 
-from . import engine_seam, seed_nodes
+from . import engine_seam, library, projects, seed_nodes
 from .blackboard import Board
 from .nodes import Nodes, version_id
 from .registry import slugify
@@ -115,19 +115,56 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 # --------------------------------------------------------------------------- submit
 
 
-def submit_task(cfg, text: str, cwd=None, title=None) -> str:
+def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
     spawns `task`, and an ask that lands on a board whose registry has no such
     node fails inside the engine minutes later instead of here, in front of
     whoever asked.
+
+    `project` (id or name) launches from a project: its directory is the
+    default cwd and its default launch choice the default `run`. Without one,
+    a cwd inside a registered project's directory still files under it.
+    `run` is what to launch, `kind:name` from the library index; it becomes
+    a prefix on the session's first prompt (`library.invocation`), so it is
+    checked against what is installed HERE, not discovered missing by the
+    session.
     """
     text = (text or "").strip()
     if not text:
         raise ValueError("a task needs text — what should the session do?")
     title = (title or text.splitlines()[0]).strip()[:80]
+    projs = projects.load(cfg.data_dir)
+    proj = None
+    if project:
+        proj = projects.resolve(projs, project)
+        if proj is None:
+            raise ValueError(f"no project {project!r} — `pipeline.py project list`")
+        if proj.get("archived"):
+            raise ValueError(f"project {proj['name']!r} is archived")
+        run = run or proj.get("launch") or None
+        cwd = cwd or projects.workdir(projs, proj["id"])
     cwd = str(Path(cwd or Path.cwd()).expanduser().resolve())
+    proj = proj or projects.for_dir(projs, cwd)
+    if proj is None:
+        # Running work in a directory IS the act of starting a project there.
+        # Without this, a dispatch into an unregistered checkout drew a
+        # section that existed only while something was open in it and
+        # vanished when the last page was ruled on — the driver's report was
+        # that his projects "collapsed off the page". Registering here means
+        # every project on the fleet is durable, whether it was created
+        # deliberately or by being worked in. A deliberate one is still
+        # better: it can carry directories, a group and a context store.
+        try:
+            proj = projects.create(cfg.data_dir, Path(cwd).name, dirs=[cwd])
+            projs = projects.load(cfg.data_dir)
+        except Exception:
+            proj = None  # never block a task on bookkeeping
+    picked = {}
+    if run:
+        entry = library.resolve(library.scan(dirs=[cwd], skills_source=cfg.skills_source), run)
+        picked = {"run": f"{entry['kind']}:{entry['name']}", "invoke": entry["invoke"]}
     task_id = new_id(title)
 
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
@@ -137,7 +174,8 @@ def submit_task(cfg, text: str, cwd=None, title=None) -> str:
         board.write(NAMESPACE, TOPIC, key_for(task_id), "command",
                     {"target": TARGET_REQUEST, "task": task_id, "story": task_id,
                      "title": title, "task_text": text, "cwd": cwd,
-                     "iteration": "1"})
+                     "iteration": "1",
+                     **({"project": proj["id"]} if proj else {}), **picked})
     finally:
         board.close()
     return task_id

@@ -31,13 +31,14 @@ PIPELINE_SKILLS = [
 TASK_SKILLS = ["auto-surface"]
 
 
-def install_task_skills(cwd, skills_source) -> list[str]:
-    """Best-effort symlink of TASK_SKILLS into `<cwd>/.claude/skills`.
+def install_task_skills(cwd, skills_source, extra=()) -> list[str]:
+    """Best-effort symlink of TASK_SKILLS, plus `extra` (a project's default
+    skills, the skill a launch picked), into `<cwd>/.claude/skills`.
 
     Unlike `install_skills` this never raises and never touches git config —
     the cwd is the driver's own directory, not a checkout the runner owns."""
     linked = []
-    for name in TASK_SKILLS:
+    for name in dict.fromkeys([*TASK_SKILLS, *extra]):
         src = Path(skills_source).expanduser() / name
         if not src.is_dir():
             continue

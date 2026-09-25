@@ -119,6 +119,12 @@ def session_args(session_id: str | None, resume: bool) -> list[str]:
             ["--resume", session_id] if resume else ["--session-id", session_id])
 
 
+def dir_args(add_dirs) -> list[str]:
+    """Extra directories a session may read — a project's siblings. Last on
+    the command line: `--add-dir` takes every argument after it."""
+    return ["--add-dir", *add_dirs] if add_dirs else []
+
+
 def permission_args(permission_mode: str) -> list[str]:
     return (["--dangerously-skip-permissions"] if permission_mode == "bypass"
             else ["--permission-mode", permission_mode])
@@ -149,7 +155,7 @@ def expand_spawn_argv(argv: list[str], values: dict) -> list[str]:
 def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
           timeout, run_dir: Path, session_id: str | None = None,
           resume: bool = False, extra_env: dict | None = None,
-          argv: list[str] | None = None) -> int:
+          argv: list[str] | None = None, add_dirs=None) -> int:
     """Detached agent session under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
     the outcome. Returns the wrapper pid.
@@ -172,12 +178,14 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
         argv = expand_spawn_argv(argv, {
             "prompt": prompt,
             "session": session_args(session_id, resume),
-            "permission": permission_args(permission_mode)})
+            "permission": permission_args(permission_mode),
+            "dirs": dir_args(add_dirs)})
     else:
         argv = ([claude_bin, "-p", prompt, "--model", model, "--effort", effort,
                  "--output-format", "json"]
                 + session_args(session_id, resume)
-                + permission_args(permission_mode))
+                + permission_args(permission_mode)
+                + dir_args(add_dirs))
     argv = ["timeout", str(int(timeout))] + argv
     env = {**os.environ,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),

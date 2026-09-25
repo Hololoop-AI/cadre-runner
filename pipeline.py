@@ -21,6 +21,8 @@ from runnerlib import automerge, board as board_mod, claude_run, config as confi
 from runnerlib import board_events
 from runnerlib import conversations
 from runnerlib import engine_seam
+from runnerlib import library as library_mod
+from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
 from runnerlib import runs as runs_mod
@@ -847,10 +849,16 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     v = {"task": task_id, "story": task_id, "cwd": str(cwd),
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
          "task_text": "", "feedback": "", "surface_prev": "",
-         "routes": tasks_mod.describe_routes([]), "route_options": ""}
+         "routes": tasks_mod.describe_routes([]), "route_options": "",
+         "project": projects_mod.NO_PROJECT}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
     prompt = Template(action["prompt_template"]).safe_substitute(v)
+    if action.get("invoke"):
+        # A skill, workflow or agent the ask picked: a slash or @agent-
+        # prefix at the very front of the prompt is how `claude -p` launches
+        # it (runnerlib/library.py) — there is no flag for it.
+        prompt = f"{action['invoke']} {prompt}"
     run_dir = cfg.data_dir / "runs" / task_id / rid
     session_id = action["session_id"]
     model = action.get("model") or cfg.model_for(stage)
@@ -860,6 +868,9 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          run_dir, session_id=session_id,
                          resume=bool(action.get("resume")),
                          argv=action.get("argv"),
+                         # only when a project gives some: absent, the
+                         # spawn is exactly what it was before projects
+                         **({"add_dirs": action["add_dirs"]} if action.get("add_dirs") else {}),
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
                                     "CADRE_RUN_ID": rid,
@@ -914,7 +925,7 @@ def _reap_tasks(cfg, reg):
                 surface_mod.open_session(
                     cfg, art, "task", log, task=task_id, cwd=rec.get("cwd", ""),
                     **({"node": run["stage"]} if run["stage"] != tasks_mod.NODE else {}),
-                    **_inherited(cfg, rec, art))
+                    **(_inherited(cfg, rec, art) or _project_of(cfg, rec, art)))
                 _link_routed_page(cfg, rec, art, task_id)
             elif ok and art and not art.exists():
                 log(f"{task_id}: turn finished but wrote no page at {art} — "
@@ -935,6 +946,18 @@ def _inherited(cfg, rec, art) -> dict:
         return {}
     project = (sess.get(str(src)) or {}).get("project")
     return {"project": project} if project else {}
+
+
+def _project_of(cfg, rec, art) -> dict:
+    """A page launched in a project files under it the first time it opens,
+    so the fleet shows it in that project's section rather than under
+    whatever its directory happens to be called. A project the page already
+    has (a move made by hand) is kept."""
+    pid = rec.get("project")
+    if not pid or (surface_mod.sessions(cfg).get(str(art)) or {}).get("project"):
+        return {}
+    proj = projects_mod.load(cfg.data_dir).get(pid)
+    return {"project": proj["name"]} if proj else {}
 
 
 def _link_routed_page(cfg, rec, art, task_id):
@@ -1522,7 +1545,12 @@ def cmd_task(cfg, args):
               f"  open pages:         python3 pipeline.py surface list\n"
               f"  send it anyway:     add --yes", file=sys.stderr)
         sys.exit(2)
-    task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title)
+    try:
+        task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title,
+                                        project=getattr(args, "project", None),
+                                        run=getattr(args, "run", None))
+    except (ValueError, projects_mod.ProjectError) as e:
+        sys.exit(f"task refused: {e}")
     print(task_id)
     print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
           f"  (written by the session, opened when the round finishes)")
@@ -1530,6 +1558,63 @@ def cmd_task(cfg, args):
     if engine_seam.mode() == "off":
         print("NOTE: CADRE_ENGINE is off — the daemon will not pick this up "
               "until it runs with CADRE_ENGINE=only")
+
+
+def cmd_project(cfg, args):
+    """Projects: durable records on the fleet, kept until archived."""
+    projs = projects_mod.load(cfg.data_dir)
+    try:
+        if args.action == "create":
+            if args.run:
+                library_mod.parse_run(args.run)
+            rec = projects_mod.create(cfg.data_dir, args.name, dirs=args.dir or (),
+                                      group=args.group, context=args.context or "",
+                                      skills=args.skill or (), launch=args.run or "")
+            print(f"created {rec['id']}: {rec['name']}  dirs={rec['dirs']}"
+                  + (f"  group={rec['group']}" if rec["group"] else ""))
+            return
+        if args.action == "list":
+            if not projs:
+                print("no projects — create one: pipeline.py project create NAME --dir PATH")
+            for p in sorted(projs.values(), key=lambda p: p["name"].lower()):
+                flags = " [archived]" if p.get("archived") else ""
+                grp = f"  in {p['group']}" if p.get("group") else ""
+                print(f"{p['id']:24} {p['name']}{flags}{grp}  {' '.join(p.get('dirs') or [])}")
+            return
+        rec = projects_mod.resolve(projs, args.name)
+        if rec is None:
+            sys.exit(f"no project {args.name!r}")
+        if args.action in ("archive", "restore"):
+            rec = projects_mod.archive(cfg.data_dir, rec["id"], args.action == "archive")
+            print(f"{rec['id']}: {'archived' if rec['archived'] else 'restored'}")
+            return
+        if args.action == "set":
+            if args.run:
+                library_mod.parse_run(args.run)
+            rec = projects_mod.update(cfg.data_dir, rec["id"], dirs=args.dir, group=args.group,
+                                      context=args.context, skills=args.skill,
+                                      launch=args.run)
+        print(json.dumps(rec, indent=2))
+        print("\n$project block a turn launched here reads:\n")
+        print(projects_mod.prompt_block(projects_mod.load(cfg.data_dir), rec["id"]))
+    except (projects_mod.ProjectError, ValueError) as e:
+        sys.exit(f"project {args.action} refused: {e}")
+
+
+def cmd_library(cfg, args):
+    """Every agent, skill and workflow installed here, and how to launch it."""
+    entries = library_mod.scan(dirs=args.dir or [str(Path.cwd())],
+                               skills_source=cfg.skills_source)
+    if args.kind:
+        entries = [e for e in entries if e["kind"] == args.kind]
+    if args.json:
+        print(json.dumps(entries, indent=2))
+        return
+    for e in entries:
+        flag = "  BROKEN LINK" if e["broken"] else ""
+        print(f"{e['kind']:8} {e['invoke'] or e['name']:34} {e['scope']:14}"
+              f" {e['description'][:70]}{flag}")
+    print(f"\n{len(entries)} entries · launch one: pipeline.py task \"...\" --run kind:name")
 
 
 def cmd_messages(cfg, args):
@@ -1598,9 +1683,26 @@ def main():
     p.add_argument("text", help="the ask, in your own words")
     p.add_argument("--cwd", help="working directory the task targets (default: here)")
     p.add_argument("--title", help="short title (default: the ask's first line)")
+    p.add_argument("--project", help="launch from this project (id or name): its "
+                                     "directory, context and defaults")
+    p.add_argument("--run", help="what to launch, kind:name from `pipeline.py library` "
+                                 "(skill:investigating, workflow:naming-forge, agent:refactor)")
     p.add_argument("--yes", action="store_true",
                    help="send a one-word ask anyway (refused by default: it is "
                         "almost always a command typed in the wrong place)")
+    p = sub.add_parser("project", help="projects: durable records you launch work from")
+    p.add_argument("action", choices=["create", "list", "show", "set", "archive", "restore"])
+    p.add_argument("name", nargs="?", default="", help="project name (create) or id/name")
+    p.add_argument("--dir", action="append", help="a directory (repeatable; the first "
+                                                   "is where launched work runs)")
+    p.add_argument("--group", help="the project this one belongs to")
+    p.add_argument("--context", help="path to the context store (brief.md + decisions/)")
+    p.add_argument("--skill", action="append", help="a default skill (repeatable)")
+    p.add_argument("--run", help="default launch choice, kind:name")
+    p = sub.add_parser("library", help="list the agents, skills and workflows installed here")
+    p.add_argument("--kind", choices=list(library_mod.KINDS))
+    p.add_argument("--dir", action="append", help="also scan <dir>/.claude (default: here)")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("handoff", help="approve a page AND hand it to the implementing "
                                        "agent — for pages whose form has no handoff line")
     p.add_argument("task_id")
@@ -1637,6 +1739,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff,
+     "project": cmd_project, "library": cmd_library,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

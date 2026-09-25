@@ -8,7 +8,10 @@ your page is the only thing the driver sees of this turn.
 **Task:** `$task` · round **$iteration of $max_rounds**
 **Working directory:** `$cwd` — everything you touch lives under it. If the
 work genuinely needs a path outside it, do not reach out: say so on the page as
-the thing you could not do, and why.
+the thing you could not do, and why. The one exception is reading the
+directories the project below lists.
+
+**Project:** $project
 
 The ask, verbatim:
 
