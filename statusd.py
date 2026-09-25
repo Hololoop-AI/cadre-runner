@@ -577,11 +577,20 @@ a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
-.dirwrap{position:relative}
-.sug{position:relative;margin:.25rem 0 0;padding:0;list-style:none;max-height:15rem;
- overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+.dirwrap{position:relative;display:block}
+.dirwrap .lbl{display:block;font-size:.78rem;color:var(--muted);margin:0 0 .2rem}
+#dir1{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
+ padding:.45rem .6rem .45rem 1.7rem;border:1px solid var(--line);border-radius:6px;
+ background:var(--card) url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%238a94a6'%3E%3Cpath d='M1.5 3.5a1 1 0 011-1h3.2l1.3 1.4h6.5a1 1 0 011 1v6.6a1 1 0 01-1 1h-11a1 1 0 01-1-1z'/%3E%3C/svg%3E") no-repeat .5rem 50%/ .9rem .9rem}
+#dir1:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
+/* Floats over the page: the list is a transient overlay, not a block that
+   pushes the rest of the form down every time it opens. */
+.sug{position:absolute;z-index:40;top:100%;left:0;right:0;margin:.15rem 0 0;padding:0;
+ list-style:none;max-height:14rem;overflow-y:auto;border:1px solid var(--line);
+ border-radius:6px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.sug[hidden]{display:none}
 .sug li{padding:.35rem .6rem;font-family:ui-monospace,monospace;font-size:.85rem;
- cursor:pointer}
+ cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sug li:hover,.sug li.on{background:var(--line)}
 .sug li.none{color:var(--muted);cursor:default;font-style:italic}
 .story.dispatch{cursor:pointer;border-radius:8px;padding:.55rem .5rem;margin:0 -.5rem;
@@ -1092,8 +1101,6 @@ def complete_dirs(prefix: str, limit: int = 40) -> list[str]:
 
 
 def _new_project_form(projs: dict) -> str:
-    seeded = " · ".join(_known_dirs()[:3])
-    hint = (f'<p class="meta">worked in before: {escape(seeded)}</p>' if seeded else "")
     return (
         # Open by default: this is the one control that creates the thing the
         # whole page is organised around, and a collapsed summary made it read
@@ -1103,12 +1110,13 @@ def _new_project_form(projs: dict) -> str:
         f'<form class="newtask" method="post" action="{PROJECTS_PATH}">'
         '<div class="row"><input name="name" required maxlength="64" '
         'placeholder="name, e.g. Cadre"></div>'
-        '<div class="row dirwrap"><input name="dir1" id="dir1" '
+        '<div class="dirwrap"><label class="lbl" for="dir1">Working directory — '
+        'type <code>/</code> or <code>~</code> and it completes from this machine'
+        '</label><input name="dir1" id="dir1" '
         'autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" '
         'aria-autocomplete="list" aria-controls="dirsug" '
-        'placeholder="directory — type / or ~ to complete from this machine"></div>'
-        '<ul id="dirsug" class="sug" role="listbox" hidden></ul>'
-        f'{hint}'
+        'placeholder="~/Projects/…">'
+        '<ul id="dirsug" class="sug" role="listbox" hidden></ul></div>'
         # A real completion list rather than a datalist: a datalist only opens
         # when the browser feels like it and filters full paths badly, so it
         # read as "no autocomplete at all". This draws every keystroke's
@@ -1118,35 +1126,39 @@ def _new_project_form(projs: dict) -> str:
         'var i=document.getElementById("dir1"),box=document.getElementById("dirsug");'
         'if(!i||!box)return;var t,items=[],cur=-1;'
         'function hide(){box.hidden=true;i.setAttribute("aria-expanded","false");cur=-1;}'
-        'function draw(dirs){items=dirs;box.innerHTML="";'
-        'if(!dirs.length){box.innerHTML="<li class=\\"none\\">no directory matches</li>";'
-        'box.hidden=false;i.setAttribute("aria-expanded","true");return;}'
+        'function show(){box.hidden=false;i.setAttribute("aria-expanded","true");}'
+        'function draw(dirs,note){items=dirs;box.innerHTML="";cur=-1;'
+        'if(!dirs.length){box.innerHTML="<li class=\\"none\\">"+note+"</li>";show();return;}'
         'dirs.forEach(function(p,n){var li=document.createElement("li");'
-        'li.textContent=p;li.setAttribute("role","option");li.dataset.n=n;'
+        'li.textContent=p;li.setAttribute("role","option");'
         'li.addEventListener("mousedown",function(e){e.preventDefault();pick(n);});'
-        'box.appendChild(li);});'
-        'box.hidden=false;i.setAttribute("aria-expanded","true");}'
-        'function pick(n){if(n<0||n>=items.length)return;i.value=items[n];hide();'
-        'i.focus();load();}'
+        'box.appendChild(li);});show();}'
+        'function pick(n){if(n<0||n>=items.length)return;i.value=items[n];i.focus();load();}'
         'function mark(){Array.prototype.forEach.call(box.children,function(li,n){'
         'li.className=(n===cur?"on":"");});}'
+        # Nothing is drawn until the driver types: an unprompted list of every
+        # directory in $HOME is noise, and it pushed the form around.
         'function load(){var v=i.value;if(!v){hide();return;}'
         'fetch("/fs?q="+encodeURIComponent(v)).then(function(r){return r.json();})'
-        '.then(function(d){draw(d.dirs||[]);}).catch(hide);}'
+        '.then(function(d){draw(d.dirs||[],"no directory matches");})'
+        '.catch(function(){});}'
         'i.addEventListener("input",function(){clearTimeout(t);t=setTimeout(load,80);});'
-        'i.addEventListener("focus",function(){if(i.value)load();});'
         'i.addEventListener("blur",function(){setTimeout(hide,120);});'
         'i.addEventListener("keydown",function(e){'
-        'if(box.hidden||!items.length){if(e.key==="ArrowDown"){load();}return;}'
+        'if(e.key==="Escape"){hide();return;}'
+        'if(!items.length||box.hidden)return;'
         'if(e.key==="ArrowDown"){e.preventDefault();cur=(cur+1)%items.length;mark();}'
         'else if(e.key==="ArrowUp"){e.preventDefault();'
         'cur=(cur<=0?items.length:cur)-1;mark();}'
         'else if(e.key==="Enter"&&cur>=0){e.preventDefault();pick(cur);}'
-        'else if(e.key==="Tab"&&items.length===1){e.preventDefault();pick(0);}'
-        'else if(e.key==="Escape"){hide();}});'
+        'else if(e.key==="Tab"&&items.length===1){e.preventDefault();pick(0);}});'
         '})();</script>'
-        '<textarea name="dirs" placeholder="more directories, one absolute path per '
-        'line (optional)"></textarea>'
+        # No free-text box here. A large empty textarea on a creation form
+        # reads as "describe this thing", and the one that used to sit here
+        # took absolute paths — so a sentence typed into it came back as
+        # "not an absolute path", blaming the driver for the form's wording.
+        # One directory is all a project needs to start; more are added from
+        # the project page, where the field says so plainly.
         '<div class="row"><select name="group"><option value="">no group</option>'
         f'{_group_options(projs)}</select>'
         '<input name="context" type="text" placeholder="context store path (optional): '

@@ -78,7 +78,13 @@ def _dirs(dirs) -> list[str]:
             continue
         p = Path(d).expanduser()
         if not p.is_absolute():
-            raise ProjectError(f"directory {d!r} is not an absolute path")
+            # Say what the field wanted, not just what was wrong with the
+            # input: this fires when a sentence lands in a directory field,
+            # and "not an absolute path" reads as a complaint rather than an
+            # instruction.
+            raise ProjectError(
+                f"{d!r} is not a directory. This field takes a path on this "
+                f"machine, like /home/you/Projects/thing or ~/Projects/thing")
         if not p.is_dir():
             raise ProjectError(f"directory {d} does not exist")
         s = str(p.resolve())

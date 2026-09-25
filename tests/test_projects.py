@@ -106,7 +106,7 @@ def test_a_project_is_a_record_that_outlives_its_work_and_archiving_keeps_it():
 def test_bad_records_are_refused_before_anything_is_written():
     d = scratch()
     for kwargs, why in (({"name": "../etc"}, "name"),
-                        ({"name": "x", "dirs": ["relative/path"]}, "absolute"),
+                        ({"name": "x", "dirs": ["relative/path"]}, "not a directory"),
                         ({"name": "x", "dirs": [str(d / "missing")]}, "does not exist"),
                         ({"name": "x", "group": "nobody"}, "no project")):
         try:
