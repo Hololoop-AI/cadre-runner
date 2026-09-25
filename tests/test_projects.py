@@ -323,6 +323,79 @@ def test_the_fleet_draws_every_live_project_even_with_nothing_open():
     assert html.count("live design page") == 1, "a claimed row is not drawn twice"
 
 
+def test_a_launched_task_is_visible_before_it_has_written_a_page():
+    """The bug this prevents: Launch changed nothing on screen until the first
+    round finished, so the same research was launched four times."""
+    d = scratch()
+    work, = _dirs(d, "work")
+    projects.create(d, "Research", dirs=[str(work)])
+    (d / "surfaces").mkdir(parents=True, exist_ok=True)
+    (d / "registry.json").write_text(json.dumps({"tasks": {
+        "task-queued-thing-20260925-120000-aaaaaa": {
+            "cwd": str(work), "since": 1.0, "active_runs": {}},
+        "task-busy-thing-20260925-120100-bbbbbb": {
+            "project": "research", "since": 2.0, "active_runs": {"r1": {}}},
+        "task-silent-thing-20260925-120200-cccccc": {
+            "project": "research", "since": 3.0, "active_runs": {},
+            "last_result": "done, but no page"},
+        "task-has-a-page-20260925-120300-dddddd": {
+            "project": "research", "since": 4.0, "active_runs": {}},
+    }}), encoding="utf-8")
+    (d / "surfaces" / "sessions.json").write_text(json.dumps({
+        "s1": {"task": "task-has-a-page-20260925-120300-dddddd"}}), encoding="utf-8")
+
+    projs = projects.load(d)
+    starting = statusd.starting_tasks(projs, data_dir=d)
+    assert [s["task"] for s in starting["research"]] == [
+        "task-silent-thing-20260925-120200-cccccc",
+        "task-busy-thing-20260925-120100-bbbbbb",
+        "task-queued-thing-20260925-120000-aaaaaa",
+    ], "newest first, and the one with a page is drawn as a page instead"
+
+    html = statusd.render_fleet({"surfaces": []}, now=10.0, projs=projs,
+                                starting=starting)
+    assert "queued — the runner starts it on its next pass" in html
+    assert "working — its page appears when this round ends" in html
+    assert "ran, but wrote no page" in html, "a page-less finish is named, not hidden"
+    assert "queued thing" in html and "task-queued-thing-2026" not in html
+    assert "Nothing running in this project." not in html
+
+
+def _task_name(task_id: str) -> str:
+    return task_id.split("-")[1]
+
+
+def test_a_request_the_runner_never_took_says_so():
+    """A lost firing once meant work that simply never happened, invisibly.
+    An unclaimed request past the grace window is named, not called queued."""
+    d = scratch()
+    work, = _dirs(d, "work")
+    projects.create(d, "Research", dirs=[str(work)])
+    board = Board(d / "board.db")
+    try:
+        for n, when in (("fresh", 100.0), ("stale", 1.0)):
+            board.write(tasks.NAMESPACE, tasks.TOPIC, f"k-{n}", "command",
+                        {"target": tasks.TARGET_REQUEST,
+                         "task": f"task-{n}-one-20260925-120000-aaaaaa",
+                         "cwd": str(work), "title": n})
+    finally:
+        board.close()
+
+    projs = projects.load(d)
+    rows = statusd.starting_tasks(projs, data_dir=d)["research"]
+    assert {r["task"] for r in rows} == {
+        "task-fresh-one-20260925-120000-aaaaaa",
+        "task-stale-one-20260925-120000-aaaaaa"}
+
+    # The board stamps its own `since`, so age is forced here instead.
+    by_name = {_task_name(r["task"]): r for r in rows}
+    now = 10_000.0
+    fresh = dict(by_name["fresh"], since=now - statusd.STARTUP_GRACE / 2)
+    stale = dict(by_name["stale"], since=now - statusd.STARTUP_GRACE * 2)
+    assert "queued —" in statusd.starting_rows([fresh], now)
+    assert "never started" in statusd.starting_rows([stale], now)
+
+
 def test_project_pages_create_launch_and_archive_through_the_page_server():
     root = scratch()
     work, = _dirs(root, "work")

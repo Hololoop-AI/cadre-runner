@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -46,6 +47,7 @@ from runnerlib import conversations as conv_mod
 from runnerlib import library as library_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
+from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
 
 
 def _runner_config():
@@ -478,6 +480,99 @@ def load_projects(data_dir: Path | None = None) -> dict:
     return projects_mod.load(DATA_DIR if data_dir is None else data_dir)
 
 
+# How long a board request may sit unclaimed before the fleet stops calling it
+# queued. Generous against the runner's poll interval; a request still unheld
+# after this is not waiting, it is lost.
+STARTUP_GRACE = 300.0
+
+
+def requested_tasks(data_dir) -> dict:
+    """{task id: registry-shaped record} for task requests on the board.
+
+    Read-only and best-effort: the board is the daemon's file, the page server
+    only looks. Anything unreadable (no board yet, a locked write, a schema
+    that moved) is no requests, never an error page — a broken read here must
+    not take down the fleet.
+    """
+    db = Path(data_dir) / "board.db"
+    if not db.exists():
+        return {}
+    out: dict[str, dict] = {}
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
+        try:
+            rows = conn.execute(
+                "SELECT ts, payload FROM events WHERE kind='command' "
+                "AND topic=? ORDER BY seq DESC LIMIT 200", (TASK_TOPIC,)).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    for ts, payload in rows:
+        try:
+            p = json.loads(payload)
+        except ValueError:
+            continue
+        if p.get("target") != TASK_REQUEST or not p.get("task"):
+            continue
+        out.setdefault(str(p["task"]), {
+            "task": p["task"], "cwd": p.get("cwd") or "",
+            "project": p.get("project") or "", "since": ts,
+            "active_runs": {}})
+    return out
+
+
+def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
+    """{project id: [tasks launched but with no page yet]}.
+
+    A task becomes visible on the fleet only once its first round finishes and
+    writes a page, which can be minutes. Until then pressing Launch changed
+    nothing on screen, so the driver pressed it again — the report was four
+    identical dialogues in one project. A launch has to leave a mark
+    immediately.
+
+    Two sources, because the registry alone is a step behind: submitting
+    writes a request event to the BOARD, and the registry record only appears
+    when the daemon picks it up on its next pass — the exact window the driver
+    was staring at. So the board's unserved requests are read too, and the
+    registry's record wins for any task that has one.
+    """
+    d = DATA_DIR if data_dir is None else data_dir
+    try:
+        reg = json.loads((Path(d) / "registry.json").read_text(encoding="utf-8"))
+        tasks = dict(reg.get("tasks") or {})
+    except (OSError, ValueError):
+        tasks = {}
+    for task_id, rec in requested_tasks(d).items():
+        tasks.setdefault(task_id, rec)
+    try:
+        store = json.loads(
+            (Path(d) / "surfaces" / "sessions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        store = {}
+    # A task that has ever opened a session is drawn from the session store
+    # like any other row; only the ones with nothing to show belong here.
+    paged = {str((m or {}).get("task") or "") for m in store.values()
+             if isinstance(m, dict)}
+    out: dict[str, list] = {}
+    for task_id, rec in tasks.items() if isinstance(tasks, dict) else ():
+        if not isinstance(rec, dict) or task_id in paged:
+            continue
+        proj = rec.get("project") or ""
+        if not proj:
+            owner = projects_mod.for_dir(projs, rec.get("cwd") or "")
+            proj = owner["id"] if owner else ""
+        if not proj:
+            continue
+        out.setdefault(proj, []).append(
+            {"task": task_id, "since": rec.get("since") or 0,
+             "running": bool(rec.get("active_runs")),
+             "ran": bool(rec.get("last_result"))})
+    for rows in out.values():
+        rows.sort(key=lambda r: -(r.get("since") or 0))
+    return out
+
+
 def closed_pages(projs: dict, data_dir: Path | None = None) -> dict:
     """{project id: [closed page sessions, newest first]} from the runner's
     session store — pages whose session ended stay on record there with
@@ -566,6 +661,13 @@ a.row .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
 a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
 @media (prefers-reduced-motion:reduce){a.row{transition:none}}
+/* A launched task with no page yet: same shape as a row so the section reads
+   as one list, but not a link — there is nothing to open. */
+span.row.starting{display:flex;align-items:baseline;gap:.4rem .7rem;
+ padding:.6rem .5rem;margin:0 -.5rem;border-radius:8px;flex:1;min-width:0;
+ border:1px dashed var(--border);color:var(--muted)}
+span.row.starting .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .badge{font-size:.72rem;padding:.1rem .55rem;border-radius:99px;border:1px solid var(--border);
  color:var(--muted);white-space:nowrap}
 .badge.needs{border-color:var(--hot);color:var(--hot)}
@@ -841,7 +943,8 @@ def load_graph() -> tuple[list, dict, dict]:
 
 def render_fleet(snap: dict, now: float | None = None,
                  statuses: dict | None = None, graph: tuple | None = None,
-                 projs: dict | None = None, finished: dict | None = None) -> str:
+                 projs: dict | None = None, finished: dict | None = None,
+                 starting: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -850,7 +953,9 @@ def render_fleet(snap: dict, now: float | None = None,
     fold into one row; without it, pages still fold by their dialogue task.
     `projs` is the durable project store (projects.load) and `finished` the
     count of closed pages per project id; every live project gets a section
-    even with nothing open in it."""
+    even with nothing open in it. `starting` is starting_tasks(): work that
+    has been launched but has no page yet, which must still be visible or a
+    launch looks like it did nothing and gets repeated."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     records, holders, pages = graph or ([], {}, {})
@@ -966,6 +1071,13 @@ def render_fleet(snap: dict, now: float | None = None,
                              f'{escape(m["name"])}</a></h3>{byline}{"".join(rows)}'
                              + ("" if rows else '<p class="empty">nothing running</p>')
                              + '</div>')
+        # Launched-but-pageless work belongs to the project that launched it,
+        # and is shown before its first page exists so the launch is visible.
+        start = [s for m in [p, *projects_mod.members(projs, p["id"])]
+                 for s in (starting or {}).get(m["id"], [])]
+        if start:
+            parts.insert(0, starting_rows(start, now))
+        n_live += len(start)
         count = f'<span class="badge">{n_live} running</span>' if n_live else ""
         done = (f'<a class="hist" href="/project/{escape(p["id"])}#finished">'
                 f'{n_done} finished</a>') if n_done else ""
@@ -1017,7 +1129,8 @@ def render_fleet(snap: dict, now: float | None = None,
 
 def render_home(snap: dict, notice: str = "", now: float | None = None,
                 statuses: dict | None = None, graph: tuple | None = None,
-                projs: dict | None = None, finished: dict | None = None) -> str:
+                projs: dict | None = None, finished: dict | None = None,
+                starting: dict | None = None) -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
     fragment is re-fetched when the fleet stream reports a change."""
     now = time.time() if now is None else now
@@ -1043,7 +1156,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
         '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting)}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
@@ -1198,8 +1311,46 @@ def render_library(entries: list[dict], scanned: list[str]) -> str:
         f'{"".join(cards)}</div></body></html>')
 
 
+def starting_rows(starting: list[dict], now: float) -> str:
+    """Launched, no page yet. Says which of the three it is — waiting for a
+    slot, mid-round, or finished having written nothing — because "nothing
+    visible" is what made the driver launch the same work four times. The
+    third state is named rather than hidden: a turn that ends without a page
+    is a failure worth seeing, and hiding it is how work went missing."""
+    out = []
+    for s in starting:
+        age = now - (s.get("since") or 0)
+        if s.get("running"):
+            what = "working — its page appears when this round ends"
+        elif s.get("ran"):
+            what = "ran, but wrote no page"
+        elif age > STARTUP_GRACE:
+            # Launched long ago, never ran, nothing running now. This is not
+            # hypothetical: a restart once ate a firing and the work simply
+            # never happened, invisibly. Saying "queued" about a request this
+            # old would be the same lie told more politely.
+            what = "never started — the runner did not pick this up"
+        else:
+            what = "queued — the runner starts it on its next pass"
+        out.append(
+            f'<div class="rowline"><span class="row starting">'
+            f'<span class="title">{escape(_task_label(s["task"]))}</span>'
+            f'<span class="badge running">{escape(what)}</span>'
+            f'<span class="badge">{escape(_rel_time(s.get("since") or 0, now))}</span>'
+            f'</span></div>')
+    return "".join(out)
+
+
+def _task_label(task_id: str) -> str:
+    """`task-fix-the-thing-20260925-124025-badfc9` reads as `fix the thing`."""
+    body = re.sub(r"^task-", "", str(task_id))
+    body = re.sub(r"-\d{8}-\d{6}(-[0-9a-f]+)?$", "", body)
+    return body.replace("-", " ") or str(task_id)
+
+
 def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
-                   entries: list[dict], notice: str = "", now: float | None = None) -> str:
+                   entries: list[dict], notice: str = "", now: float | None = None,
+                   starting: list[dict] | None = None) -> str:
     """One project's own page: the launcher, what runs in it, what finished,
     and what a task launched here is told."""
     now = time.time() if now is None else now
@@ -1278,7 +1429,8 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
         '</h1></header>'
         f'<p class="meta">{" · ".join(meta)}</p>{banner}{launch}'
         f'<section class="card project"><h2>running</h2>'
-        f'{rows_html or "<p class=empty>Nothing running.</p>"}</section>'
+        f'{starting_rows(starting or [], now)}'
+        f'{rows_html or ("" if starting else "<p class=empty>Nothing running.</p>")}</section>'
         f'<section class="card" id="finished"><h2>finished · {len(closed)}</h2>'
         f'{done or "<p class=empty>Nothing finished yet.</p>"}</section>'
         f'<section class="card"><h2>context</h2>{context}'
@@ -1653,13 +1805,15 @@ class Handler(BaseHTTPRequestHandler):
         statuses = fetch_agent_statuses(conv_mod.collapse(snap.get("surfaces") or [], *graph))
         projs = load_projects()
         finished = {pid: len(rows) for pid, rows in closed_pages(projs).items()}
+        starting = starting_tasks(projs)
         if query.get("partial"):
             self._send_html(render_fleet(snap, statuses=statuses, graph=graph,
-                                         projs=projs, finished=finished))
+                                         projs=projs, finished=finished,
+                                         starting=starting))
             return
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph,
-                                    projs=projs, finished=finished))
+                                    projs=projs, finished=finished, starting=starting))
 
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
@@ -1682,8 +1836,12 @@ class Handler(BaseHTTPRequestHandler):
                         key=lambda m: -(m.get("opened") or 0))
         dirs = [d for m in mine.values() for d in m.get("dirs") or ()]
         entries = library_mod.scan(dirs=dirs[:1], skills_source=_skills_source())
+        start_all = starting_tasks(projs)
+        starting = [s for k in mine for s in start_all.get(k, [])]
+        starting.sort(key=lambda s: -(s.get("since") or 0))
         self._send_html(render_project(p, projs, rows_html, closed, entries,
-                                       notice=(query.get("notice") or [""])[0]))
+                                       notice=(query.get("notice") or [""])[0],
+                                       starting=starting))
 
     def _serve_library(self):
         dirs = [d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()]
