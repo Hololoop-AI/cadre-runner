@@ -714,6 +714,23 @@ span.row.starting .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;
  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sug li:hover,.sug li.on{background:var(--line)}
 .sug li.none{color:var(--muted);cursor:default;font-style:italic}
+/* The library picker. Two lines per row — what to type, and what it is — so
+   the description is readable without being the thing that wraps. */
+.sug li b{display:block;color:var(--fg);font-weight:600}
+.sug li .hint{display:block;font-family:var(--sans,inherit);font-size:.76rem;
+ color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sug li:has(b){white-space:normal}
+details.pick{margin-top:.6rem}
+details.pick > summary{font-size:.8rem;color:var(--muted);cursor:pointer;
+ padding:.25rem 0;list-style:revert}
+details.pick > summary:hover{color:var(--fg)}
+details.pick .dirwrap{margin-top:.4rem}
+#runq{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
+ padding:.45rem .6rem;border:1px solid var(--line);border-radius:6px;
+ background:var(--card);color:var(--fg)}
+#runq:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
+.linky{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;
+ font:inherit;text-decoration:underline}
 .story.dispatch{cursor:pointer;border-radius:8px;padding:.55rem .5rem;margin:0 -.5rem;
  transition:background .15s ease}
 .story.dispatch:hover,.story.dispatch:focus-visible{background:var(--soft)}
@@ -772,6 +789,92 @@ table.lib td{padding:.3rem .4rem;border-top:1px solid var(--border);vertical-ali
 table.lib td.inv{font-family:var(--mono);white-space:nowrap;color:var(--fg)}
 table.lib td.scope{font-family:var(--mono);color:var(--label);font-size:.74rem}
 table.lib td.desc{color:var(--muted)}
+"""
+
+# Fuzzy find over the installed library. Subsequence matching, the way a
+# terminal fuzzy finder works: "revsur" finds "review-surface". Scored so that
+# a match starting at a word beginning beats one buried mid-word, and a short
+# name beats a long one that happens to contain the same letters — without
+# that, every query matched half of 111 descriptions and the list was noise.
+_PICKER_JS = """
+(function(){
+ var q=document.getElementById("runq"),box=document.getElementById("runsug"),
+     val=document.getElementById("runval"),src=document.getElementById("runlib"),
+     clear=document.getElementById("runclear");
+ if(!q||!box||!val||!src)return;
+ var lib=[];try{lib=JSON.parse(src.textContent)}catch(e){return}
+ var items=[],cur=-1;
+ function hide(){box.hidden=true;q.setAttribute("aria-expanded","false");cur=-1}
+ function show(){box.hidden=false;q.setAttribute("aria-expanded","true")}
+ // Score one candidate, or -1 for no match. Walks the needle through the
+ // haystack once; a hit right after a separator counts double, and adjacent
+ // hits count double, which is what makes "revsur" rank review-surface over
+ // a description that merely contains r,e,v,s,u,r somewhere.
+ function score(hay,needle){
+  var h=hay.toLowerCase(),n=needle.toLowerCase(),i=0,s=0,last=-2;
+  for(var j=0;j<n.length;j++){
+   var c=n[j],at=h.indexOf(c,i);
+   if(at<0)return -1;
+   var bonus=1;
+   if(at===last+1)bonus+=2;
+   if(at===0||"-_/: .".indexOf(h[at-1])>=0)bonus+=2;
+   s+=bonus;last=at;i=at+1;}
+  return s-h.length*0.01;
+ }
+ function draw(){
+  box.innerHTML="";cur=-1;
+  if(!items.length){box.innerHTML="<li class=\\"none\\">nothing installed matches that</li>";show();return}
+  items.forEach(function(e,n){
+   var li=document.createElement("li");li.setAttribute("role","option");
+   var b=document.createElement("b");b.textContent=e.i;
+   var s=document.createElement("span");s.className="hint";s.textContent=e.d;
+   li.appendChild(b);li.appendChild(s);
+   li.addEventListener("mousedown",function(ev){ev.preventDefault();pick(n)});
+   box.appendChild(li)});
+  show();
+ }
+ function pick(n){
+  if(n<0||n>=items.length)return;
+  var e=items[n];val.value=e.v;q.value=e.i;hide();
+  var sum=q.closest("details");
+  if(sum&&sum.querySelector("summary"))sum.querySelector("summary").textContent="run "+e.i;
+ }
+ function mark(){Array.prototype.forEach.call(box.children,function(li,n){
+  li.className=(n===cur?"on":"")})}
+ // Names first, descriptions only as a fallback, and then only as a plain
+ // substring. Fuzzy-matching 111 descriptions put "/arboreus-teach" at the
+ // top for "revsur": with that much prose to walk, every query matches
+ // something, and a list that always answers is a list you stop trusting.
+ function find(){
+  var v=q.value.trim();
+  if(!v){hide();return}
+  items=lib.map(function(e){return {e:e,s:score(e.i,v)}})
+   .filter(function(r){return r.s>0})
+   .sort(function(a,b){return b.s-a.s})
+   .slice(0,12).map(function(r){return r.e});
+  if(!items.length){
+   var n=v.toLowerCase();
+   items=lib.filter(function(e){return e.d.toLowerCase().indexOf(n)>=0}).slice(0,12);
+  }
+  draw();
+ }
+ q.addEventListener("input",find);
+ q.addEventListener("focus",find);
+ q.addEventListener("blur",function(){setTimeout(hide,120)});
+ q.addEventListener("keydown",function(e){
+  if(e.key==="Escape"){hide();return}
+  if(box.hidden||!items.length)return;
+  if(e.key==="ArrowDown"){e.preventDefault();cur=(cur+1)%items.length;mark()}
+  else if(e.key==="ArrowUp"){e.preventDefault();cur=(cur<=0?items.length:cur)-1;mark()}
+  else if(e.key==="Enter"){e.preventDefault();pick(cur<0?0:cur)}
+  else if(e.key==="Tab"&&items.length===1){e.preventDefault();pick(0)}});
+ if(clear)clear.addEventListener("click",function(){
+  val.value="";q.value="";hide();
+  var d=q.closest("details");
+  if(d&&d.querySelector("summary"))
+   d.querySelector("summary").textContent=
+    "the session picks its own skill — click to choose one yourself"});
+})();
 """
 
 _PAGE_JS = """
@@ -1365,6 +1468,43 @@ def starting_rows(starting: list[dict], now: float) -> str:
     return "".join(out)
 
 
+def _run_picker(entries: list[dict], current: str = "") -> str:
+    """Pick a skill, workflow, agent or flow to launch — an OVERRIDE, folded
+    away, not a question the driver has to answer every time.
+
+    It was a `<select>` of 111 options in four groups, which is unusable at
+    that size and, worse, implied the driver had to know which one fits. He
+    does not: a session told "this is research" can load a research skill
+    itself. So the default is that nobody chooses, and this opens only when
+    someone wants to force a particular one.
+
+    Everything installed rides along as JSON and the filtering happens in the
+    browser. The list is small enough to send once and a round trip per
+    keystroke is exactly the lag that made the directory field feel broken.
+    """
+    live = [e for e in entries if not e.get("broken")]
+    live.sort(key=lambda e: (e["kind"], e["name"].lower()))
+    data = json.dumps([{"v": f'{e["kind"]}:{e["name"]}', "i": e["invoke"],
+                        "k": e["kind"], "d": (e.get("description") or "")[:120]}
+                       for e in live], ensure_ascii=False)
+    chosen = next((e for e in live if f'{e["kind"]}:{e["name"]}' == current), None)
+    summary = (f'run {escape(chosen["invoke"])}' if chosen else
+               "the session picks its own skill — click to choose one yourself")
+    return (
+        f'<details class="pick"{" open" if chosen else ""}>'
+        f'<summary>{summary}</summary>'
+        f'<script type="application/json" id="runlib">{data}</script>'
+        f'<input type="hidden" name="run" id="runval" value="{escape(current)}">'
+        '<div class="dirwrap">'
+        '<input id="runq" type="text" autocomplete="off" spellcheck="false" '
+        'role="combobox" aria-expanded="false" aria-controls="runsug" '
+        'aria-autocomplete="list" placeholder="type to find — build, review, spanish…">'
+        '<ul id="runsug" class="sug" role="listbox" hidden></ul></div>'
+        '<p class="meta">Leave this alone and the session chooses. '
+        f'<button type="button" id="runclear" class="linky">clear</button></p>'
+        '</details>')
+
+
 def _short_error(detail: str, limit: int = 110) -> str:
     """The reason a firing failed, short enough to sit in a badge. The
     exception class name is dropped — `ActionFailed:` in front of every one of
@@ -1407,15 +1547,6 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
     dirs = [d for m in [p, *mem] for d in m.get("dirs") or ()]
     dir_opts = "".join(f'<option value="{escape(d)}"{" selected" if d == where else ""}>'
                        f'{escape(d)}</option>' for d in dict.fromkeys(dirs))
-    picks = ['<option value="">plain dialogue — no skill, workflow or agent</option>']
-    for kind, label in (("skill", "Skills"), ("workflow", "Workflows"), ("agent", "Agents")):
-        opts = "".join(
-            f'<option value="{kind}:{escape(e["name"])}"'
-            f'{" selected" if p.get("launch") == kind + ":" + e["name"] else ""}>'
-            f'{escape(e["invoke"])} — {escape(e["description"][:70])}</option>'
-            for e in entries if e["kind"] == kind and not e["broken"])
-        if opts:
-            picks.append(f'<optgroup label="{label}">{opts}</optgroup>')
     if p.get("archived"):
         form = '<p class="empty">Archived — restore it to launch work here.</p>'
     elif not where:
@@ -1424,11 +1555,11 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
         form = (f'<form class="newtask" method="post" action="{PROJECTS_PATH}/{escape(pid)}/tasks">'
                 '<textarea name="text" required placeholder="What should run in this project?">'
                 '</textarea><div class="row">'
-                f'<select name="run">{"".join(picks)}</select>'
                 f'<select name="cwd">{dir_opts}</select>'
                 '<button type="submit">Launch</button></div>'
+                f'{_run_picker(entries, p.get("launch") or "")}'
                 f'<p class="meta">everything installed: <a href="{LIBRARY_PATH}">library</a></p>'
-                '</form>')
+                f'</form><script>{_PICKER_JS}</script>')
     launch = f'<section class="card" id="launch"><h2>new work</h2>{form}</section>'
     done = "".join(
         f'<div class="rowline"><a class="row" href="/session/{escape(str(m["key"]))}">'

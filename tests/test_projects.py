@@ -457,7 +457,10 @@ def test_project_pages_create_launch_and_archive_through_the_page_server():
         assert projects.load(root)["web"]["dirs"] == [str(work.resolve())]
 
         code, body = srv.get("/project/web")
-        assert code == 200 and 'id="launch"' in body and "plain dialogue" in body
+        # The launcher asks for the work, not for which skill runs it: the
+        # picker is a folded override and choosing nothing is the default.
+        assert code == 200 and 'id="launch"' in body
+        assert "the session picks its own skill" in body and 'id="runq"' in body
 
         code, loc = srv.post("/projects/web/tasks", {"text": "fix the header",
                                                      "run": "skill:x", "cwd": str(work)})

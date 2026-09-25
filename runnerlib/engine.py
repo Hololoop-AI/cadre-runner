@@ -51,6 +51,9 @@ loaded rather than the first time it fires:
         so "no open event" reduces to "no such event".
 
 Conditions in a list are ANDed. That is the whole language.
+
+A `spawn_node` body's `node` is a template like any emitter string, so
+`"node": "{payload[node]}"` starts whichever node the trigger event names.
 """
 
 import json
@@ -311,9 +314,14 @@ def _run_body(body, event: dict, nodes, action: dict):
     if body["type"] == "spawn_node":
         if nodes is None:
             raise ActionFailed("spawn_node needs a node registry")
+        # The node may be named by the EVENT (`"node": "{payload[node]}"`), so
+        # one action can start whichever node an event names instead of one
+        # action per pair of nodes. A name the registry does not hold is a
+        # failed firing and a `signal: failed` on the board, never a quiet skip.
+        name = _fmt(body["node"], event, None)
         try:
-            node = nodes.active(body["node"])
-            argv = nodes.command_argv(body["node"], event=event, node=node)
+            node = nodes.active(name)
+            argv = nodes.command_argv(name, event=event, node=node)
         except NodeError as e:
             raise ActionFailed(str(e)) from e
         return {"kind": "spawn", "action": action["name"], "node": node["name"],
