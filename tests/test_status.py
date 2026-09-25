@@ -489,6 +489,36 @@ def test_agent_state_badges_name_the_drivers_states():
         "awaiting you", "")
 
 
+def test_badges_tell_a_page_with_no_owner_from_an_idle_agent():
+    """Driver ask 2026-09-22: 'no agent listening' covered both a page nobody
+    will ever pick up and a dialogue between turns. With the runner's
+    ownership known, the two read apart."""
+    B = statusd.agent_state_badge
+    queued = {"status": "open", "pending_prompts": 2, "presence": "waiting"}
+    quiet = {"status": "open", "pending_prompts": 0, "presence": "waiting"}
+    assert B(queued, owned=False) == ("queued — no owner yet, adopting", "needs")
+    assert B(queued, owned=True) == ("queued — agent between turns", "running")
+    assert B(quiet, owned=False) == ("no owner — attach from manage", "")
+    assert B(quiet, owned=True) == ("awaiting you", "")
+    assert B(None, owned=False) == ("no owner", "")
+    # a loop outside the runner working on an unowned page is still working
+    assert B({"status": "open", "presence": "working"}, owned=False) == (
+        "agent working", "running")
+
+
+def test_manage_view_attach_control_follows_ownership():
+    row = {"title": "d4", "path": "/session/k4", "earlier": []}
+    page = lambda owner: statusd.render_page("k4", row, [], [], owner=owner)
+    open_form = page({"state": "none", "error": ""})
+    assert 'name="action" value="attach"' in open_form
+    assert 'name="instruction"' in open_form
+    owned = page({"state": "task", "task": "task-7"})
+    assert 'value="attach"' not in owned and "Owned by dialogue task-7" in owned
+    assert "second owner" in page({"state": "outside"})
+    assert "already queued" not in page({"state": "pending"})
+    assert "Last attach failed: board down" in page({"state": "none", "error": "board down"})
+
+
 def test_history_renders_journal_batches_newest_first():
     with tempfile.TemporaryDirectory() as d:
         artifact = str(Path(d) / "art.html")

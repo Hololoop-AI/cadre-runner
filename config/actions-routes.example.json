@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "An EXAMPLE of routes, not loaded by the daemon (engine_seam.ACTIONS_PATHS",
+    "does not list it). It shows the shape a flow takes when the driver points",
+    "a task page somewhere instead of only approving or continuing it.",
+    "",
+    "A route is an ordinary action. Its trigger is the `task:route` command the",
+    "surface bridge writes when the driver picks `route:<name>` on a page; its",
+    "body is whatever that route activates. The node that built the page is",
+    "told which routes listen for it (runnerlib/tasks.routes_for) and offers",
+    "the ones that fit as extra choices on its verdict form.",
+    "",
+    "The flow here: the `task` node's page can be routed to `review`, which",
+    "spawns a `review` node on the same task key. The review node's page gets",
+    "its own feedback action, so `continue` on it goes back through review —",
+    "not through task. To use it for real: register a `review` node and add",
+    "this file to engine_seam.ACTIONS_PATHS.",
+    "",
+    "The route the daemon DOES load is config/actions-routes.json: approve a",
+    "page and hand it to the `implement` node, which carries it out."
+  ],
+
+  "actions": [
+
+    {
+      "name": "task-routed-to-review",
+      "_why": "a fresh reviewer reads the page this task produced and judges it",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task:route"},
+                            {"op": "payload_eq", "field": "route", "value": "review"},
+                            {"op": "payload_eq", "field": "from", "value": "task"}]},
+      "body": {"type": "spawn_node", "node": "review"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "review",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "routed to review from {payload[from]}"}}
+    },
+
+    {
+      "name": "review-feedback-resumes-review",
+      "_why": "continue on a review page goes back through the review node",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task:feedback"},
+                            {"op": "payload_eq", "field": "node", "value": "review"}]},
+      "body": {"type": "spawn_node", "node": "review"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "review",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "driver feedback is the next review turn"}}
+    }
+
+  ]
+}

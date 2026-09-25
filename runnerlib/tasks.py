@@ -13,6 +13,9 @@ The event it writes:
     kind       command
     payload    {target: "task", task, story, title, task_text, cwd, iteration}
 
+A fourth, `task:route`, is the driver pointing the dialogue somewhere else:
+see "routes" below.
+
 `task` and `story` are the SAME id under two names — see the config's comment:
 the spawn seam routes on `story` and the node's command substitutes it, while
 this workflow's own vocabulary is `task`. The other two commands on this topic
@@ -28,6 +31,7 @@ repo, no PR and no story would be instructions for a different world.
 
 import time
 import uuid
+from html import escape
 from pathlib import Path
 
 from . import engine_seam, seed_nodes
@@ -41,8 +45,13 @@ TOPIC = "tasks"
 TARGET_REQUEST = "task"
 TARGET_FEEDBACK = "task:feedback"
 TARGET_VERDICT = "task:verdict"
+TARGET_ROUTE = "task:route"
 
 NODE = "task"
+# The node the handoff route activates (config/actions-routes.json): the
+# driver approved a page and this agent carries out what it decided.
+IMPLEMENT = "implement"
+NODES = (NODE, IMPLEMENT)
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 DEFAULT_MODEL = "opus"
@@ -68,33 +77,39 @@ def new_id(title: str, now: float | None = None) -> str:
 # --------------------------------------------------------------------------- node
 
 
-def prompt_text(prompts_dir=None) -> str:
-    return (Path(prompts_dir or PROMPTS_DIR) / f"{NODE}.md").read_text()
+def prompt_text(prompts_dir=None, node: str = NODE) -> str:
+    return (Path(prompts_dir or PROMPTS_DIR) / f"{node}.md").read_text()
 
 
 def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
-    """Install the `task` node. Same timid-promotion contract as the other two
+    """Install the dialogue's nodes: `task`, and `implement`, the one the
+    handoff route activates. Same timid-promotion contract as the other two
     seeds: register what is missing, re-pin the operator dials on what exists,
     record changed prompt text as a version WITHOUT promoting it."""
-    text = prompt_text(prompts_dir)
-    model = cfg.model_for(NODE) if cfg else DEFAULT_MODEL
-    effort = cfg.effort_for(NODE) if cfg else DEFAULT_EFFORT
-    command = seed_nodes.command_for(
-        effort, cfg.claude["bin"] if cfg else seed_nodes.DEFAULT_BIN)
-    meta = {"reads": ["command:task"], "emits": ["signal", "report"]}
     nodes = Nodes(data_dir)
-    if NODE not in nodes.index["nodes"]:
-        nodes.register(NODE, text, model, command, produced_by="seed", **meta)
-        return {NODE: "registered"}
-    rec = nodes.index["nodes"][NODE]
-    rec.update(model=model, command=command,
-               reads=list(meta["reads"]), emits=list(meta["emits"]))
-    nodes._save()
-    nodes._write_export(NODE)
-    if any(v["id"] == version_id(text) for v in rec["versions"]):
-        return {NODE: "unchanged"}
-    nodes.new_version(NODE, text, produced_by="seed")
-    return {NODE: "version-recorded"}
+    out = {}
+    for node in NODES:
+        text = prompt_text(prompts_dir, node)
+        model = cfg.model_for(node) if cfg else DEFAULT_MODEL
+        effort = cfg.effort_for(node) if cfg else DEFAULT_EFFORT
+        command = seed_nodes.command_for(
+            effort, cfg.claude["bin"] if cfg else seed_nodes.DEFAULT_BIN)
+        meta = {"reads": [f"command:{node}"], "emits": ["signal", "report"]}
+        if node not in nodes.index["nodes"]:
+            nodes.register(node, text, model, command, produced_by="seed", **meta)
+            out[node] = "registered"
+            continue
+        rec = nodes.index["nodes"][node]
+        rec.update(model=model, command=command,
+                   reads=list(meta["reads"]), emits=list(meta["emits"]))
+        nodes._save()
+        nodes._write_export(node)
+        if any(v["id"] == version_id(text) for v in rec["versions"]):
+            out[node] = "unchanged"
+            continue
+        nodes.new_version(node, text, produced_by="seed")
+        out[node] = "version-recorded"
+    return out
 
 
 # --------------------------------------------------------------------------- submit
@@ -219,11 +234,16 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict]) -> dict 
         # The bumped round has to survive a restart between this write and the
         # spawn it triggers, or the next turn renders as the round before it.
         reg.save()
+    # A page built by a node a route handed the task to goes BACK through that
+    # node, not through `task`: `node` is what that node's own feedback action
+    # matches on. Absent for the `task` node, so its command is unchanged.
+    node = rec.get("node") or NODE
     return _command(cfg, task_id,
                     {"target": TARGET_FEEDBACK, "task": task_id, "story": task_id,
                      "cwd": cwd or rec.get("cwd") or "",
                      "iteration": str(rec["iteration"]),
-                     "feedback": text, "resume": "session"})
+                     "feedback": text, "resume": "session",
+                     **({"node": node} if node != NODE else {})})
 
 
 def write_verdict(cfg, task_id: str, verdict: str) -> dict:
@@ -236,6 +256,89 @@ def write_verdict(cfg, task_id: str, verdict: str) -> dict:
     return _command(cfg, task_id,
                     {"target": TARGET_VERDICT, "task": task_id, "story": task_id,
                      "verdict": verdict})
+
+
+# --------------------------------------------------------------------------- routes
+#
+# A route is the driver pointing a board event. The node that built the page
+# knows where its work can go next — the actions that listen for a route from
+# it — and offers those as extra choices on the verdict form. The driver picks
+# one; the bridge writes `task:route` with that name; whichever action listens
+# for it fires (spawn another node, run a command, anything the vocabulary
+# says). The runner never decides what comes next: the action config does.
+#
+# A route action is any action on this topic whose trigger says
+#     payload_eq target = "task:route"   and   payload_eq route = "<name>"
+# and optionally scopes itself to pages built by one node with
+#     payload_eq from = "<node>"   (or payload_in from = [...])
+
+
+def _conds(action: dict) -> list[dict]:
+    w = (action.get("trigger") or {}).get("where") or []
+    return w if isinstance(w, list) else [w]
+
+
+def routes_for(actions: list[dict], node: str) -> list[dict]:
+    """The routes a page built by `node` may offer, in config order: name,
+    what it activates, and the action's own `_why` as the description."""
+    out = []
+    for a in actions:
+        t = a.get("trigger") or {}
+        if (t.get("namespace"), t.get("topic"), t.get("kind")) != (NAMESPACE, TOPIC, "command"):
+            continue
+        eq = {c["field"]: c.get("value") for c in _conds(a) if c.get("op") == "payload_eq"}
+        into = {c["field"]: c.get("values") or [] for c in _conds(a) if c.get("op") == "payload_in"}
+        if eq.get("target") != TARGET_ROUTE or not eq.get("route"):
+            continue
+        if "from" in eq and eq["from"] != node:
+            continue
+        if "from" in into and node not in into["from"]:
+            continue
+        body = a.get("body") or {}
+        to = body.get("node") if body.get("type") == "spawn_node" else body.get("type") or "an event only"
+        out.append({"route": str(eq["route"]), "to": str(to), "action": a["name"],
+                    "why": str(a.get("_why") or "").strip(),
+                    "label": str(a.get("_label") or "").strip()})
+    return out
+
+
+def describe_routes(routes: list[dict]) -> str:
+    """The routes as the page author reads them in `$routes`."""
+    if not routes:
+        return ("None. No action listens for a route from this node, so offer no "
+                "route choices: the verdict form below stays exactly as written.")
+    return "\n".join(f"- `route:{r['route']}` → activates **{r['to']}**"
+                     + (f" — {r['why']}" if r["why"] else "") for r in routes)
+
+
+def route_options(routes: list[dict]) -> str:
+    """The verdict-form lines for these routes, as the page author copies them
+    into the form (`$route_options`). Rendered here rather than left to the
+    author, so the words the driver reads for a handoff are the config's
+    `_label` and every page offers the same choice the same way. Double
+    quotes are stripped from the label: the page contract forbids them inside
+    attribute values, and a stray one would truncate the form."""
+    lines = []
+    for r in routes:
+        label = (r.get("label") or f"Route to {r['route']} — hand this to {r['to']}")
+        label = escape(label.replace('"', ""), quote=False)
+        lines.append(f'<label><input type="radio" name="verdict" '
+                     f'value="route:{r["route"]}"> {label}</label>\n')
+    return "".join(lines)
+
+
+def write_route(cfg, reg, task_id: str, route: str, page: str, notes: list[dict]) -> dict:
+    """The driver chose a route: point the board event there. The driver's
+    annotations ride along as `feedback`, and the page they chose it on as
+    `surface_prev`, so whatever the route activates starts from what they saw.
+    `from` is the node that built that page — what a scoped route matches."""
+    rec = record(reg, task_id)
+    return _command(cfg, task_id,
+                    {"target": TARGET_ROUTE, "route": route,
+                     "from": rec.get("node") or NODE,
+                     "task": task_id, "story": task_id, "cwd": rec.get("cwd") or "",
+                     "iteration": "1", "feedback": format_feedback(notes),
+                     "surface_prev": page})
 
 
 def _command(cfg, task_id: str, payload: dict) -> dict:

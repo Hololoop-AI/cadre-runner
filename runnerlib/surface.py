@@ -50,8 +50,13 @@ _DECISION_RE = re.compile(
 # one is PR-shaped to the bone — `pr=<n>` is required and the verdicts are
 # approve|reject — and a dialogue has no PR and a `continue` instead of a
 # reject. Matched FIRST, so a task token can never be read as a pipeline one.
+#
+# `route:<name>` is the third kind of verdict: the page's author offered a
+# route (runnerlib/tasks.py "routes") and the driver pointed the task there.
+# Same form, same token — only the radio value differs.
 _TASK_DECISION_RE = re.compile(
-    r"CADRE_DECISION gate=task story=([\w.-]+) task=([\w.-]+) verdict=(approve|continue)")
+    r"CADRE_DECISION gate=task story=([\w.-]+) task=([\w.-]+) "
+    r"verdict=(approve|continue|route:[\w.-]+)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
 
 def outbox_path() -> Path:
@@ -564,18 +569,33 @@ def stranded_dir(cfg) -> Path:
     return _dir(cfg) / "stranded"
 
 
-def agent_status(key: str) -> dict | None:
+def agent_status(key: str, timeout: float = 8) -> dict | None:
     """Read-only session state from the surface server. Never consumes — which
     is the whole reason this endpoint exists, and why the daemon may ask it
     about sessions it does not own."""
     import urllib.request
     try:
         with urllib.request.urlopen(
-                f"{upstream()}/api/{key}/agent-status", timeout=8) as r:
+                f"{upstream()}/api/{key}/agent-status", timeout=timeout) as r:
             return json.loads(r.read())
     except Exception:
         return None
 
+
+# What every dialogue that takes over a page is told to do with it — shared by
+# adoption and on-demand attach so the two owners work the page the same way.
+_OWN_PAGE_STEPS = """1. Read the page at {path} in full. It is the whole context you have — treat
+   it as a document written for a reader with no session history, because
+   that is what you are."""
+
+_REWRITE_IN_PLACE = """3. Rewrite that same page in place at that exact path — it is the driver's
+   bookmark and it must stay one page, not a new one. Follow the authoring
+   contract (invoke the auto-surface skill): what changed this round at the
+   top, the settled answers pinned in a green decided block, and the verdict
+   form last.
+
+From here this is an ordinary dialogue: their next annotation on that page
+reaches you as the next turn of this session."""
 
 ADOPT_ASK = """You now own the review surface page at {path}
 
@@ -589,21 +609,66 @@ Their queued feedback, verbatim:
 
 Do this:
 
-1. Read the page at {path} in full. It is the whole context you have — treat
-   it as a document written for a reader with no session history, because
-   that is what you are.
+""" + _OWN_PAGE_STEPS + """
 2. Act on what they said. If they answered questions, those answers are
    DECIDED: record them as settled, with the date, and do not reargue them.
    If they asked for something, do it. If a point is wrong, push back with
    your reasoning rather than complying silently.
-3. Rewrite that same page in place at that exact path — it is the driver's
-   bookmark and it must stay one page, not a new one. Follow the authoring
-   contract (invoke the auto-surface skill): what changed this round at the
-   top, the settled answers pinned in a green decided block, and the verdict
-   form last.
+""" + _REWRITE_IN_PLACE
 
-From here this is an ordinary dialogue: their next annotation on that page
-reaches you as the next turn of this session."""
+ATTACH_ASK = """You now own the review surface page at {path}
+
+The driver asked for an agent on this page from the fleet's manage view. It
+had no agent behind it — it was registered as a presence-only session — so
+nothing they wrote there had a loop to reach. You are that loop from now on.
+
+Their instruction for you:
+
+{instruction}
+
+Do this:
+
+""" + _OWN_PAGE_STEPS + """
+2. Carry out the instruction. Anything the page already records as DECIDED
+   stays decided: do not reargue it. If a point is wrong, push back with your
+   reasoning rather than complying silently.
+""" + _REWRITE_IN_PLACE
+
+ATTACH_DEFAULT = ("None given. Read this page and continue it: pick up where it "
+                  "left off, do the next thing it is waiting on, and say on the "
+                  "page what you did.")
+
+
+def unowned(meta: dict) -> bool:
+    """No loop answers this page's feedback. Every other open kind is polled by
+    the daemon (the pipeline's kinds) or belongs to a dialogue (`task`); a
+    presence-only `external` row with no task behind it is the one hole.
+    Adoption, attach and the fleet badge all ask this — one definition."""
+    return meta.get("kind") == "external" and not meta.get("task")
+
+
+def _own_page(cfg, reg, path: str, ask: str, title: str, **stamp) -> str:
+    """Dispatch a dialogue that owns `path` from now on: submit the task, point
+    its record at the page (so it rewrites that page rather than opening a
+    second one — the driver's bookmark IS the conversation), and flip the
+    session to kind=task so the daemon delivers its feedback. Raises if the
+    dispatch fails; nothing is flipped in that case."""
+    from . import tasks as tasks_mod
+    s = sessions(cfg)
+    cwd = str((s.get(path) or {}).get("cwd") or "")
+    cwd = cwd if cwd.startswith("/") else str(Path(path).parent)
+    task_id = tasks_mod.submit_task(cfg, ask, cwd=cwd, title=title)
+    rec = tasks_mod.record(reg, task_id)
+    rec["page"] = str(path)
+    rec["cwd"] = cwd
+    if hasattr(reg, "save"):
+        reg.save()
+    s = sessions(cfg)
+    if path in s:
+        s[path].update(kind="task", task=task_id, **stamp)
+        s[path].pop("attach_error", None)
+        _save_sessions(cfg, s)
+    return task_id
 
 
 def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
@@ -624,8 +689,7 @@ def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
     """
     from . import tasks as tasks_mod
     for path, meta in list(sess.items()):
-        if (not meta.get("open") or meta.get("kind") != "external"
-                or meta.get("task")):
+        if not meta.get("open") or not unowned(meta):
             continue
         if not str(path).startswith("/") or not Path(path).exists():
             continue                    # a page-less presence row owns nothing
@@ -654,32 +718,133 @@ def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
                          "adoption found no readable feedback")
             continue
         try:
-            task_id = tasks_mod.submit_task(
-                cfg, ADOPT_ASK.format(
-                    path=path, feedback=tasks_mod.format_feedback(notes)),
-                cwd=str(Path(path).parent),
-                title=f"adopt {Path(path).stem}")
+            task_id = _own_page(
+                cfg, reg, path,
+                ADOPT_ASK.format(path=path,
+                                 feedback=tasks_mod.format_feedback(notes)),
+                title=f"adopt {Path(path).stem}", adopted=time.time())
         except Exception as e:
             _dead_letter(cfg, log, path, meta, raw, payload,
                          f"adoption dispatch failed: {e}")
             continue
-        # The dialogue rewrites the page it adopted rather than opening a
-        # second one: the driver's bookmark IS the conversation.
-        rec = tasks_mod.record(reg, task_id)
-        rec["page"] = str(path)
-        rec["cwd"] = str(Path(path).parent)
-        if hasattr(reg, "save"):
-            reg.save()
-        s = sessions(cfg)
-        if path in s:
-            s[path].update(kind="task", task=task_id, adopted=time.time())
-            _save_sessions(cfg, s)
         board_events.emit("surface_adopted", artifact=path, task=task_id,
                           prompts=len(notes),
                           project=meta.get("project") or "",
                           title=meta.get("title") or "")
         log(f"surface: ADOPTED {Path(path).name} — {len(notes)} queued note(s) "
             f"had no listener; dialogue {task_id} owns it now")
+
+
+# ------------------------------------------------------- attach on demand
+#
+# The driver's half of adoption: "start an agent on this page now", for a page
+# with no owner and nothing queued (which adoption, rightly, never touches).
+# The page server is a separate process and the task registry is the daemon's
+# in-memory state — a write from outside is erased by the daemon's next save —
+# so the page server only files a request here and the daemon's tick does the
+# ownership wiring, through the same `_own_page` adoption uses.
+
+def _attach_dir(cfg) -> Path:
+    return _dir(cfg) / "attach"
+
+
+def _attach_file(cfg, path: str) -> Path:
+    import hashlib
+    return _attach_dir(cfg) / (hashlib.sha1(str(path).encode()).hexdigest()[:16] + ".json")
+
+
+def ownership(cfg, path: str) -> dict:
+    """Who answers this page, from the runner's session store (authoritative,
+    unlike the status snapshot, which lags a tick): state is `task` (a
+    dialogue owns it), `pipeline` (a runner-polled kind), `pending` (an attach
+    is queued), `none`, or `unknown` (not a runner session with a page)."""
+    meta = sessions(cfg).get(str(path)) if str(path).startswith("/") else None
+    if not meta:
+        return {"state": "unknown"}
+    if not meta.get("open"):
+        return {"state": "unknown", "why": "its session has ended"}
+    if meta.get("task"):
+        return {"state": "task", "task": meta["task"]}
+    if not unowned(meta):
+        return {"state": "pipeline", "kind": meta.get("kind") or ""}
+    if _attach_file(cfg, path).exists():
+        return {"state": "pending"}
+    st = agent_status(str(meta["key"]), timeout=1) if meta.get("key") else None
+    if (st or {}).get("presence") == "working":
+        # registered presence-only BY a loop that is on it right now (an
+        # orchestrator polling its own page): attaching would be a second owner
+        return {"state": "outside"}
+    return {"state": "none", "error": meta.get("attach_error") or ""}
+
+
+def request_attach(cfg, path: str, instruction: str = "") -> str:
+    """File an attach request for the daemon; returns what happened in words
+    for the driver. Raises ValueError when the page already has an owner (or
+    cannot have one) — the control says so rather than spawn a second."""
+    own = ownership(cfg, path)
+    if own["state"] == "task":
+        raise ValueError(f"already owned by dialogue {own['task']}")
+    if own["state"] == "pipeline":
+        raise ValueError(f"already owned by the pipeline ({own['kind']} session)")
+    if own["state"] == "pending":
+        raise ValueError("an attach is already queued for this page")
+    if own["state"] == "outside":
+        raise ValueError("an agent outside the runner is working on this page")
+    if own["state"] == "unknown":
+        raise ValueError(own.get("why") or "not a runner session with a page")
+    if not Path(path).exists():
+        raise ValueError(f"the page file is gone: {path}")
+    f = _attach_file(cfg, path)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"artifact": str(path),
+                               "instruction": (instruction or "").strip(),
+                               "requested": time.time()}))
+    os.replace(tmp, f)
+    return "Attach queued: the runner dispatches a dialogue for this page on its next tick."
+
+
+def _attach_requested(cfg, reg, log, sess: dict) -> None:
+    """Serve the manage view's attach requests. Ownership is re-checked here,
+    at the moment of wiring: adoption runs first in the same tick, so a page
+    that gained an owner since the request was filed is left alone."""
+    d = _attach_dir(cfg)
+    if not d.is_dir():
+        return
+    for f in sorted(d.glob("*.json")):
+        try:
+            req = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            f.unlink(missing_ok=True)
+            continue
+        path = str(req.get("artifact") or "")
+        meta = sess.get(path) or {}
+        f.unlink(missing_ok=True)       # one attempt per request, never a loop
+        if ownership(cfg, path)["state"] != "none" or not Path(path).exists():
+            board_events.emit("surface_attach_skipped", artifact=path,
+                              task=meta.get("task") or "")
+            log(f"surface: attach skipped for {Path(path).name} — it has an "
+                f"owner or no open page")
+            continue
+        try:
+            task_id = _own_page(
+                cfg, reg, path,
+                ATTACH_ASK.format(path=path, instruction=(
+                    req.get("instruction") or ATTACH_DEFAULT)),
+                title=f"attach {Path(path).stem}", attached=time.time())
+        except Exception as e:
+            s = sessions(cfg)
+            if path in s:
+                s[path]["attach_error"] = str(e)[:300]
+                _save_sessions(cfg, s)
+            log(f"surface: attach dispatch failed for {Path(path).name}: {e}")
+            continue
+        board_events.emit("surface_attached", artifact=path, task=task_id,
+                          project=meta.get("project") or "",
+                          title=meta.get("title") or "")
+        log(f"surface: ATTACHED dialogue {task_id} to {Path(path).name} "
+            f"on the driver's request")
+        sess = sessions(cfg)
 
 
 def _dead_letter(cfg, log, path: str, meta: dict, raw: str,
@@ -736,10 +901,21 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                               turn, which is why the config has no continue
                               branch to fire.
 
+        `route:<name>`     -> `task:route`, the board event the driver pointed:
+                              whatever action listens for that route fires
+                              (see tasks.py "routes"). Only routes an action
+                              listens for are written.
+
     Approve wins over annotations that arrived with it: a page the driver
     approved is finished, and re-spawning the session to answer notes on work
     that is done would restart a dialogue the driver just closed. Those notes
     are logged rather than written, so they are not silently gone.
+
+    A route in the same batch wins over approve. The handoff IS an approval
+    (config/actions-routes.json) that also carries the annotations forward as
+    the receiving agent's last instructions — so a batch holding both, a
+    driver who clicked Approve and then changed their mind, must not lose the
+    handoff and the notes to the plain close.
     """
     from . import tasks as tasks_mod
     task_id = meta.get("task") or ""
@@ -748,31 +924,34 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         return
     notes = list(free)
     approve = asked_to_continue = False
+    route = None
     for item in structured:
         if item.get("type") != "task_decision":
             continue
-        if item["verdict"] == "approve":
+        if item["verdict"].startswith("route:"):
+            route = item["verdict"].split(":", 1)[1]
+            notes.append(item)
+        elif item["verdict"] == "approve":
             approve = True
         else:                       # continue: whatever it rode in on counts
             asked_to_continue = True
             notes.append(item)
-    if approve:
+    if approve and not route:
         tasks_mod.write_verdict(cfg, task_id, "approve")
         if notes:
             # The dialogue is closed, so no session will read these — but the
             # driver wrote them, so they are kept verbatim where the task's
             # logs live, not just truncated into a log line.
-            kept = Path(cfg.data_dir) / "logs" / task_id / "closing-annotations.json"
-            kept.parent.mkdir(parents=True, exist_ok=True)
-            kept.write_text(json.dumps(
-                [{"text": n.get("text") or "", "prompt": n.get("prompt") or ""}
-                 for n in notes], indent=1))
+            kept = _keep(cfg, task_id, "closing-annotations.json", notes)
             log(f"surface: {task_id} approved with {len(notes)} annotation(s) "
                 f"alongside — the dialogue is closed, they start no new turn; "
                 f"kept in full at {kept}: "
                 + " | ".join((n.get("text") or "")[:120] for n in notes))
         log(f"surface: {task_id} approved via surface — dialogue closed")
         end_session(cfg, path, log)
+        return
+    if route:
+        _route(cfg, reg, log, path, task_id, route, notes)
         return
     if not any((n.get("text") or "").strip() for n in notes):
         if not asked_to_continue:
@@ -787,6 +966,38 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         return
     log(f"surface: {task_id} round {ev['payload']['iteration']} requested — "
         f"{len(notes)} annotation(s) back to the session")
+
+
+def _route(cfg, reg, log, path: str, task_id: str, route: str,
+           notes: list[dict]) -> None:
+    """The driver pointed the task at a route. Only a route some action
+    listens for is written — one nobody listens for would be an event that
+    activates nothing, so it is kept on disk and said out loud instead. A
+    written route hands the work off: this page's session ends, and whatever
+    the route activates writes the next page."""
+    from . import engine_seam, tasks as tasks_mod
+    node = (tasks_mod.records(reg).get(task_id) or {}).get("node") or tasks_mod.NODE
+    known = {r["route"] for r in tasks_mod.routes_for(engine_seam.actions_for(cfg), node)}
+    if route not in known:
+        kept = _keep(cfg, task_id, "unrouted-verdicts.json", notes)
+        log(f"surface: {task_id} chose route {route!r}, which no action listens "
+            f"for from {node} — nothing written; kept at {kept}")
+        return
+    tasks_mod.write_route(cfg, reg, task_id, route, path, notes)
+    log(f"surface: {task_id} routed to {route} from {Path(path).name} "
+        f"with {sum(1 for n in notes if (n.get('text') or '').strip())} annotation(s)")
+    end_session(cfg, path, log)
+
+
+def _keep(cfg, task_id: str, name: str, notes: list[dict]) -> Path:
+    """Driver words no turn will read, kept verbatim beside the task's logs."""
+    kept = Path(cfg.data_dir) / "logs" / task_id / name
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_text(json.dumps(
+        [{"text": n.get("text") or "", "anchor": n.get("anchor") or "",
+          "prompt": n.get("prompt") or ""}
+         for n in notes], indent=1))
+    return kept
 
 
 def _ensure_server(cfg, sess: dict, log) -> None:
@@ -876,6 +1087,9 @@ def _tick(cfg, reg, ghc, log) -> None:
 
     # 1b) feedback queued on a page with no owner gets one
     _adopt_unowned(cfg, reg, log, sess)
+    sess = sessions(cfg)
+    # 1c) the driver asked for an agent on a page nobody owns
+    _attach_requested(cfg, reg, log, sess)
     sess = sessions(cfg)
 
     # 2) new pending questions get artifacts. Only OPEN sessions suppress

@@ -132,7 +132,14 @@ only stages your answer in the browser tab; nothing leaves until you send.
 
 Your notes come back to the *same* session as its next turn, with the text each
 note was attached to. **Approve** ends the dialogue; **Continue** means your
-annotations say what is next.
+annotations say what is next; **Approve and hand off** approves what the page
+decided and sends it to an implementing agent. That agent works in the same
+directory, reads the approved page as its spec and your annotations as its last
+instructions, and writes its own page under the same conversation for you to
+rule on. It commits only what the page proposed and never pushes on its own.
+A page written before the handoff existed has no such line; hand it off with
+`python3 pipeline.py handoff <task-id>` — any notes kept from an earlier plain
+approve ride along.
 
 **Register a project section** so the fleet is a launchpad rather than a list —
 clicking the row prefills the New task box with that directory:
@@ -150,7 +157,8 @@ CADRE_CONFIG=$PWD/config.local.toml python3 pipeline.py surface register \
 | Page says "queued — no agent listening" | Feedback is waiting with no owner. The daemon adopts these on its own within a poll and dispatches a dialogue; if it cannot, the batch is written verbatim under `<data_dir>/surfaces/stranded/` and the row badges it. Nothing is lost. |
 | You answered and nothing happened | You pressed "Queue answer", not "Send to Agent". Every delivery is recorded in `~/.review-surface/feedback-journal.jsonl` — that file is the receipt. |
 | A task never spawns | The daemon caps at 4 concurrent runs and currently drops a firing that arrives at the cap. Re-dispatch. |
-| Editing a prompt in `prompts/` changed nothing | Seeding records a new version but does not promote it. Promote it, then restart the daemon. |
+| Editing a prompt in `prompts/` changed nothing | Seeding records a new version but does not promote it. `python3 pipeline.py promote task` (or `implement`) activates the text on disk; the daemon picks it up on its next pass. |
+| Editing `config/actions-*.json` changed nothing | The daemon reads its actions once, at start. Restart it. |
 | Page renders as unstyled white text | The authoring session wrote a fragment instead of a full document — a task-prompt failure, not a server one. |
 | `review-surface` starts but pages 404 | Something else owns port 4387. Use another port and set `CADRE_SURFACE_UPSTREAM` to match for the daemon and the fleet page. |
 
@@ -160,8 +168,9 @@ Killing all three processes loses nothing.
 
 ## What this does not do yet
 
-- **It does not build what a discussion decides.** A dialogue writes pages;
-  approving one ends it. Turning a decision into code is a task you dispatch.
+- **One destination.** "Approve and hand off" goes to the one implementing
+  agent. A second kind of handoff (a reviewer, a test writer) is one more
+  action in `config/actions-routes.json` plus its node — not built yet.
 - Lifecycle state is partly convention: a page is "decided" because its title
   says so. The store that replaces this is designed, not built.
 - One driver. There is no identity or attribution on annotations, so a second

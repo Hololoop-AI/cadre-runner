@@ -803,10 +803,13 @@ def test_preflight_detects_a_missing_node():
     # a deployment that has never had a task submitted has never run
     # `tasks.seed`, so without this row engine-only mode reads as ready while
     # the first dialogue command spawns a node that does not exist.
-    assert "nodes active (11)" in checks
+    # ...and `implement`, the node the handoff route spawns
+    # (config/actions-routes.json), for the same reason.
+    assert "nodes active (12)" in checks
     assert "actions actions-dialogue.json" in checks
+    assert "actions actions-routes.json" in checks
     assert checks["engine action set"].detail.endswith(
-        "actions-pipeline.json, actions-dialogue.json")
+        "actions-pipeline.json, actions-dialogue.json, actions-routes.json")
 
     # drop one node from the registry and re-check WITHOUT re-seeding: a
     # deployment whose registry lost a node must not read as ready
@@ -815,7 +818,7 @@ def test_preflight_detects_a_missing_node():
     nodes._save()
     again = preflight.run(d, seed=False, skip_tools=True)
     failed = [c for c in again if not c.ok]
-    assert [c.name for c in failed] == ["nodes active (11)",
+    assert [c.name for c in failed] == ["nodes active (12)",
                                         "actions actions-pipeline.json"]
     assert "missing: build" in failed[0].detail
     assert "build" in failed[1].detail          # an action spawns a node that is gone
@@ -829,7 +832,7 @@ def test_preflight_detects_a_missing_node():
     del n2.index["nodes"]["tests"]["active_version"]
     n2._save()
     rows = {c.name: c for c in preflight.run(d2, seed=False, skip_tools=True)}
-    assert "no active version: tests" in rows["nodes active (11)"].detail
+    assert "no active version: tests" in rows["nodes active (12)"].detail
 
 
 if __name__ == "__main__":

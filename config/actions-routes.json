@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "The handoff: the routes the daemon actually loads (engine_seam.ACTIONS_PATHS).",
+    "",
+    "A dialogue page ends in a decision. `approve` closes it and nothing happens",
+    "next (config/actions-dialogue.json: task-approved-done). The route here is",
+    "the other way to approve: the driver approves what the page decided AND",
+    "hands it to a node that carries it out — the `implement` node",
+    "(prompts/implement.md). It runs in the same working directory, reads the",
+    "approved page as its spec and the driver's closing annotations as the last",
+    "instructions before the work starts, does the work, and writes its own",
+    "page for the driver to rule on. Same task key, so the fleet shows one",
+    "conversation; the reap links the new page derived-from the approved one.",
+    "",
+    "`_label` is what the verdict form shows the driver for this route — the",
+    "form line is rendered from it (runnerlib/tasks.route_options), so the words",
+    "the driver reads are this file's, not whatever a page author improvised.",
+    "",
+    "Why a route and not a new verdict kind: a route is already the board's word",
+    "for 'the driver pointed this somewhere'. The bridge writes `task:route`",
+    "with the annotations and the page riding along; this file decides what",
+    "that activates. A second destination later is one more action, not code.",
+    "",
+    "config/actions-routes.example.json is a second, unloaded shape (a review",
+    "node) kept as documentation; it needs a node nobody has registered."
+  ],
+
+  "actions": [
+
+    {
+      "name": "task-approved-handed-to-implement",
+      "_why": "the driver approved the decision on this page and wants it carried out: an implementing agent reads the page as its spec, does the work in the same directory, and writes a page reporting what it did",
+      "_label": "Approve and hand off — an agent carries out what this page decided and brings you a page to review",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task:route"},
+                            {"op": "payload_eq", "field": "route", "value": "implement"},
+                            {"op": "payload_eq", "field": "from", "value": "task"}]},
+      "body": {"type": "spawn_node", "node": "implement"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "implement",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "approved and handed off from {payload[from]}"}}
+    },
+
+    {
+      "name": "implement-feedback-resumes-implement",
+      "_why": "continue on the implementing agent's page goes back through that agent, resuming its session",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task:feedback"},
+                            {"op": "payload_eq", "field": "node", "value": "implement"}]},
+      "body": {"type": "spawn_node", "node": "implement"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "implement",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "driver feedback is the next implement turn"}}
+    }
+
+  ]
+}

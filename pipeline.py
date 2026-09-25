@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""PR-gated pipeline — local runner (the "work version").
-
-Commands:
-  install --repo owner/name              clone + link pipeline skills into the checkout
-  start   --repo owner/name --story ...  run intake (S0): feature branch, tracking issue,
-                                         planning PR + self-interrogation
-  run                                    poll daemon: dispatch merges/summons to stages
-  once                                   single poll pass (testing)
-  status                                 print local registry state
+"""Cadre local runner: dialogue tasks (ask, read the answer on a page) and the
+PR-gated pipeline. `pipeline.py <command> --help` for any command's options.
 """
 
 import argparse
@@ -26,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import board_events
+from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -852,7 +846,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     rid = f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}"
     v = {"task": task_id, "story": task_id, "cwd": str(cwd),
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
-         "task_text": "", "feedback": "", "surface_prev": ""}
+         "task_text": "", "feedback": "", "surface_prev": "",
+         "routes": tasks_mod.describe_routes([]), "route_options": ""}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
     prompt = Template(action["prompt_template"]).safe_substitute(v)
@@ -868,7 +863,9 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
                                     "CADRE_RUN_ID": rid,
-                                    **_surface_env(cfg, stage, task_id,
+                                    # the task's page, whichever node a route
+                                    # handed it to
+                                    **_surface_env(cfg, tasks_mod.NODE, task_id,
                                                    page=rec.get("page"))})
     active[rid] = {
         "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
@@ -910,15 +907,53 @@ def _reap_tasks(cfg, reg):
             rec["last_result"] = (result or "")[:500]
             log(f"{task_id}: turn {run.get('iteration')} "
                 f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
-            art = surface_out(cfg, run["stage"], task_id, page=rec.get("page"))
+            art = surface_out(cfg, tasks_mod.NODE, task_id, page=rec.get("page"))
             if ok and art and art.exists() and surface_mod.available():
                 # `task` is the meta the feedback bridge scopes on: only a
                 # session opened here is a dialogue turn's page.
-                surface_mod.open_session(cfg, art, "task", log,
-                                         task=task_id, cwd=rec.get("cwd", ""))
+                surface_mod.open_session(
+                    cfg, art, "task", log, task=task_id, cwd=rec.get("cwd", ""),
+                    **({"node": run["stage"]} if run["stage"] != tasks_mod.NODE else {}),
+                    **_inherited(cfg, rec, art))
+                _link_routed_page(cfg, rec, art, task_id)
             elif ok and art and not art.exists():
                 log(f"{task_id}: turn finished but wrote no page at {art} — "
                     f"nothing for the driver to rule on")
+
+
+def _inherited(cfg, rec, art) -> dict:
+    """A handed-off page belongs where the page it came from belongs: its
+    project is copied onto the new page's session the first time it opens.
+    The fleet's own fallback (the working directory's project) would usually
+    agree, but a page the driver filed somewhere else by hand must not fall
+    out of that project the moment its work is handed on."""
+    src = rec.get("routed_from")
+    if not src or str(art) == str(src):
+        return {}
+    sess = surface_mod.sessions(cfg)
+    if (sess.get(str(art)) or {}).get("project"):
+        return {}
+    project = (sess.get(str(src)) or {}).get("project")
+    return {"project": project} if project else {}
+
+
+def _link_routed_page(cfg, rec, art, task_id):
+    """A page built by a node a route activated is `derived-from` the page the
+    driver chose that route on — written once, to the link log the fleet
+    already reads, so the chain of pages shows which node each came from."""
+    src = rec.get("routed_from")
+    if not src:
+        return
+    sess = surface_mod.sessions(cfg)
+    new, old = ((sess.get(str(p)) or {}).get("key") for p in (art, src))
+    if not (new and old):
+        return
+    log_path = surface_mod._dir(cfg) / "panel-links.jsonl"
+    records, _ = conversations.load_links([log_path])
+    if conversations.check_link(records, "derived-from", new, old) == "new":
+        conversations.append_link(log_path, "derived-from", new, old, by="cadre-route")
+        log(f"{task_id}: {Path(art).name} linked derived-from {Path(src).name}")
+    rec.pop("routed_from", None)
 
 
 def _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg):
@@ -1272,9 +1307,16 @@ def cmd_board_check(cfg, args):
 
 def cmd_status(cfg, args):
     reg = Registry(cfg.data_dir / "registry.json")
-    if not reg.data["stories"]:
-        print("no stories registered")
+    tasks = tasks_mod.records(reg)
+    if not reg.data["stories"] and not tasks:
+        print("nothing registered: no stories, no tasks")
         return
+    # Dialogue tasks first: on a dialogue-only runner they are all there is, and
+    # "no stories registered" read as "nothing here" to an agent that then
+    # guessed `pipeline.py task list` — which dispatched a task named "list".
+    for tid, t in sorted(tasks.items(), key=lambda kv: kv[1].get("since") or 0):
+        state = "running" if t.get("active_runs") else "idle"
+        print(f"{tid}  [round {t.get('iteration') or 1}, {state}]  {t.get('cwd') or ''}")
     for slug, s in reg.data["stories"].items():
         print(f"{slug}  [{s['status']}/{s['phase']}]  {s['repo']}  "
               f"planning=#{s.get('planning_pr')}  issue=#{s.get('tracking_issue')}")
@@ -1409,6 +1451,60 @@ def cmd_surface(cfg, args):
             print(f"  {s['kind']} {s.get('story')} {s.get('path')}")
 
 
+def cmd_handoff(cfg, args):
+    """Approve-and-hand-off for a page that cannot offer it: one written before
+    the handoff existed, or one whose dialogue is already closed. Writes the
+    same `task:route` event the verdict form's handoff line writes, so the
+    same action fires and the same `implement` node carries the page out.
+
+    The driver's closing annotations — the notes that arrived alongside an
+    earlier plain approve and were kept in `closing-annotations.json` because
+    nothing would read them — ride along by default: they are exactly the last
+    instructions the handoff exists to deliver."""
+    reg = Registry(cfg.data_dir / "registry.json")
+    rec = tasks_mod.records(reg).get(args.task_id)
+    if rec is None:
+        sys.exit(f"no dialogue task {args.task_id!r} in {cfg.data_dir}")
+    page = Path(args.page or rec.get("page")
+                or surface_mod._dir(cfg) / f"task-{args.task_id}.html")
+    if not page.is_file():
+        sys.exit(f"no page at {page}: the page IS the implementing agent's spec")
+    node = rec.get("node") or tasks_mod.NODE
+    known = [r["route"] for r in tasks_mod.routes_for(engine_seam.actions_for(cfg), node)]
+    if args.route not in known:
+        sys.exit(f"no action listens for route {args.route!r} from {node} "
+                 f"(listening: {', '.join(known) or 'none'})")
+    kept = cfg.data_dir / "logs" / args.task_id / "closing-annotations.json"
+    notes = ([] if args.no_kept or not kept.is_file()
+             else json.loads(kept.read_text()))
+    notes += [{"text": n} for n in args.note or []]
+    ev = tasks_mod.write_route(cfg, reg, args.task_id, args.route, str(page), notes)
+    print(f"{args.task_id}: handed off to {args.route} — board event {ev.get('id')}; "
+          f"{len(notes)} note(s) ride along; spec {page}")
+    print("the daemon spawns the implementing agent on its next pass")
+
+
+def cmd_promote(cfg, args):
+    """Put a dialogue node's prompt, as it is on disk now, in front of traffic.
+
+    Seeding records an edited prompt as a new version and deliberately does
+    not activate it (nodes.py: an agent that rewrites a prompt must not be
+    able to promote it in the same act). This is the separate, explicit act —
+    run by a person — and it promotes exactly the text in `prompts/<node>.md`,
+    not "whatever was recorded last". The running daemon re-reads the node
+    registry every pass, so no restart is needed for the prompt itself."""
+    from runnerlib.nodes import Nodes, version_id
+    tasks_mod.seed(cfg.data_dir, cfg)
+    nodes = Nodes(cfg.data_dir)
+    was = nodes.active(args.node)["version"]
+    now = version_id(tasks_mod.prompt_text(node=args.node))
+    if was == now:
+        print(f"{args.node}: already active ({now[:12]})")
+        return
+    nodes.promote(args.node, now)
+    print(f"{args.node}: promoted {was[:12]} -> {now[:12]} (prompts/{args.node}.md)")
+
+
 def cmd_task(cfg, args):
     """Workflow #3's entry point: ask for a task, read the answer on a surface.
 
@@ -1417,6 +1513,15 @@ def cmd_task(cfg, args):
     a review surface, and the driver's annotations come back as the next turn —
     so there is nothing here to wait on, and nothing GitHub-shaped anywhere.
     """
+    if len(args.text.split()) < 2 and not args.yes:
+        # One word is a command someone meant to run, not a request to hand an
+        # agent: `pipeline.py task list` started a real agent session (2026-09-22).
+        print(f"refusing a one-word task ({args.text.strip()!r}): that reads like a "
+              f"command, not a request.\n"
+              f"  tasks and stories:  python3 pipeline.py status\n"
+              f"  open pages:         python3 pipeline.py surface list\n"
+              f"  send it anyway:     add --yes", file=sys.stderr)
+        sys.exit(2)
     task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title)
     print(task_id)
     print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
@@ -1453,17 +1558,19 @@ def main():
                     help="path to config.toml (default: $CADRE_CONFIG)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("install");  p.add_argument("--repo", required=True)
-    p = sub.add_parser("start")
+    p = sub.add_parser("install", help="clone + link pipeline skills into a checkout")
+    p.add_argument("--repo", required=True)
+    p = sub.add_parser("start", help="PR pipeline: run intake for a story "
+                                     "(feature branch, tracking issue, planning PR)")
     p.add_argument("--repo", required=True)
     p.add_argument("--story", help="story text inline")
     p.add_argument("--story-file", help="path to story markdown")
     p.add_argument("--story-id", help="board id, e.g. ENG-123 (default: timestamp)")
     p.add_argument("--title")
     p.add_argument("--variant", choices=["change-spec", "spec-as-source"])
-    sub.add_parser("run")
-    sub.add_parser("once")
-    sub.add_parser("status")
+    sub.add_parser("run", help="the daemon: poll and dispatch until stopped")
+    sub.add_parser("once", help="one daemon pass, then exit — it dispatches for real")
+    sub.add_parser("status", help="print registered dialogue tasks and pipeline stories")
     sub.add_parser("board-check", help="validate board-intake config against the live tracker")
     p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
     p.add_argument("--story", required=True)
@@ -1487,10 +1594,25 @@ def main():
     p.add_argument("--text", required=True)
     p = sub.add_parser("messages", help="driver: list unanswered questions")
     p.add_argument("--story")
-    p = sub.add_parser("task", help="workflow #3: ask for a task; read the answer on a surface")
+    p = sub.add_parser("task", help="dialogue: ask an agent for something; read its answer on a page")
     p.add_argument("text", help="the ask, in your own words")
     p.add_argument("--cwd", help="working directory the task targets (default: here)")
     p.add_argument("--title", help="short title (default: the ask's first line)")
+    p.add_argument("--yes", action="store_true",
+                   help="send a one-word ask anyway (refused by default: it is "
+                        "almost always a command typed in the wrong place)")
+    p = sub.add_parser("handoff", help="approve a page AND hand it to the implementing "
+                                       "agent — for pages whose form has no handoff line")
+    p.add_argument("task_id")
+    p.add_argument("--route", default=tasks_mod.IMPLEMENT)
+    p.add_argument("--page", help="the page to carry out (default: the task's page)")
+    p.add_argument("--note", action="append",
+                   help="a last instruction for the agent (repeatable)")
+    p.add_argument("--no-kept", action="store_true",
+                   help="do not replay the notes kept from an earlier plain approve")
+    p = sub.add_parser("promote", help="activate a dialogue node's prompt as it is "
+                                       "on disk (seeding records edits, never activates them)")
+    p.add_argument("node", choices=list(tasks_mod.NODES))
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
     p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect",
                                       "register"])
@@ -1514,6 +1636,7 @@ def main():
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
+     "promote": cmd_promote, "handoff": cmd_handoff,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

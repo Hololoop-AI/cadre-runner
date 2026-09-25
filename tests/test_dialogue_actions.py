@@ -281,8 +281,8 @@ def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
     never push to main). A dialogue node has no repo and no PR — prepending it
     would be instructions for a different world."""
     d = scratch()
-    assert tasks.seed(d) == {"task": "registered"}
-    assert tasks.seed(d) == {"task": "unchanged"}
+    assert tasks.seed(d) == {"task": "registered", "implement": "registered"}
+    assert tasks.seed(d) == {"task": "unchanged", "implement": "unchanged"}
 
     prompt = Nodes(d).active("task")["prompt"]
     assert (PROMPTS / "_common.md").read_text() not in prompt
@@ -293,7 +293,9 @@ def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
     # a changed prompt is RECORDED, never promoted (nodes.py's rule)
     tmp = scratch()
     (tmp / "task.md").write_text("a different task prompt")
-    assert tasks.seed(d, prompts_dir=tmp) == {"task": "version-recorded"}
+    (tmp / "implement.md").write_text((PROMPTS / "implement.md").read_text())
+    assert tasks.seed(d, prompts_dir=tmp) == {"task": "version-recorded",
+                                              "implement": "unchanged"}
     assert Nodes(d).active("task")["prompt"] == prompt
 
 
@@ -330,6 +332,67 @@ def test_task_subcommand_submits_and_prints_where_to_look():
     assert ev["payload"]["target"] == tasks.TARGET_REQUEST
 
 
+
+def test_a_one_word_task_is_refused_and_writes_nothing():
+    """`pipeline.py task list` read as "list the tasks" to the agent that typed
+    it, and started a real agent session named "list" (2026-09-22). One word is
+    refused before anything reaches the board, with a pointer to what exists."""
+    import pipeline
+    from contextlib import redirect_stderr
+
+    d = scratch()
+    cfg = FakeCfg(d)
+
+    class Args:
+        text, cwd, title, yes = "list", str(d), None, False
+
+    err = io.StringIO()
+    with redirect_stderr(err):
+        try:
+            pipeline.cmd_task(cfg, Args())
+            raise AssertionError("a one-word task was accepted")
+        except SystemExit as e:
+            assert e.code == 2
+    assert "pipeline.py status" in err.getvalue()
+    assert "--yes" in err.getvalue()
+    assert Board(engine_seam.board_path(cfg)).peek(topic="tasks", kind="command") == []
+
+
+def test_a_one_word_task_goes_through_with_yes():
+    import pipeline
+
+    d = scratch()
+    cfg = FakeCfg(d)
+
+    class Args:
+        text, cwd, title, yes = "lint", str(d), None, True
+
+    with redirect_stdout(io.StringIO()):
+        pipeline.cmd_task(cfg, Args())
+    ev = Board(engine_seam.board_path(cfg)).peek(topic="tasks", kind="command")[0]
+    assert ev["payload"]["task_text"] == "lint"
+
+
+def test_status_lists_dialogue_tasks_on_a_runner_with_no_stories():
+    """A dialogue-only runner used to print "no stories registered" — which is
+    what sent an agent guessing at `task list` in the first place."""
+    import pipeline
+    from runnerlib.registry import Registry
+
+    d = scratch()
+    cfg = FakeCfg(d)
+    reg = Registry(d / "registry.json")
+    rec = tasks.record(reg, "task-fix-the-docs-20260924-101010-abcdef")
+    rec.update(iteration=3, cwd="/home/u/proj")
+    reg.save()
+
+    out = io.StringIO()
+    with redirect_stdout(out):
+        pipeline.cmd_status(cfg, None)
+    assert out.getvalue().splitlines() == [
+        "task-fix-the-docs-20260924-101010-abcdef  [round 3, idle]  /home/u/proj"]
+
+
 # --------------------------------------------------------------------------- the action SET
 
 
@@ -340,9 +403,11 @@ def test_the_engine_loads_every_workflow_as_one_set():
     loaded = engine.load_action_set(engine_seam.ACTIONS_PATHS)
     names = [a["name"] for a in loaded]
 
-    assert set(engine_seam.ACTIONS_PATHS) == {PIPELINE_ACTIONS, ACTIONS}
+    routes = ROOT / "config" / "actions-routes.json"
+    assert set(engine_seam.ACTIONS_PATHS) == {PIPELINE_ACTIONS, ACTIONS, routes}
     assert names == [a["name"] for a in engine.load_actions(PIPELINE_ACTIONS)] + \
-                    [a["name"] for a in engine.load_actions(ACTIONS)], \
+                    [a["name"] for a in engine.load_actions(ACTIONS)] + \
+                    [a["name"] for a in engine.load_actions(routes)], \
         "the set is the files concatenated in order — no merge, no reordering"
     assert "task-requested" in names and len(names) == len(set(names))
 

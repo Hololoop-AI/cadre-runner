@@ -26,10 +26,12 @@ Streams responses chunk-by-chunk so the surface's SSE channel (/events/:key)
 works through the proxy.
 """
 
+import hashlib
 import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -40,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import config as config_mod
+from runnerlib import conversations as conv_mod
 from runnerlib import surface as surface_mod
 
 
@@ -72,6 +75,9 @@ STATUS_DIR = Path(os.environ.get("CADRE_STATUS_DIR") or
 # `_dead_letter`). Same data dir as the status snapshot, by the same rule.
 STRANDED_DIR = (_CFG.data_dir if _CFG else
                 Path(os.path.expanduser(_DEFAULTS["data_dir"]))) / "surfaces" / "stranded"
+# The panel's repair log: link records in review-surface's link-store shape,
+# read last so a repair made here wins over what any other store says.
+PANEL_LINKS = STRANDED_DIR.parent / "panel-links.jsonl"
 SURFACE = surface_mod.upstream()
 BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
@@ -85,8 +91,16 @@ TYPES = {".html": "text/html; charset=utf-8", ".json": "application/json",
 
 HOME_PATH = "/"
 TASKS_PATH = "/tasks"
+REPAIR_PATH = "/repair"
+STREAM_PATH = "/fleet/events"
 MAX_TASK_BYTES = 64 * 1024
-REFRESH_MS = 5000
+# The page is pushed, not polled: it refreshes when the fleet stream says
+# something changed. This slow poll runs only while the stream is down.
+FALLBACK_POLL_MS = 30000
+# Fleet stream cadence: how often the server looks at the runner's snapshot
+# (a local stat + hash, no network), and how often it pings an idle client.
+STREAM_TICK = 1.0
+STREAM_PING = 15.0
 
 # Surface session kinds that are a QUESTION to the driver (a verdict, an answer)
 # rather than a report. An open one of these is the strongest "this is waiting
@@ -253,24 +267,39 @@ def fetch_agent_statuses(surfaces: list[dict], base: str | None = None) -> dict:
     return out
 
 
-def agent_state_badge(st: dict | None, now: float | None = None) -> tuple[str, str]:
+def agent_state_badge(st: dict | None, now: float | None = None,
+                      owned: bool | None = None) -> tuple[str, str]:
     """(label, css class) for a session's live agent state — the driver's
     question is 'did my answer land, is the agent on it, or did it stall',
-    so the states are named from THEIR side of the loop."""
+    so the states are named from THEIR side of the loop.
+
+    `owned` is the runner's side: False = nothing answers this page (see
+    surface.unowned), True = a dialogue or the pipeline does, None = not
+    known here. It separates "nobody will ever pick this up" from "the agent
+    is between turns" — both used to read as "no agent listening"."""
     if not st:
-        return ("", "")
+        return ("no owner", "") if owned is False else ("", "")
     if st.get("status") == "ended":
         return ("ended", "")
     pending = int(st.get("pending_prompts") or 0)
     presence = st.get("presence")
     if pending and presence == "waiting":
+        if owned is False:
+            # the daemon adopts this state on its next tick
+            return ("queued — no owner yet, adopting", "needs")
+        if owned:
+            # an owner exists and the runner delivers on the next outbox signal
+            return ("queued — agent between turns", "running")
         # feedback is sitting in the queue and no agent poll is attached —
         # the one state that means "stalled", and the one worth alarming on
         return ("queued — no agent listening", "needs")
     if pending:
         return ("delivering to agent", "running")
     if presence == "working":
+        # an unowned page can still have a loop outside the runner on it
         return ("agent working", "running")
+    if owned is False:
+        return ("no owner — attach from manage", "")
     if st.get("last_agent_reply_at"):
         return ("agent replied — your turn", "finished")
     return ("awaiting you", "")
@@ -525,11 +554,39 @@ details.fold summary:hover{color:var(--fg)}
 #filter::placeholder{color:var(--label)}
 footer{color:var(--label);font-size:.74rem;font-family:var(--mono);margin-top:1.4rem}
 footer a{color:var(--accent)}
+.live{font-family:var(--mono);font-size:.74rem;color:var(--label)}
+.live.on{color:var(--ok)}.live.half{color:var(--run)}.live.off{color:var(--hot)}
+.story.dispatch.picked{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.story.dispatch.picked .go{color:var(--ok)}
+form.newtask .target{margin:.55rem 0 0;padding:.45rem .7rem;border-radius:9px;
+ border:1px solid var(--accent);color:var(--fg);font-size:.84rem;background:var(--soft)}
+form.newtask .target code{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+form.newtask .target .clear{background:none;border:0;color:var(--accent);padding:0 .2rem;
+ font:inherit;font-size:.78rem;cursor:pointer;font-weight:400}
+form.newtask input[name=cwd]:not(:placeholder-shown){border-color:var(--accent)}
+@keyframes flash{from{box-shadow:0 0 0 2px var(--accent)}to{box-shadow:0 0 0 0 transparent}}
+.card.flash{animation:flash 1.4s ease-out}
+@media (prefers-reduced-motion:reduce){.card.flash{animation:none;border-color:var(--accent)}}
+#found{margin-top:-.4rem}
+.chip{font-family:var(--mono);font-size:.68rem;padding:.05rem .45rem;border-radius:5px;
+ border:1px solid var(--border);color:var(--label);white-space:nowrap}
+.chip.open{border-color:var(--ok);color:var(--ok)}
+.chip.replaced{border-color:var(--run);color:var(--run)}
+.repair{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.5rem 0}
+.repair input,.repair select{flex:1 1 14rem;padding:.4rem .6rem;border:1px solid var(--border);
+ border-radius:9px;background:var(--bg);color:var(--fg);font:inherit;font-size:.84rem}
+.repair button{font:inherit;font-size:.84rem;font-weight:650;border:1px solid var(--accent);
+ border-radius:9px;padding:.4rem .9rem;background:none;color:var(--accent);cursor:pointer}
+.repair button.danger{border-color:var(--hot);color:var(--hot)}
+.repair button:disabled{opacity:.4;cursor:default}
+.repair p{margin:0;flex-basis:100%;color:var(--muted);font-size:.8rem}
 """
 
-_POLL_JS = """
+_PAGE_JS = """
 (function(){
- var ms=%d;
+ var FALLBACK=%d;
+ function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
  function applyFilter(){
   var f=document.getElementById('filter');
   var q=(f&&f.value||'').toLowerCase();
@@ -544,29 +601,73 @@ _POLL_JS = """
   // a match hidden inside a closed fold is a match the driver can't see
   if(q)document.querySelectorAll('#fleet details.fold').forEach(function(d){d.open=true});
  }
+ // Find across everything: the row filter above only sees what is listed;
+ // this asks the server about every page ever opened, folded rounds included.
+ var findT=null;
+ function findEverywhere(){
+  var f=document.getElementById('filter'),box=document.getElementById('found');
+  if(!f||!box)return;
+  var q=f.value.trim();
+  if(q.length<2){box.hidden=true;box.innerHTML='';return;}
+  fetch('/find?q='+encodeURIComponent(q),{cache:'no-store'}).then(function(r){return r.text()})
+   .then(function(h){if(f.value.trim()!==q)return;box.innerHTML=h;box.hidden=false;})
+   .catch(function(){});
+ }
  var f=document.getElementById('filter');
- if(f)f.addEventListener('input',applyFilter);
- // Dispatch-target rows: click (or Enter) prefills the task box's cwd.
- // Delegated on document so it survives every partial swap.
+ if(f)f.addEventListener('input',function(){applyFilter();clearTimeout(findT);findT=setTimeout(findEverywhere,200);});
+ // Dispatch-target rows: click (or Enter) points the task box at that
+ // checkout. It must LOOK like it did something: the row stays marked, the
+ // form says where the task will run, and the form flashes into view.
+ function markPicked(){
+  var cwd=document.querySelector('form.newtask input[name=cwd]');
+  var v=cwd?cwd.value:'';
+  document.querySelectorAll('.dispatch[data-cwd]').forEach(function(r){
+   var on=!!v&&r.dataset.cwd===v;
+   r.classList.toggle('picked',on);r.setAttribute('aria-pressed',on?'true':'false');
+   var go=r.querySelector('.go');if(go)go.textContent=on?'selected ✓':'new task here →';
+  });
+ }
+ function showTarget(){
+  var form=document.querySelector('form.newtask');if(!form)return;
+  var cwd=form.querySelector('input[name=cwd]'),note=form.querySelector('.target');
+  var txt=form.querySelector('textarea'),v=cwd?cwd.value.trim():'';
+  var picked=document.querySelector('.dispatch.picked');
+  var name=picked?(picked.dataset.name||v):v;
+  if(note){
+   note.hidden=!v;
+   note.innerHTML=v?'New task will run in <b>'+esc(name)+'</b> <code>'+esc(v)+
+    '</code> <button type=button class=clear>clear</button>':'';
+  }
+  if(txt)txt.placeholder=v?'What should the fleet do in '+name+'?':'What should the fleet do?';
+ }
  function dispatchTo(el){
   var form=document.querySelector('form.newtask');if(!form)return;
   var cwd=form.querySelector('input[name=cwd]'),txt=form.querySelector('textarea');
   if(cwd)cwd.value=el.dataset.cwd||'';
+  markPicked();showTarget();
+  var card=form.closest('.card');
+  if(card){card.classList.remove('flash');void card.offsetWidth;card.classList.add('flash');}
   form.scrollIntoView({behavior:'smooth',block:'center'});
-  if(txt)txt.focus();
+  if(txt)txt.focus({preventScroll:true});
  }
  document.addEventListener('click',function(e){
+  if(e.target.closest&&e.target.closest('form.newtask .clear')){
+   var c=document.querySelector('form.newtask input[name=cwd]');if(c)c.value='';
+   markPicked();showTarget();return;
+  }
   var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
   if(r)dispatchTo(r);
  });
  document.addEventListener('keydown',function(e){
-  if(e.key!=='Enter')return;
+  if(e.key!=='Enter'&&e.key!==' ')return;
   var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
-  if(r)dispatchTo(r);
+  if(r){e.preventDefault();dispatchTo(r);}
  });
- setInterval(function(){
-  var a=document.activeElement;
-  if(a&&a.closest&&a.closest('form.newtask'))return;   // never eat a half-typed task
+ var cwdIn=document.querySelector('form.newtask input[name=cwd]');
+ if(cwdIn)cwdIn.addEventListener('input',function(){markPicked();showTarget();});
+ // Live: the fleet stream says when the runner's snapshot, a review page or
+ // a link changed; only then is the fleet fragment re-fetched.
+ function refresh(){
   fetch('/?partial=1',{cache:'no-store'}).then(function(r){return r.text()})
    .then(function(h){
     var el=document.getElementById('fleet');if(!el)return;
@@ -574,12 +675,36 @@ _POLL_JS = """
     el.querySelectorAll('details.fold[open]').forEach(function(d){open[d.dataset.fold]=1});
     el.innerHTML=h;
     el.querySelectorAll('details.fold').forEach(function(d){if(open[d.dataset.fold])d.open=true});
-    applyFilter();
+    applyFilter();markPicked();
    })
    .catch(function(){});
- },ms);
+ }
+ var soonT=null;function soon(){clearTimeout(soonT);soonT=setTimeout(refresh,250);}
+ var live=document.getElementById('live'),poll=null;
+ function setLive(ok,upstream){
+  if(!live)return;
+  live.className='live '+(ok?(upstream?'on':'half'):'off');
+  live.textContent=ok?'● live':'○ reconnecting';
+  live.title=ok?(upstream?'Updates as they happen: runner snapshot, review pages, links'
+   :'Runner snapshot and links are live; review-page events are unavailable (review-surface without /api/events)')
+   :'Stream lost; refreshing every '+(FALLBACK/1000)+' s until it reconnects';
+ }
+ function startPoll(){if(!poll)poll=setInterval(refresh,FALLBACK);}
+ function stopPoll(){if(poll){clearInterval(poll);poll=null;}}
+ if(!window.EventSource){setLive(false);startPoll();}
+ else{
+  var es=new EventSource('%s');
+  es.addEventListener('hello',function(e){
+   var d={};try{d=JSON.parse(e.data)}catch(_){}
+   setLive(true,d.upstream);stopPoll();soon();   // catch up on anything missed while away
+  });
+  es.addEventListener('source',function(e){var d={};try{d=JSON.parse(e.data)}catch(_){}setLive(true,d.upstream);});
+  es.addEventListener('change',soon);
+  es.onerror=function(){setLive(false);startPoll();};
+ }
+ markPicked();showTarget();
 })();
-""" % REFRESH_MS
+""" % (FALLBACK_POLL_MS, STREAM_PATH)
 
 
 def _rel_time(ts: float, now: float | None = None) -> str:
@@ -636,14 +761,26 @@ def _story_html(view: dict, now: float) -> str:
         f'</div>{agent_html}{_links_html(view)}</div>')
 
 
+def load_graph() -> tuple[list, dict, dict]:
+    """(link records, holders, pages) from disk, for the live page. Tests
+    pass their own; every read here degrades to empty, never to an error."""
+    records, holders = conv_mod.load_links(conv_mod.link_files(PANEL_LINKS))
+    return records, holders, conv_mod.load_pages()
+
+
 def render_fleet(snap: dict, now: float | None = None,
-                 statuses: dict | None = None) -> str:
-    """The hierarchy fragment — also what the poll swaps in, so the page and
-    the refresh can never render two different shapes. `statuses` is the
-    live agent-state map from fetch_agent_statuses; None renders without
-    live badges (tests, surface server down)."""
+                 statuses: dict | None = None, graph: tuple | None = None) -> str:
+    """The hierarchy fragment — also what the stream-triggered refresh swaps
+    in, so the page and the refresh can never render two different shapes.
+    `statuses` is the live agent-state map from fetch_agent_statuses; None
+    renders without live badges (tests, surface server down). `graph` is
+    load_graph()'s (links, holders, pages): with it, a conversation's rounds
+    fold into one row; without it, pages still fold by their dialogue task."""
     now = time.time() if now is None else now
     statuses = statuses or {}
+    records, holders, pages = graph or ([], {}, {})
+    snap = {**snap, "surfaces": conv_mod.collapse(snap.get("surfaces") or [],
+                                                  records, holders, pages)}
     projects = fleet(snap)
     out = []
 
@@ -656,7 +793,10 @@ def render_fleet(snap: dict, now: float | None = None,
             return strand or '<span class="badge finished">decided — nothing needs you</span>'
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
         st = statuses.get(key)
-        label, cls = agent_state_badge(st, now)
+        # upstream-only pages ("page" rows) have no runner session to own them
+        owned = (None if sf.get("kind") in (None, "page") or not sf.get("artifact")
+                 else not surface_mod.unowned(sf))
+        label, cls = agent_state_badge(st, now, owned=owned)
         bits = strand
         if label:
             bits += f'<span class="badge {cls}">{escape(label)}</span>'
@@ -671,6 +811,14 @@ def render_fleet(snap: dict, now: float | None = None,
             return ""
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
         return f'<a class="hist" href="/history/{escape(key)}">history ({n})</a>'
+
+    def _page_link(sf) -> str:
+        # Earlier rounds are reachable from the row, never listed in the scan;
+        # the same page carries the repairs (move, mark replaced, end, attach).
+        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
+        n = len(sf.get("earlier") or [])
+        label = f"{n} earlier round{'s' if n != 1 else ''}" if n else "manage"
+        return f'<a class="hist" href="/page/{escape(key)}">{label}</a>'
     for ext in external_projects(snap):
         # An orchestrator is the project's parent, not a sibling of the pages
         # under it: it renders as the header's byline. Only page-less
@@ -694,15 +842,16 @@ def render_fleet(snap: dict, now: float | None = None,
                        f'<a class="row" href="{escape(str(sf["path"]))}">'
                        f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
                        f'<span class="go">open →</span></a>'
-                       f'{_history_link(sf)}</div>')
+                       f'{_history_link(sf)}{_page_link(sf)}</div>')
             elif sf.get("cwd"):
                 # A dispatch target: clicking prefills the task box's cwd.
                 # A row that shows up as a "session" but responds to nothing
                 # reads as broken — every pathless row needs a reason to exist.
                 row = (f'<div class="story dispatch" role="button" tabindex="0" '
-                       f'data-cwd="{escape(str(sf["cwd"]))}"><div class="line">'
+                       f'aria-pressed="false" data-cwd="{escape(str(sf["cwd"]))}" '
+                       f'data-name="{title}"><div class="line">'
                        f'<span class="title">{title}</span>{role}{when}'
-                       f'<span class="go">new task →</span>'
+                       f'<span class="go">new task here →</span>'
                        f'</div></div>')
             else:
                 row = (f'<div class="story"><div class="line">'
@@ -720,9 +869,10 @@ def render_fleet(snap: dict, now: float | None = None,
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(ext["project"])}</span>{count}</h2>'
                    f'{byline}{"".join(rows)}{fold}</section>')
+    # With conversations collapsed, a dialogue's pages file under their
+    # project (or their checkout's); what is left here has no project and no
+    # working directory to take one from.
     orphans = orphan_surfaces(snap)
-    tasks = [sf for sf in orphans if sf.get("kind") == "task"]
-    orphans = [sf for sf in orphans if sf.get("kind") != "task"]
 
     def _orow(sf, label):
         when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
@@ -730,26 +880,11 @@ def render_fleet(snap: dict, now: float | None = None,
                 f'<a class="row" href="{escape(str(sf.get("path")))}">'
                 f'<span class="title">{escape(label)}</span>{_live(sf)}{when}'
                 f'<span class="go">open →</span></a>'
-                f'{_history_link(sf)}</div>')
+                f'{_history_link(sf)}{_page_link(sf)}</div>')
 
-    if tasks:
-        # a dialogue task's page is its whole deliverable — a row reading just
-        # "task" with no identity was noise, not a link worth clicking
-        live = [sf for sf in tasks if "DECIDED" not in str(sf.get("title") or "")
-                or sf.get("stranded")]
-        done = [sf for sf in tasks if sf not in live]
-        rows = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
-                                     or "task")) for sf in live)
-        if done:
-            inner = "".join(_orow(sf, str(sf.get("task") or sf.get("story")
-                                          or "task")) for sf in done)
-            rows += (f'<details class="fold" data-fold="tasks">'
-                     f'<summary>{len(done)} decided</summary>{inner}</details>')
-        out.append(f'<section class="card project"><h2>'
-                   f'<span class="repo">tasks</span></h2>{rows}</section>')
     if orphans:
-        rows = "".join(_orow(sf, str(sf.get("story") or sf.get("kind")
-                                     or "surface")) for sf in orphans)
+        rows = "".join(_orow(sf, str(sf.get("title") or sf.get("task") or sf.get("story")
+                                     or sf.get("kind") or "surface")) for sf in orphans)
         out.append(f'<section class="card"><h2>Loose sessions</h2>{rows}</section>')
     if not projects and not out:
         out.append('<section class="card"><p class="empty">No stories in flight. '
@@ -764,7 +899,9 @@ def render_fleet(snap: dict, now: float | None = None,
 
 
 def render_home(snap: dict, notice: str = "", now: float | None = None,
-                statuses: dict | None = None) -> str:
+                statuses: dict | None = None, graph: tuple | None = None) -> str:
+    """The panel: a static layout — task box, find, the fleet — whose fleet
+    fragment is re-fetched when the fleet stream reports a change."""
     now = time.time() if now is None else now
     stamp = snap.get("iso") or "—"
     banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
@@ -777,21 +914,277 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '%3Ctext y=%2213%22 font-size=%2213%22%3E%F0%9F%9B%B0%3C/text%3E%3C/svg%3E">'
         f'<style>{_CSS}</style></head><body><div class="wrap">'
         '<header><h1>Cadre<span class="dot">.</span> agent fleet</h1>'
-        f'<span class="updated">snapshot {escape(str(stamp))}</span></header>'
+        f'<span class="updated">snapshot {escape(str(stamp))}</span>'
+        '<span id="live" class="live">connecting…</span></header>'
         f'{banner}'
         '<section class="card"><h2>New task</h2>'
         f'<form class="newtask" method="post" action="{TASKS_PATH}">'
         '<textarea name="text" placeholder="What should the fleet do?" '
         'required autofocus></textarea>'
         '<div class="row">'
-        '<input type="text" name="cwd" placeholder="working directory (optional)">'
-        '<button type="submit">Dispatch</button></div></form></section>'
-        '<input id="filter" type="search" '
-        'placeholder="filter surfaces — title, project, state…">'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses)}</div>'
-        '<footer>Auto-refreshes every 5 s · '
+        '<input type="text" name="cwd" placeholder="working directory (optional) — '
+        'or click a checkout below">'
+        '<button type="submit">Dispatch</button></div>'
+        '<p class="target" role="status" aria-live="polite" hidden></p></form></section>'
+        '<input id="filter" type="search" aria-label="find" '
+        'placeholder="find — filters the rows below and searches every page ever opened">'
+        '<section id="found" class="card" hidden></section>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph)}</div>'
+        '<footer>Live: refreshes when the runner, a review page or a link changes · '
         '<a href="/index.html">legacy dashboard</a></footer>'
-        f'</div><script>{_POLL_JS}</script></body></html>')
+        f'</div><script>{_PAGE_JS}</script></body></html>')
+
+
+def render_found(query: str, hits: list[dict], now: float | None = None) -> str:
+    """Find results: every page ever opened that matches, with where it lives
+    and whether it is the live round of its conversation."""
+    now = time.time() if now is None else now
+    if not hits:
+        return (f'<h2>everywhere · no page matches “{escape(query)}”</h2>')
+    rows = []
+    for h in hits:
+        state = h["state"]
+        chip = (f'<span class="chip replaced">replaced</span>' if state == "replaced"
+                else f'<span class="chip {escape(state)}">{escape(state)}</span>')
+        proj = f'<span class="badge">{escape(h["project"])}</span>' if h["project"] else ""
+        when = (f'<span class="badge">{escape(_rel_time(h["updated"], now))}</span>'
+                if h["updated"] else "")
+        rows.append(f'<div class="rowline"><a class="row" href="{escape(h["path"])}">'
+                    f'<span class="title">{escape(h["title"])}</span>{chip}{proj}{when}'
+                    f'<span class="go">open →</span></a>'
+                    f'<a class="hist" href="/page/{escape(h["key"])}">manage</a></div>')
+    return (f'<h2>everywhere · {len(hits)} page{"s" if len(hits) != 1 else ""} '
+            f'match “{escape(query)}”</h2>{"".join(rows)}')
+
+
+def _attach_form(head_key: str, owner: dict | None) -> str:
+    """The fourth repair: put an agent on a page nobody owns. Every other
+    ownership state renders the control disabled with the reason, so the
+    driver can never spawn a second owner from here."""
+    owner = owner or {"state": "unknown"}
+    state = owner.get("state")
+    why = {
+        "task": f"Owned by dialogue {owner.get('task')}: annotate the page and it "
+                "reaches that agent as its next turn.",
+        "pipeline": f"Owned by the pipeline ({owner.get('kind')} session): the runner "
+                    "already delivers its feedback.",
+        "pending": "An attach is queued; the runner dispatches it on its next tick.",
+        "outside": "An agent outside the runner is working on this page right now; "
+                   "attaching would give it a second owner.",
+        "unknown": "Not an open runner session with a page file, so nothing can be "
+                   "attached from here" + (f" ({owner['why']})." if owner.get("why") else "."),
+    }.get(state)
+    err = (f' Last attach failed: {escape(owner["error"])}.' if owner.get("error") else "")
+    if why:
+        return (f'<form class="repair"><button type="submit" disabled>Attach agent</button>'
+                f'<p>{escape(why)}</p></form>')
+    return (f'<form class="repair" method="post" action="{REPAIR_PATH}">'
+            f'<input type="hidden" name="key" value="{escape(head_key)}">'
+            '<input type="hidden" name="action" value="attach">'
+            '<input name="instruction" maxlength="4000" '
+            'placeholder="instruction for the agent (optional)">'
+            '<button type="submit">Attach agent</button>'
+            '<p>No agent owns this page. Dispatches a dialogue that owns it from now on '
+            'and rewrites this same page; with no instruction it reads the page and '
+            f'continues it.{err}</p></form>')
+
+
+def render_page(key: str, row: dict, projects: list[str], candidates: list[dict],
+                notice: str = "", now: float | None = None,
+                owner: dict | None = None) -> str:
+    """One conversation's page in the panel: its rounds, newest first, and the
+    four repairs — move it, mark it replaced, end its session, attach an
+    agent. Repairs post back here; each one is a recorded link, a recorded
+    session end, or an attach request the daemon serves."""
+    now = time.time() if now is None else now
+    head_key = conv_mod.key_of(row)
+    title = escape(str(row.get("title") or head_key))
+    rounds = [{"key": head_key, "title": row.get("page_title") or row.get("title") or head_key,
+               "opened": row.get("opened") or 0}] + list(row.get("earlier") or [])
+    newest = '<span class="chip open">newest</span>'
+    items = "".join(
+        f'<div class="rowline"><a class="row" href="/session/{escape(r["key"])}">'
+        f'<span class="title">{escape(str(r["title"]))}</span>'
+        f'{newest if i == 0 else ""}'
+        f'<span class="badge">{escape(_rel_time(r.get("opened") or 0, now))}</span>'
+        f'<span class="go">open →</span></a></div>' for i, r in enumerate(rounds))
+    focus = "" if key == head_key else (
+        f'<p class="meta">you opened an earlier round ({escape(key)}); '
+        f'the conversation continues in the newest one</p>')
+    opts = "".join(f'<option value="{escape(p)}">' for p in projects)
+    cands = "".join(f'<option value="{escape(c["key"])}">{escape(str(c["title"]))[:90]}</option>'
+                    for c in candidates if c["key"] != head_key)
+    ended = bool(row.get("ended"))
+    banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>{title} — manage</title><style>{_CSS}</style></head>'
+        f'<body><div class="wrap"><header><h1>{title}</h1></header>'
+        '<p class="meta"><a href="/">← fleet</a> · project '
+        f'<b>{escape(str(row.get("project") or "none"))}</b> · page {escape(head_key)}</p>'
+        f'{banner}{focus}'
+        f'<section class="card"><h2>this conversation · {len(rounds)} round'
+        f'{"s" if len(rounds) != 1 else ""}, newest first</h2>{items}</section>'
+        '<section class="card"><h2>repairs</h2>'
+        f'<form class="repair" method="post" action="{REPAIR_PATH}">'
+        f'<input type="hidden" name="key" value="{escape(head_key)}">'
+        '<input type="hidden" name="action" value="move">'
+        f'<input name="project" list="projects" required placeholder="move to project…" '
+        f'value="{escape(str(row.get("project") or ""))}"><datalist id="projects">{opts}</datalist>'
+        '<button type="submit">Move</button>'
+        '<p>Files this conversation under another project. Recorded as a child-of link.</p></form>'
+        f'<form class="repair" method="post" action="{REPAIR_PATH}">'
+        f'<input type="hidden" name="key" value="{escape(head_key)}">'
+        '<input type="hidden" name="action" value="replace">'
+        f'<select name="target" required><option value="">replaced by…</option>{cands}</select>'
+        '<button type="submit">Mark replaced</button>'
+        '<p>Folds this conversation into the page that replaces it; it stays reachable '
+        'as an earlier round. Recorded as a supersedes link, refused if it would loop.</p></form>'
+        f'<form class="repair" method="post" action="{REPAIR_PATH}" '
+        'onsubmit="return confirm(\'End this review session? The agent stops receiving feedback from it.\')">'
+        f'<input type="hidden" name="key" value="{escape(head_key)}">'
+        '<input type="hidden" name="action" value="end">'
+        f'<button type="submit" class="danger"{" disabled" if ended else ""}>End session</button>'
+        f'<p>{"This session has already ended." if ended else "For a stuck session: ends it in review-surface and marks it closed for the runner."}</p>'
+        f'</form>{_attach_form(head_key, owner)}</section></div></body></html>')
+
+
+# --------------------------------------------------------------- live + fix
+
+_VOLATILE = ("ts", "iso", "log_tail")
+
+
+def _local_signature() -> str:
+    """What the fleet looks like from this machine's files, as one hash: the
+    runner's snapshot minus its heartbeat fields (it is rewritten every pass
+    whether or not anything moved), plus the size and mtime of every link
+    store."""
+    h = hashlib.sha1()
+    try:
+        snap = json.loads((STATUS_DIR / "status.json").read_text(encoding="utf-8"))
+        if isinstance(snap, dict):
+            for k in _VOLATILE:
+                snap.pop(k, None)
+        h.update(json.dumps(snap, sort_keys=True, default=str).encode())
+    except (OSError, ValueError):
+        h.update(b"no-snapshot")
+    for f in conv_mod.link_files(PANEL_LINKS):
+        try:
+            st = os.stat(f)
+            h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
+        except OSError:
+            pass
+    return h.hexdigest()
+
+
+def _relay_upstream(stop: threading.Event, poke: threading.Event, state: dict):
+    """Hold one connection to review-surface's event stream and poke the
+    panel's stream on every event. Reconnects with Last-Event-ID so nothing
+    between connections is lost; a server without the endpoint (404) or not
+    running is retried every 30 s and reported as upstream unavailable."""
+    last_id = None
+    while not stop.is_set():
+        headers = {"Accept": "text/event-stream"}
+        if last_id:
+            headers["Last-Event-ID"] = last_id
+        try:
+            req = urllib.request.Request(SURFACE + "/api/events", headers=headers)
+            with urllib.request.urlopen(req, timeout=STREAM_PING * 3) as resp:
+                state["upstream"] = True
+                poke.set()
+                for line in resp:
+                    if stop.is_set():
+                        return
+                    if line.startswith(b"id:"):
+                        last_id = line[3:].strip().decode() or last_id
+                    elif line.startswith(b"data:"):
+                        poke.set()
+        except Exception:
+            pass
+        was = state["upstream"]
+        state["upstream"] = False
+        if was:
+            poke.set()
+        stop.wait(2 if was else 30)
+
+
+def _known_keys() -> tuple[set, list[dict], dict]:
+    snap = read_snapshot()
+    surfaces = snap.get("surfaces") or []
+    pages = conv_mod.load_pages()
+    keys = {conv_mod.key_of(sf) for sf in surfaces if conv_mod.key_of(sf)} | set(pages)
+    return keys, surfaces, pages
+
+
+def _post_upstream_link(type_: str, frm: str, to: str):
+    """review-surface's rule-checked link write path (build step 2), when the
+    running server has it. None = not available here, fall back to the
+    panel's log; a refusal from it is final."""
+    req = urllib.request.Request(
+        SURFACE + "/api/links", method="POST",
+        data=json.dumps({"type": type_, "from": frm, "to": to}).encode(),
+        headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        try:
+            err = json.loads(e.read() or b"{}").get("error")
+        except ValueError:
+            err = ""
+        raise conv_mod.LinkRefused(err or f"review-surface answered {e.code}")
+    except (OSError, ValueError):
+        return None
+
+
+def apply_repair(action: str, key: str, form: dict) -> str:
+    """The four repairs the manage view offers. Returns what happened, in
+    words for the driver; raises LinkRefused when a rule says no."""
+    keys, surfaces, _ = _known_keys()
+    if key not in keys:
+        raise conv_mod.LinkRefused(f"no page {key!r} is known to the runner or review-surface")
+    records, _ = conv_mod.load_links(conv_mod.link_files(PANEL_LINKS))
+    if action == "move":
+        project = form.get("project", "")
+        if not conv_mod.PROJECT_NAME.match(project):
+            raise conv_mod.LinkRefused("a project name is letters, digits, space, . _ - (max 64)")
+        if conv_mod.check_link(records, "child-of", key, project) == "unchanged":
+            return f"Already filed under {project}."
+        conv_mod.append_link(PANEL_LINKS, "child-of", key, project)
+        return f"Moved to {project}."
+    if action == "replace":
+        new = form.get("target", "")
+        if new not in keys:
+            raise conv_mod.LinkRefused("pick the page that replaces this one")
+        if conv_mod.check_link(records, "supersedes", new, key) == "unchanged":
+            return "Already marked replaced by that page."
+        if _post_upstream_link("supersedes", new, key) is not None:
+            return "Marked replaced (recorded in review-surface's link store)."
+        conv_mod.append_link(PANEL_LINKS, "supersedes", new, key)
+        return "Marked replaced (recorded in the panel's link log)."
+    if action == "end":
+        sf = next((s for s in surfaces if conv_mod.key_of(s) == key), None)
+        if sf is None or not sf.get("artifact"):
+            raise conv_mod.LinkRefused("that session is not open under the runner")
+        if _CFG is None:
+            raise conv_mod.LinkRefused("no runner config: cannot reach the runner's session store")
+        surface_mod.end_session(_CFG, str(sf["artifact"]), lambda *_: None)
+        return "Session ended."
+    if action == "attach":
+        sf = next((s for s in surfaces if conv_mod.key_of(s) == key), None)
+        if sf is None or not sf.get("artifact"):
+            raise conv_mod.LinkRefused("that page is not an open runner session")
+        if _CFG is None:
+            raise conv_mod.LinkRefused("no runner config: cannot reach the runner's session store")
+        try:
+            return surface_mod.request_attach(_CFG, str(sf["artifact"]),
+                                              form.get("instruction", ""))
+        except ValueError as e:
+            raise conv_mod.LinkRefused(str(e))
+    raise conv_mod.LinkRefused(f"unknown repair {action!r}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -893,12 +1286,121 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_home(self, query: dict):
         snap = read_snapshot()
-        statuses = fetch_agent_statuses(snap.get("surfaces") or [])
+        graph = load_graph()
+        # statuses for the rows that will actually render — a conversation's
+        # newest round may be a page the runner's snapshot never listed
+        statuses = fetch_agent_statuses(conv_mod.collapse(snap.get("surfaces") or [], *graph))
         if query.get("partial"):
-            self._send_html(render_fleet(snap, statuses=statuses))
+            self._send_html(render_fleet(snap, statuses=statuses, graph=graph))
             return
         notice = (query.get("notice") or [""])[0]
-        self._send_html(render_home(snap, notice=notice, statuses=statuses))
+        self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph))
+
+    def _serve_find(self, query: dict):
+        q = (query.get("q") or [""])[0].strip()[:200]
+        snap = read_snapshot()
+        hits = conv_mod.find(q, snap.get("surfaces") or [], *load_graph())
+        self._send_html(render_found(q, hits))
+
+    def _serve_page(self, key: str, query: dict):
+        snap = read_snapshot()
+        records, holders, pages = load_graph()
+        surfaces = snap.get("surfaces") or []
+        row = conv_mod.conversation_of(key, surfaces, records, holders, pages)
+        if row is None:
+            self.send_error(404, "unknown page")
+            return
+        rows = conv_mod.collapse(surfaces, records, holders, pages)
+        projects = sorted({str(r["project"]) for r in rows if r.get("project")}
+                          | {h for h in holders if h not in conv_mod.ROOT_HOLDERS})
+        # "replaced by" offers the other live conversations, same project first
+        cands = sorted((r for r in rows if conv_mod.key_of(r)),
+                       key=lambda r: (r.get("project") != row.get("project"),
+                                      -(r.get("opened") or 0)))
+        cands = [{"key": conv_mod.key_of(r), "title": r.get("title") or conv_mod.key_of(r)}
+                 for r in cands]
+        notice = (query.get("notice") or [""])[0]
+        owner = (surface_mod.ownership(_CFG, str(row["artifact"]))
+                 if _CFG and row.get("artifact") else None)
+        self._send_html(render_page(key, row, projects, cands, notice=notice,
+                                    owner=owner))
+
+    def _serve_stream(self):
+        """The fleet stream: one SSE connection per open panel. It says
+        `change` when the runner's snapshot, a link store or a review page
+        changed — the page then re-fetches its fleet fragment. Review-page
+        events are relayed from review-surface's GET /api/events (resuming by
+        Last-Event-ID across reconnects); the runner's snapshot and the link
+        files are watched here by content, so the panel stays live when
+        review-surface is down or predates the event log."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        stop, poke = threading.Event(), threading.Event()
+        state = {"upstream": False}
+        threading.Thread(target=_relay_upstream, args=(stop, poke, state),
+                         daemon=True).start()
+        try:
+            sig = _local_signature()
+            seen_up = state["upstream"]
+            self._sse("hello", {"upstream": seen_up})
+            last_write = time.time()
+            while True:
+                poke.wait(STREAM_TICK)
+                changed = poke.is_set()
+                poke.clear()
+                now_sig = _local_signature()
+                if now_sig != sig:
+                    sig, changed = now_sig, True
+                if state["upstream"] != seen_up:
+                    seen_up = state["upstream"]
+                    self._sse("source", {"upstream": seen_up})
+                    last_write = time.time()
+                if changed:
+                    self._sse("change", {})
+                    last_write = time.time()
+                elif time.time() - last_write > STREAM_PING:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    last_write = time.time()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            stop.set()
+
+    def _sse(self, event: str, data: dict):
+        self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
+        self.wfile.flush()
+
+    def _repair(self):
+        """POST /repair: action=move (key, project) | replace (key, target —
+        the page that replaces key) | end (key) | attach (key, instruction). Every repair is checked
+        against the link rules before anything is written, and lands back on
+        the conversation's page with what happened."""
+        if not self._same_origin():
+            self.send_error(403, "cross-origin post")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_TASK_BYTES:
+            self.send_error(413, "too large")
+            return
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        form = {k: v[0].strip() for k, v in
+                urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
+        key = form.get("key", "")
+        try:
+            msg = apply_repair(form.get("action", ""), key, form)
+        except conv_mod.LinkRefused as e:
+            msg = f"Refused: {e}"
+        self.send_response(303)
+        self.send_header("Location", f"/page/{urllib.parse.quote(key)}?"
+                         + urllib.parse.urlencode({"notice": msg}))
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     def _serve_dead_letter(self, name: str):
         rec = read_dead_letter(name)
@@ -978,6 +1480,18 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(raw_query)
         if path == TASKS_PATH and self.command == "POST":
             self._new_task()
+            return
+        if path == REPAIR_PATH and self.command == "POST":
+            self._repair()
+            return
+        if path == STREAM_PATH and self.command == "GET":
+            self._serve_stream()
+            return
+        if path == "/find" and self.command in ("GET", "HEAD"):
+            self._serve_find(query)
+            return
+        if path.startswith("/page/") and self.command in ("GET", "HEAD"):
+            self._serve_page(urllib.parse.unquote(path.rsplit("/", 1)[-1]), query)
             return
         if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
             self._serve_home(query)

@@ -474,6 +474,113 @@ def test_a_consumed_batch_is_never_lost_when_dispatch_fails(tmp_path, monkeypatc
     assert "my answer" in Path(strand[0]["dead_letter"]).read_text()
 
 
+def _attach_env(tmp_path, monkeypatch, meta, status=None, submit=None):
+    """A registered page plus stubs for everything the attach path reaches."""
+    from runnerlib import surface as sf
+    from runnerlib import tasks as tasks_mod
+    events, submitted = [], []
+    monkeypatch.setattr(sf.board_events, "emit",
+                        lambda kind, **kw: events.append((kind, kw)))
+    monkeypatch.setattr(sf, "agent_status", lambda key, timeout=8: status)
+    monkeypatch.setattr(tasks_mod, "submit_task", submit or (
+        lambda cfg, text, cwd=None, title=None:
+        (submitted.append({"text": text, "cwd": cwd, "title": title})
+         or "task-attached-1")))
+
+    class Reg:
+        data = {"stories": {}}
+        saved = False
+
+        def save(self):
+            Reg.saved = True
+
+    class Cfg:
+        data_dir = tmp_path
+    art = tmp_path / "hitl-d4-quiet.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(Cfg(), {str(art): {"open": True, "key": "q1", **meta}})
+    return sf, Cfg(), Reg(), str(art), events, submitted
+
+
+def test_attach_puts_an_owner_on_a_quiet_unowned_page(tmp_path, monkeypatch):
+    """Driver ask 2026-09-22: adoption only fires when feedback is queued, so
+    a page with no owner and nothing queued just sits. Attach is the driver
+    saying 'start an agent here now' — and it must wire ownership exactly as
+    adoption does: task submitted, its record pointed at the page, the
+    session flipped to kind=task."""
+    sf, cfg, reg, art, events, submitted = _attach_env(
+        tmp_path, monkeypatch, {"kind": "external", "cwd": "/repo/x"},
+        {"status": "open", "presence": "waiting", "pending_prompts": 0})
+    assert sf.ownership(cfg, art)["state"] == "none"
+    sf.request_attach(cfg, art, "summarise the open questions")
+    assert sf.ownership(cfg, art)["state"] == "pending"
+    with __import__("pytest").raises(ValueError, match="already queued"):
+        sf.request_attach(cfg, art)                 # no double request
+
+    sf._attach_requested(cfg, reg, lambda m: None, sf.sessions(cfg))
+    assert len(submitted) == 1
+    assert art in submitted[0]["text"]
+    assert "summarise the open questions" in submitted[0]["text"]
+    assert submitted[0]["cwd"] == "/repo/x"         # the page's checkout, not its folder
+    row = sf.sessions(cfg)[art]
+    assert row["kind"] == "task" and row["task"] == "task-attached-1"
+    rec = reg.data["tasks"]["task-attached-1"]
+    assert rec["page"] == art and type(reg).saved
+    assert [kw for k, kw in events if k == "surface_attached"]
+    assert not list(sf._attach_dir(cfg).glob("*.json"))   # request served once
+    assert sf.ownership(cfg, art) == {"state": "task", "task": "task-attached-1"}
+
+
+def test_attach_with_no_instruction_asks_the_agent_to_continue_the_page(tmp_path, monkeypatch):
+    sf, cfg, reg, art, _, submitted = _attach_env(
+        tmp_path, monkeypatch, {"kind": "external"})
+    sf.request_attach(cfg, art, "   ")
+    sf._attach_requested(cfg, reg, lambda m: None, sf.sessions(cfg))
+    assert "Read this page and continue it" in submitted[0]["text"]
+    assert submitted[0]["cwd"] == str(tmp_path)     # no cwd: the page's folder
+
+
+def test_attach_refuses_a_page_that_already_has_an_owner(tmp_path, monkeypatch):
+    """Never a second owner: a dialogue, a pipeline session, or a loop outside
+    the runner that is working on the page right now each refuse by name."""
+    import pytest
+    for meta, status, why in (
+            ({"kind": "task", "task": "t-9"}, None, "dialogue t-9"),
+            ({"kind": "risk_hold"}, None, "pipeline"),
+            ({"kind": "external"}, {"status": "open", "presence": "working"},
+             "outside the runner")):
+        sf, cfg, _, art, _, _ = _attach_env(tmp_path, monkeypatch, meta, status)
+        with pytest.raises(ValueError, match=why):
+            sf.request_attach(cfg, art)
+
+
+def test_attach_request_is_dropped_if_an_owner_appeared_meanwhile(tmp_path, monkeypatch):
+    """Adoption runs first in the tick; a request filed before it must not
+    spawn a second dialogue on the page adoption just took."""
+    sf, cfg, reg, art, events, submitted = _attach_env(
+        tmp_path, monkeypatch, {"kind": "external"})
+    sf.request_attach(cfg, art)
+    s = sf.sessions(cfg)
+    s[art].update(kind="task", task="task-adopted-1")
+    sf._save_sessions(cfg, s)
+    sf._attach_requested(cfg, reg, lambda m: None, sf.sessions(cfg))
+    assert submitted == []
+    assert [kw for k, kw in events if k == "surface_attach_skipped"]
+    assert not list(sf._attach_dir(cfg).glob("*.json"))
+
+
+def test_attach_dispatch_failure_is_shown_not_retried(tmp_path, monkeypatch):
+    def boom(*a, **kw):
+        raise RuntimeError("board down")
+    sf, cfg, reg, art, _, _ = _attach_env(
+        tmp_path, monkeypatch, {"kind": "external"}, submit=boom)
+    sf.request_attach(cfg, art)
+    sf._attach_requested(cfg, reg, lambda m: None, sf.sessions(cfg))
+    own = sf.ownership(cfg, art)
+    assert own["state"] == "none" and "board down" in own["error"]
+    assert sf.sessions(cfg)[art]["kind"] == "external"   # nothing half-flipped
+
+
 def test_reopening_a_page_keeps_where_it_belongs(tmp_path, monkeypatch):
     """A page's project, title and role outlive the turn that opens it. An
     adopted discussion used to fall out of its project group and render as a

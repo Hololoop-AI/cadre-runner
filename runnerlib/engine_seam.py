@@ -56,7 +56,10 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 # every deployment. The eval workflow runs from its own harness against its own
 # data dir; including it here is a seeding change, not a list change.
 ACTIONS_PATHS = (CONFIG_DIR / "actions-pipeline.json",
-                 CONFIG_DIR / "actions-dialogue.json")
+                 CONFIG_DIR / "actions-dialogue.json",
+                 # the handoff: approve a dialogue page AND send it to an
+                 # agent that carries it out (config/actions-routes.json)
+                 CONFIG_DIR / "actions-routes.json")
 
 NAMESPACE = "cadre"
 STORIES_TOPIC = "stories"
@@ -131,6 +134,14 @@ def state(cfg) -> dict:
             "actions": engine.load_action_set(ACTIONS_PATHS),
         }
     return _state[path]
+
+
+def actions_for(cfg) -> list[dict]:
+    """The action set this daemon RUNS — the cached one once a pass has
+    loaded it, so the routes a page offers are the routes the engine will
+    fire, not whatever the file says after an edit the daemon has not read."""
+    st = _state.get(str(board_path(cfg)))
+    return st["actions"] if st else engine.load_action_set(ACTIONS_PATHS)
 
 
 def reset():
@@ -338,8 +349,25 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
             log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
     except Exception as e:
         log(f"engine: task skill install failed for {cwd}: {e}")
+    rec = tasks.record(reg, task_id)
+    if payload.get("target") == tasks.TARGET_ROUTE:
+        # The driver pointed this task at another node. That node's turns get
+        # their own page (per-node surface awareness) and a session of their
+        # own; the reap links the new page derived-from the one the route was
+        # chosen on, and from here `continue` on it goes back through THIS node.
+        rec["node"] = spec["node"]
+        rec["page"] = str(Path(cfg.data_dir) / "surfaces"
+                          / f"task-{task_id}-{payload.get('route') or spec['node']}.html")
+        rec["routed_from"] = str(payload.get("surface_prev") or "")
     session_id, resume = tasks.session_for(
         reg, task_id, payload.get("resume") == "session")
+    extra = {k: v for k, v in payload.items() if k in PROMPT_VARS}
+    # Where this node's work can go next — it offers these on its page.
+    routes = tasks.routes_for(actions_for(cfg), spec["node"])
+    extra["routes"] = tasks.describe_routes(routes)
+    # ...and the exact form lines for them, so the choice renders the same
+    # words on every page instead of whatever the author improvised.
+    extra["route_options"] = tasks.route_options(routes)
     action = {
         "type": "run_task",
         "stage": spec["node"],
@@ -354,7 +382,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         "node_version": spec["version"],
         "firing_id": spec.get("firing_id"),
         "correlation_id": spec.get("correlation_id"),
-        "extra_vars": {k: v for k, v in payload.items() if k in PROMPT_VARS},
+        "extra_vars": extra,
     }
     log(f"engine: spawning {spec['node']} turn for {task_id} in {cwd} "
         f"({'resuming' if resume else 'new'} session {session_id[:8]}, "

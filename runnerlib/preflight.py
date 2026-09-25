@@ -37,7 +37,8 @@ from .nodes import Nodes, NodeError
 ROOT = Path(__file__).resolve().parent.parent
 ACTION_FILES = (ROOT / "config" / "actions-pipeline.json",
                 ROOT / "config" / "actions-eval.json",
-                ROOT / "config" / "actions-dialogue.json")
+                ROOT / "config" / "actions-dialogue.json",
+                ROOT / "config" / "actions-routes.json")
 
 
 class Check:
@@ -68,7 +69,7 @@ def check_nodes(data_dir: Path, cfg=None, seed: bool = True) -> list[Check]:
             except Exception as e:
                 out.append(Check(name, False, f"{type(e).__name__}: {e}"))
     nodes = Nodes(data_dir)
-    expected = list(seed_nodes.STAGES) + list(seed_eval_nodes.NODES) + [tasks.NODE]
+    expected = list(seed_nodes.STAGES) + list(seed_eval_nodes.NODES) + list(tasks.NODES)
     missing, inactive = [], []
     for name in expected:
         try:
