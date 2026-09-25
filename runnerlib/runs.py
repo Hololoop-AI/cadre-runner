@@ -191,6 +191,14 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),
            "CADRE_RUN_ERR": str(run_dir / "err.txt"),
            "CADRE_RUN_EXIT": str(run_dir / "exit"),
+           # `claude -p` waits ten minutes for background subagents and then
+           # KILLS them, exiting 0 with whatever the session had said before
+           # it delegated. One research round fanned out twelve agents, had
+           # ten shot out from under it at the ceiling, and reported success
+           # with the text "Waiting on the agents now." — no page, $49.92.
+           # 0 means wait; the `timeout` wrapper above is the real ceiling and
+           # the only one that should be deciding when a round has gone long.
+           "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",
            **(extra_env or {})}
     proc = subprocess.Popen(
         ["/bin/sh", "-c",

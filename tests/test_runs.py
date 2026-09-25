@@ -48,6 +48,24 @@ ok, result, usage, record = runs.outcome(run)
 assert ok and result == "" and record["returncode"] == 0
 assert (run_dir / "prompt.txt").read_text() == "prompt text"
 
+# -- background subagents are not guillotined at ten minutes ------------------
+# `claude -p` waits 600s for background work and then kills it, exiting 0 with
+# whatever the session said before delegating. A research round lost ten of
+# its twelve agents that way and reported success having written no page.
+# The `timeout` wrapper is the only thing that should end a long round.
+env_probe = tmp / "env-cli"
+env_probe.write_text('#!/bin/sh\nprintf "%s" "$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" > "$SEEN"\n')
+env_probe.chmod(0o755)
+seen = tmp / "ceiling.txt"
+run_dir_e = tmp / "run-env"
+pid = runs.spawn(str(env_probe), "p", wt, "opus", "high", "bypass", 60, run_dir_e,
+                 extra_env={"SEEN": str(seen)})
+for _ in range(50):
+    if runs.finished({"pid": pid, "run_dir": str(run_dir_e)}):
+        break
+    time.sleep(0.1)
+assert seen.read_text() == "0", f"background wait ceiling not lifted: {seen.read_text()!r}"
+
 # -- the node's argv is what runs (agent-command-as-data) ---------------------
 # A stand-in "agent CLI" that records exactly what it was handed. Nothing about
 # the spawn path may assume Claude Code's flags.
