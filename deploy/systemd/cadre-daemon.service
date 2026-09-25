@@ -20,6 +20,15 @@ Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/bin/python3 %h/Projects/cadre/cadre-runner/pipeline.py run
 Restart=on-failure
 RestartSec=5
+# Only signal the daemon, never the agent runs it spawned. systemd's default
+# KillMode=control-group SIGTERMs the whole cgroup, so `systemctl restart`
+# killed every `claude -p` in flight — a research round 21 minutes in died
+# that way, and it explains older tasks recorded as "started, then stopped
+# before writing a page". runs.spawn passes start_new_session=True, which
+# makes a new session but does NOT leave the cgroup, so it never protected
+# them. Runs are safe to orphan: the registry holds each pid and run_dir so
+# the daemon re-adopts and reaps them after it comes back.
+KillMode=process
 
 [Install]
 WantedBy=default.target

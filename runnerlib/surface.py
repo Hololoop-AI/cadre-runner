@@ -950,16 +950,29 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
             asked_to_continue = True
             notes.append(item)
     if approve and not handoff:
+        written = [n for n in notes if (n.get("text") or "").strip()]
+        if written:
+            # Approving WITH annotations does not mean the annotations were
+            # decoration. Most often they ARE the decision — the driver picks
+            # among the options the page offered and approves in the same
+            # gesture — so an approve that drops them throws away the content
+            # and keeps the envelope. They used to be filed to
+            # closing-annotations.json, which nothing has ever read.
+            #
+            # So the words get one closing turn: the session is resumed with
+            # them, acts on them, and writes the decision back into its page
+            # so the page becomes the record of what was settled. The verdict
+            # is written when that turn is reaped, not here — approving is
+            # still final, it just happens after the last thing said has been
+            # heard.
+            tasks_mod.mark_closing(reg, task_id)
+            tasks_mod.write_feedback(cfg, reg, task_id, meta.get("cwd") or "",
+                                     notes, closing=True)
+            log(f"surface: {task_id} approved with {len(written)} annotation(s) — "
+                f"closing turn resumes the session to act on them and record "
+                f"the decision on the page; the dialogue closes when it ends")
+            return
         tasks_mod.write_verdict(cfg, task_id, "approve")
-        if notes:
-            # The dialogue is closed, so no session will read these — but the
-            # driver wrote them, so they are kept verbatim where the task's
-            # logs live, not just truncated into a log line.
-            kept = _keep(cfg, task_id, "closing-annotations.json", notes)
-            log(f"surface: {task_id} approved with {len(notes)} annotation(s) "
-                f"alongside — the dialogue is closed, they start no new turn; "
-                f"kept in full at {kept}: "
-                + " | ".join((n.get("text") or "")[:120] for n in notes))
         log(f"surface: {task_id} approved via surface — dialogue closed")
         end_session(cfg, path, log)
         return

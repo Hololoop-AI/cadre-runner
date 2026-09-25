@@ -679,24 +679,44 @@ def test_a_continue_verdict_is_a_feedback_turn_and_approve_ends_the_dialogue():
     assert spawns == [] and [f["outcome"] for f in firings] == ["fired"]
 
 
-def test_approve_with_annotations_keeps_them_in_full_on_disk():
-    """Approve closes the dialogue and the notes ride along — they must land
-    verbatim in the task's log dir, not only truncated into a log line."""
+def test_approve_with_annotations_runs_a_closing_turn_instead_of_dropping_them():
+    """The annotations on an approving pass are usually the DECISION — the
+    driver picks among the options the page offered and approves in the same
+    gesture. They used to be filed to closing-annotations.json, which nothing
+    has ever read, so approving threw away the content and kept the envelope.
+    Now they resume the session for one closing turn."""
     d = scratch()
     cfg, reg = FakeCfg(d), FakeReg()
     meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
-    long_note = "styling thread: " + "x" * 300
+    choice = "Go with option B, and record why A was rejected."
     with jsonl_board(d):
         surface._handle_poll(cfg, reg, None, lambda *a: None,
                              str(d / "task-task-demo.html"), meta, poll_json(
-            note(long_note, "Styling"),
+            note(choice, "Which option"),
             note("CADRE_DECISION gate=task story=task-demo task=task-demo "
                  "verdict=approve")))
-    kept = Path(cfg.data_dir) / "logs" / "task-demo" / "closing-annotations.json"
-    assert kept.exists()
-    saved = json.loads(kept.read_text())
-    assert any(long_note in (r.get("text") or "") + (r.get("prompt") or "")
-               for r in saved)
+
+    sent = commands(cfg)
+    assert [c["target"] for c in sent] == ["task:feedback"], \
+        "the words start a turn; the verdict waits until that turn is reaped"
+    assert choice in sent[0]["feedback"]
+    assert sent[0]["closing"] == "1", "the node is told this is the last turn"
+    assert tasks.records(reg)["task-demo"]["closing"] is True, \
+        "the reap needs it on the record, not just in the event"
+
+
+def test_a_bare_approve_with_no_words_still_closes_immediately():
+    """Nothing was said, so there is nothing to act on and no reason to spend
+    a turn. This is the common case and it must not get slower."""
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, None, lambda *a: None,
+                             str(d / "task-task-demo.html"), meta, poll_json(
+            note("CADRE_DECISION gate=task story=task-demo task=task-demo "
+                 "verdict=approve")))
+    assert [c["target"] for c in commands(cfg)] == ["task:verdict"]
 
 
 def test_the_bridge_never_touches_a_surface_it_does_not_own():

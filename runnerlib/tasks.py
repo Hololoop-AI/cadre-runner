@@ -280,7 +280,20 @@ def format_feedback(notes: list[dict]) -> str:
     return "\n\n---\n\n".join(out)
 
 
-def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict]) -> dict | None:
+def mark_closing(reg, task_id: str) -> None:
+    """Remember that the turn about to run is the last one.
+
+    Kept on the record rather than only in the event, because the thing that
+    has to act on it is the REAP — it writes the verdict and ends the session
+    when this turn comes back — and the reap sees the record, not the command
+    that started it."""
+    record(reg, task_id)["closing"] = True
+    if hasattr(reg, "save"):
+        reg.save()
+
+
+def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
+                   closing: bool = False) -> dict | None:
     """The driver annotated the page: write the `task:feedback` command.
 
     This is the board-side half of "a surface annotation is the next turn". The
@@ -305,7 +318,12 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict]) -> dict 
                      "node": rec.get("node") or NODE,
                      "cwd": cwd or rec.get("cwd") or "",
                      "iteration": str(rec["iteration"]),
-                     "feedback": text, "resume": "session"})
+                     "feedback": text, "resume": "session",
+                     # The closing turn: the driver approved AND said something.
+                     # The node is told so, because "act on this and record the
+                     # decision" is a different instruction from "here is the
+                     # next round of questions".
+                     **({"closing": "1"} if closing else {})})
 
 
 def write_verdict(cfg, task_id: str, verdict: str) -> dict:

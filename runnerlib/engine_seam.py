@@ -86,7 +86,7 @@ DEFAULT_MAX_ROUNDS = 5          # mirrors config.DEFAULTS["limits"]
 # whose node has no registry story to read a task, a cwd or a round from.
 PROMPT_VARS = ("story_text", "story_url", "reconcile_base",
                "task", "task_text", "cwd", "feedback",
-               "iteration", "surface_prev")
+               "iteration", "surface_prev", "closing")
 
 _state = {}
 

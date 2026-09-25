@@ -920,6 +920,18 @@ def _reap_tasks(cfg, reg):
             log(f"{task_id}: turn {run.get('iteration')} "
                 f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
             art = surface_out(cfg, tasks_mod.NODE, task_id, page=rec.get("page"))
+            if rec.pop("closing", False):
+                # The driver approved AND annotated: this turn existed only to
+                # act on those last words and write the decision onto the page.
+                # The approval was always final, so it lands now rather than
+                # asking again — the page is reopened either way, because it is
+                # the record of what was settled and the driver may want to
+                # read what his own notes produced.
+                tasks_mod.write_verdict(cfg, task_id, "approve")
+                log(f"{task_id}: closing turn done — approved, dialogue closed")
+                if ok and art and art.exists() and surface_mod.available():
+                    surface_mod.end_session(cfg, str(art), log)
+                continue
             if ok and art and art.exists() and surface_mod.available():
                 # `task` is the meta the feedback bridge scopes on: only a
                 # session opened here is a dialogue turn's page.

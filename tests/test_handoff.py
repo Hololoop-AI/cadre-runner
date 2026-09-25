@@ -235,7 +235,11 @@ def test_a_handoff_queued_with_a_plain_approve_wins(quiet_cli):
     assert "use message 2 as written" in commands(cfg)[0]["feedback"]
 
 
-def test_a_plain_approve_still_ends_the_dialogue_and_keeps_notes_with_their_anchor(quiet_cli):
+def test_an_approve_carrying_words_spends_one_last_turn_on_them(quiet_cli):
+    """Approving is not the same as having nothing left to say. The words on a
+    final pass are usually the decision itself — "Option B, and here's why" —
+    so they get a closing turn that acts on them and writes the result back
+    onto the page, which is what locks the surface in its final state."""
     d, work = scratch(), scratch()
     cfg, reg = FakeCfg(d), FakeReg()
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
@@ -243,9 +247,12 @@ def test_a_plain_approve_still_ends_the_dialogue_and_keeps_notes_with_their_anch
         surface._handle_poll(cfg, reg, None, lambda *a: None, str(d / "p.html"), meta,
                              poll_json(note("add this as a discussion point", "Option B"),
                                        decision("approve")))
-    assert [c["target"] for c in commands(cfg)] == ["task:verdict"]
-    kept = (d / "logs" / "task-demo" / "closing-annotations.json").read_text()
-    assert "add this as a discussion point" in kept and '"anchor": "Option B"' in kept
+    sent = commands(cfg)
+    assert [c["target"] for c in sent] == ["task:feedback"]
+    assert "add this as a discussion point" in sent[0]["feedback"]
+    assert "Option B" in sent[0]["feedback"], "the anchor rides along with the note"
+    assert sent[0]["closing"] == "1"
+    assert tasks.records(reg)["task-demo"]["closing"] is True
 
 
 def test_the_implement_prompt_is_seeded_and_holds_the_commit_guardrails():

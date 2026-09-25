@@ -51,6 +51,23 @@ in it as addressed to you:
   silent refusal are both defects;
 - a point with no row on your page is a dropped point.
 
+## When `$closing` is set — the last turn
+
+The driver approved AND wrote something. That usually means the words ARE the
+decision: they picked among the options your page offered, or added the one
+thing that was missing, and closed in the same gesture. This turn exists to act
+on those words. There is no round after it and the driver will not be asked
+again, so:
+
+- do what the words say, finish it, and leave nothing hanging on a question;
+- rewrite the page one final time as the settled record — what was decided, by
+  whom, and what it means for whoever picks this up next. Drop the open
+  questions and the "which do you prefer" framing; those are answered now;
+- if a point in the words genuinely cannot be done, say so plainly on the page
+  as the one thing that did not land, rather than silently dropping it.
+
+The dialogue is marked approved the moment this turn finishes.
+
 ## The page — where the driver reads your answer
 
 Write the page to the exact path in `$CADRE_SURFACE_OUT` (an absolute path in
