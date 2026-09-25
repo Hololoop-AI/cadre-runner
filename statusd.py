@@ -489,6 +489,11 @@ STARTUP_GRACE = 300.0
 def requested_tasks(data_dir) -> dict:
     """{task id: registry-shaped record} for task requests on the board.
 
+    Carries `failed` when the action the request triggered failed: the board
+    records the reason, and a request that could not start is the one case
+    where the fleet can say what went wrong instead of only that nothing
+    happened. One such failure sat unreported for eleven hours.
+
     Read-only and best-effort: the board is the daemon's file, the page server
     only looks. Anything unreadable (no board yet, a locked write, a schema
     that moved) is no requests, never an error page — a broken read here must
@@ -502,13 +507,15 @@ def requested_tasks(data_dir) -> dict:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
         try:
             rows = conn.execute(
-                "SELECT ts, payload FROM events WHERE kind='command' "
+                "SELECT id, ts, payload FROM events WHERE kind='command' "
                 "AND topic=? ORDER BY seq DESC LIMIT 200", (TASK_TOPIC,)).fetchall()
+            failed = dict(conn.execute(
+                "SELECT event_id, detail FROM firings WHERE outcome='failed'").fetchall())
         finally:
             conn.close()
     except sqlite3.Error:
         return {}
-    for ts, payload in rows:
+    for eid, ts, payload in rows:
         try:
             p = json.loads(payload)
         except ValueError:
@@ -518,7 +525,7 @@ def requested_tasks(data_dir) -> dict:
         out.setdefault(str(p["task"]), {
             "task": p["task"], "cwd": p.get("cwd") or "",
             "project": p.get("project") or "", "since": ts,
-            "active_runs": {}})
+            "active_runs": {}, "failed": failed.get(eid, "")})
     return out
 
 
@@ -543,8 +550,14 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
         tasks = dict(reg.get("tasks") or {})
     except (OSError, ValueError):
         tasks = {}
+    # The registry's record wins for anything it knows, but the board's
+    # failure reason is never in the registry — a request that failed to
+    # start has no record there at all — so it is merged in either way.
     for task_id, rec in requested_tasks(d).items():
-        tasks.setdefault(task_id, rec)
+        held = tasks.get(task_id)
+        tasks[task_id] = {**rec, **held} if held else rec
+        if rec.get("failed"):
+            tasks[task_id]["failed"] = rec["failed"]
     try:
         store = json.loads(
             (Path(d) / "surfaces" / "sessions.json").read_text(encoding="utf-8"))
@@ -567,7 +580,13 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
         out.setdefault(proj, []).append(
             {"task": task_id, "since": rec.get("since") or 0,
              "running": bool(rec.get("active_runs")),
-             "ran": bool(rec.get("last_result"))})
+             "ran": bool(rec.get("last_result")),
+             # A session id is assigned before the process starts, so its
+             # presence is the proof that something actually ran — which is
+             # what separates "the runner never took this" from "it started
+             # and died". Those two need different repairs.
+             "started": bool(rec.get("session_id")),
+             "failed": rec.get("failed") or ""})
     for rows in out.values():
         rows.sort(key=lambda r: -(r.get("since") or 0))
     return out
@@ -1324,11 +1343,16 @@ def starting_rows(starting: list[dict], now: float) -> str:
             what = "working — its page appears when this round ends"
         elif s.get("ran"):
             what = "ran, but wrote no page"
+        elif s.get("failed"):
+            what = f"could not start — {_short_error(s['failed'])}"
+        elif s.get("started"):
+            # A session id was assigned and the process began. Nothing is
+            # running now and no page exists, so it was interrupted — a
+            # restart, a reboot, a killed daemon. Its transcript survives.
+            what = "started, then stopped before writing a page"
         elif age > STARTUP_GRACE:
-            # Launched long ago, never ran, nothing running now. This is not
-            # hypothetical: a restart once ate a firing and the work simply
-            # never happened, invisibly. Saying "queued" about a request this
-            # old would be the same lie told more politely.
+            # Launched long ago, nothing ever ran. Saying "queued" about a
+            # request this old would be the same lie told more politely.
             what = "never started — the runner did not pick this up"
         else:
             what = "queued — the runner starts it on its next pass"
@@ -1339,6 +1363,16 @@ def starting_rows(starting: list[dict], now: float) -> str:
             f'<span class="badge">{escape(_rel_time(s.get("since") or 0, now))}</span>'
             f'</span></div>')
     return "".join(out)
+
+
+def _short_error(detail: str, limit: int = 110) -> str:
+    """The reason a firing failed, short enough to sit in a badge. The
+    exception class name is dropped — `ActionFailed:` in front of every one of
+    them is noise, and the sentence after it is the part that says what to
+    fix."""
+    text = " ".join(str(detail).split())
+    text = re.sub(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Failed|Exception):\s*", "", text)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 def _task_label(task_id: str) -> str:

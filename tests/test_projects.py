@@ -17,6 +17,7 @@ Run directly: python3 -m pytest -q tests/test_projects.py
 """
 
 import json
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -359,6 +360,48 @@ def test_a_launched_task_is_visible_before_it_has_written_a_page():
     assert "ran, but wrote no page" in html, "a page-less finish is named, not hidden"
     assert "queued thing" in html and "task-queued-thing-2026" not in html
     assert "Nothing running in this project." not in html
+
+
+def test_the_fleet_tells_a_failed_start_apart_from_one_that_died_mid_run():
+    """Both look like "nothing happened", and they need different repairs:
+    one is a broken node definition, the other an interrupted process whose
+    transcript survives. Calling either "never started" was wrong."""
+    d = scratch()
+    work, = _dirs(d, "work")
+    projects.create(d, "Research", dirs=[str(work)])
+    (d / "surfaces").mkdir(parents=True, exist_ok=True)
+    (d / "registry.json").write_text(json.dumps({"tasks": {
+        "task-interrupted-20260925-120000-aaaaaa": {
+            "project": "research", "since": 1.0, "active_runs": {},
+            "session_id": "68c812ad-c3a5-4487-988d-c4865cccae36"},
+    }}), encoding="utf-8")
+    board = Board(d / "board.db")
+    try:
+        board.write(tasks.NAMESPACE, tasks.TOPIC, "k-broken", "command",
+                    {"target": tasks.TARGET_REQUEST, "cwd": str(work),
+                     "task": "task-broken-20260925-120100-bbbbbb", "title": "b"})
+    finally:
+        board.close()
+    with sqlite3.connect(d / "board.db") as conn:
+        eid, = conn.execute("SELECT id FROM events WHERE key='k-broken'").fetchone()
+        conn.execute(
+            "INSERT INTO firings (ts, action, event_id, depth, outcome, detail) "
+            "VALUES (1.0, 'task-requested', ?, 0, 'failed', ?)",
+            (eid, "ActionFailed: node 'task': command template wants 'dirs' "
+                  "which this event does not carry"))
+
+    projs = projects.load(d)
+    rows = statusd.starting_tasks(projs, data_dir=d)["research"]
+    html = statusd.starting_rows(rows, now=10_000.0)
+    assert "started, then stopped before writing a page" in html
+    assert "could not start — node &#x27;task&#x27;: command template wants" in html
+    assert "ActionFailed" not in html, "the exception class is noise, the sentence is the point"
+    assert "never started" not in html
+
+
+def test_a_long_failure_reason_is_cut_to_fit_a_badge():
+    assert statusd._short_error("RuntimeError: " + "x" * 400).endswith("…")
+    assert len(statusd._short_error("RuntimeError: " + "x" * 400)) <= 110
 
 
 def _task_name(task_id: str) -> str:
