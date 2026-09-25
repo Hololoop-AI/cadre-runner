@@ -1,6 +1,6 @@
 """The node event: routing is one board event naming the node that reacts.
 
-`task:route` carries `node`. One action starts whichever node it names, so a
+`task:handoff` carries `node`. One action starts whichever node it names, so a
 specialist registered AFTER the daemon loaded its actions is offered on every
 page and started by that same action — no new action, no restart. The
 driver's verdict form and an agent handing on by itself write the same event
@@ -32,7 +32,7 @@ def decision(verdict: str, typed: str = "") -> dict:
 
 def register_review(d):
     Nodes(d).register("review", "review $task, handed $surface_prev. Nodes:\n$nodes\n"
-                      "form: $route_options", "opus",
+                      "form: $handoff_options", "opus",
                       "claude -p {prompt} --model {model} {session} {permission}",
                       reads=[tasks.HANDOFF], about=REVIEW_ABOUT)
 
@@ -68,7 +68,7 @@ def test_the_action_names_no_node_the_event_does():
 def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resumed():
     d, work = scratch(), scratch()
     cfg, reg, b, calls = first_turn(d, work)
-    assert "value=\"route:review\"" not in calls[0]["prompt"]
+    assert "value=\"handoff:review\"" not in calls[0]["prompt"]
 
     # a new specialist: registering it is the whole of adding it
     register_review(d)
@@ -81,11 +81,11 @@ def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resum
     prompt = calls[-1]["prompt"]
     # the prompt is told who exists and what for, and the form offers it
     assert f"- **review** — {REVIEW_ABOUT}" in prompt
-    assert ('<input type="radio" name="verdict" value="route:review"> '
+    assert ('<input type="radio" name="verdict" value="handoff:review"> '
             f'Hand this to <strong>review</strong> — {REVIEW_ABOUT}') in prompt
     # pipeline stages are registered too, but do not take a handoff
-    assert "**build**" not in prompt and "route:build" not in prompt
-    for var in ("$nodes", "$handoff", "$route_options"):
+    assert "**build**" not in prompt and "handoff:build" not in prompt
+    for var in ("$nodes", "$handoff", "$handoff_options"):
         assert var not in prompt, var
 
     # the driver picks it: the SAME loaded action set starts it
@@ -94,17 +94,17 @@ def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resum
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
     with jsonl_board(d):
         surface._handle_poll(cfg, reg, None, lambda *a: None, page1, meta,
-                             poll_json(decision("route:review", "check the edge cases")))
+                             poll_json(decision("handoff:review", "check the edge cases")))
     ev = commands(cfg)[-1]
-    assert (ev["target"], ev["node"], ev["from"]) == ("task:route", "review", "task")
+    assert (ev["target"], ev["node"], ev["from"]) == ("task:handoff", "review", "task")
     spawns, _ = engine.tick(b, LIVE, Nodes(d), d)
     assert [(s["action"], s["node"]) for s in spawns] == [("task-handed-to-a-node", "review")]
     drive(cfg, reg, b, spawns[0], calls)
     assert calls[-1]["env"]["CADRE_SURFACE_OUT"].endswith("task-task-demo-review.html")
     assert page1 in calls[-1]["prompt"]
     # the review page offers task and implement, not itself
-    assert "route:task" in calls[-1]["prompt"] and "route:implement" in calls[-1]["prompt"]
-    assert "route:review" not in calls[-1]["prompt"]
+    assert "handoff:task" in calls[-1]["prompt"] and "handoff:implement" in calls[-1]["prompt"]
+    assert "handoff:review" not in calls[-1]["prompt"]
 
     # Continue on the review page resumes review, through the one feedback action
     tasks.record(reg, "task-demo")["active_runs"] = {}
@@ -132,7 +132,7 @@ def test_an_unregistered_node_is_refused_at_every_writer_and_at_the_engine():
     # badges it, and the page left open so they can pick again
     with jsonl_board(d):
         surface._handle_poll(cfg, reg, None, lambda *a: None, str(page), meta,
-                             poll_json(decision("route:ghost", "send it on")))
+                             poll_json(decision("handoff:ghost", "send it on")))
     assert [c["target"] for c in commands(cfg)] == ["task"]
     sess = surface.sessions(cfg)[str(page)]
     assert sess["open"] is True and len(sess["stranded"]) == 1
@@ -142,12 +142,12 @@ def test_an_unregistered_node_is_refused_at_every_writer_and_at_the_engine():
 
     # the function all writers share, and the command an agent runs
     with pytest.raises(tasks.UnknownNode, match="nodes that take a handoff: implement, task"):
-        tasks.write_route(cfg, reg, "task-demo", "ghost", str(page), [])
+        tasks.write_handoff(cfg, reg, "task-demo", "ghost", str(page), [])
     # registered, but a pipeline stage: it does not listen for the event
     from runnerlib import seed_nodes
     seed_nodes.seed(d)
     with pytest.raises(tasks.UnknownNode, match="'build' is registered but does not take"):
-        tasks.write_route(cfg, reg, "task-demo", "build", str(page), [])
+        tasks.write_handoff(cfg, reg, "task-demo", "build", str(page), [])
     from runnerlib.registry import Registry
     real = Registry(d / "registry.json")
     tasks.record(real, "task-demo")["cwd"] = str(work)
@@ -159,7 +159,7 @@ def test_an_unregistered_node_is_refused_at_every_writer_and_at_the_engine():
 
     # an event written around those guards still fails loudly in the engine
     b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
-            {"target": "task:route", "node": "ghost", "from": "task", "task": "task-demo",
+            {"target": "task:handoff", "node": "ghost", "from": "task", "task": "task-demo",
              "story": "task-demo", "cwd": str(work)})
     spawns, firings = engine.tick(b, LIVE, Nodes(d), d)
     assert spawns == []
@@ -203,7 +203,7 @@ def test_an_agent_writes_the_same_event_and_the_node_starts_when_its_turn_ends(
     agent_ev = commands(cfg)[-1]
 
     # ...the same event a driver's pick writes, bar who wrote it
-    driver_ev = tasks.write_route(cfg, reg, "task-demo", "implement", str(page),
+    driver_ev = tasks.write_handoff(cfg, reg, "task-demo", "implement", str(page),
                                   [{"text": "build option B"}])["payload"]
     assert agent_ev.pop("by") == "agent" and driver_ev.pop("by") == "driver"
     assert agent_ev == driver_ev
@@ -264,7 +264,7 @@ def test_a_new_action_on_a_running_board_does_not_replay_its_history():
     old = [a for a in LIVE if a["name"] != "task-handed-to-a-node"]
     engine.tick(b, old, n, d)                      # the daemon has been running
     b.write("cadre", "tasks", "task:old", "command",
-            {"target": "task:route", "node": "implement", "from": "task",
+            {"target": "task:handoff", "node": "implement", "from": "task",
              "task": "old", "story": "old", "cwd": "/tmp"})
     engine.tick(b, old, n, d)
     assert engine_seam.start_new_actions_at_head(b, LIVE) == ["task-handed-to-a-node"]
@@ -272,3 +272,46 @@ def test_a_new_action_on_a_running_board_does_not_replay_its_history():
     # a fresh board (no cursors at all) is left alone: nothing to replay
     fresh = board(scratch())
     assert engine_seam.start_new_actions_at_head(fresh, LIVE) == []
+
+
+def test_a_page_written_before_the_rename_still_hands_off():
+    """The hand-off verdict was `route:<node>` until it was renamed for what
+    it does. Fifteen pages carrying the old token were open on the driver's
+    own fleet at the moment of the rename, and a page whose hand-off line
+    quietly did nothing would send his chosen specialist into the void — the
+    exact silent no-op this project keeps paying for. Both tokens are read;
+    only the new one is written."""
+    d, work = scratch(), scratch()
+    cfg, reg, b, _ = first_turn(d, work)
+    register_review(d)
+    page = d / "surfaces" / "task-task-demo.html"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("<!doctype html><title>p</title>")
+    meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True,
+            "key": "k1"}
+    surface._save_sessions(cfg, {str(page): meta})
+
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, None, lambda *a: None, str(page), meta,
+                             poll_json(decision("route:review", "take this on")))
+
+    handoffs = [c for c in commands(cfg) if c["target"] in tasks.TARGET_HANDOFFS]
+    assert len(handoffs) == 1, [c["target"] for c in commands(cfg)]
+    assert handoffs[0]["node"] == "review"
+    assert handoffs[0]["target"] == tasks.TARGET_HANDOFF, \
+        "an old token is understood, but what gets written is the new name"
+    assert "take this on" in handoffs[0]["feedback"]
+
+
+def test_the_form_offers_the_new_token_and_the_action_accepts_both():
+    d = scratch()
+    seeded(d)
+    register_review(d)
+    listed = tasks.handoff_nodes(Nodes(d))
+    form = tasks.node_options(listed)
+    assert 'value="handoff:review"' in form and 'value="route:' not in form
+
+    spec = json.loads((engine_seam.CONFIG_DIR / "actions-handoff.json").read_text())
+    where = spec["actions"][0]["trigger"]["where"][0]
+    assert set(where["values"]) == set(tasks.TARGET_HANDOFFS), \
+        "the action must still fire for events written before the rename"

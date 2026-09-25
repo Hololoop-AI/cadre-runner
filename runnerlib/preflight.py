@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ACTION_FILES = (ROOT / "config" / "actions-pipeline.json",
                 ROOT / "config" / "actions-eval.json",
                 ROOT / "config" / "actions-dialogue.json",
-                ROOT / "config" / "actions-routes.json")
+                ROOT / "config" / "actions-handoff.json")
 
 
 class Check:
@@ -97,7 +97,7 @@ def check_actions(data_dir: Path, paths=ACTION_FILES) -> list[Check]:
         names = [a["name"] for a in actions]
         dupes = {n for n in names if names.count(n) > 1}
         # A node named by the event (`{payload[node]}`) is checked when the
-        # event is written (tasks.write_route), not here: there is no name yet.
+        # event is written (tasks.write_handoff), not here: there is no name yet.
         spawned = {a["body"]["node"] for a in actions
                    if (a.get("body") or {}).get("type") == "spawn_node"
                    and "{" not in a["body"]["node"]}

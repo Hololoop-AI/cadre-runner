@@ -804,12 +804,12 @@ def test_preflight_detects_a_missing_node():
     # `tasks.seed`, so without this row engine-only mode reads as ready while
     # the first dialogue command spawns a node that does not exist.
     # ...and `implement`, the node the handoff route spawns
-    # (config/actions-routes.json), for the same reason.
+    # (config/actions-handoff.json), for the same reason.
     assert "nodes active (12)" in checks
     assert "actions actions-dialogue.json" in checks
-    assert "actions actions-routes.json" in checks
+    assert "actions actions-handoff.json" in checks
     assert checks["engine action set"].detail.endswith(
-        "actions-pipeline.json, actions-dialogue.json, actions-routes.json")
+        "actions-pipeline.json, actions-dialogue.json, actions-handoff.json")
 
     # drop one node from the registry and re-check WITHOUT re-seeding: a
     # deployment whose registry lost a node must not read as ready

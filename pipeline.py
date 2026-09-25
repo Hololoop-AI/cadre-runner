@@ -849,7 +849,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     v = {"task": task_id, "story": task_id, "cwd": str(cwd),
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
          "task_text": "", "feedback": "", "surface_prev": "",
-         "routes": tasks_mod.describe_nodes([]), "route_options": "",
+         "routes": tasks_mod.describe_nodes([]), "handoff_options": "",
          "nodes": tasks_mod.describe_nodes([]), "handoff": "",
          "project": projects_mod.NO_PROJECT}
     v |= action.get("extra_vars", {})
@@ -875,7 +875,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
                                     "CADRE_RUN_ID": rid,
-                                    # the task's page, whichever node a route
+                                    # the task's page, whichever node a handoff
                                     # handed it to
                                     **_surface_env(cfg, tasks_mod.NODE, task_id,
                                                    page=rec.get("page"))})
@@ -927,7 +927,7 @@ def _reap_tasks(cfg, reg):
                     cfg, art, "task", log, task=task_id, cwd=rec.get("cwd", ""),
                     **({"node": run["stage"]} if run["stage"] != tasks_mod.NODE else {}),
                     **(_inherited(cfg, rec, art) or _project_of(cfg, rec, art)))
-                _link_routed_page(cfg, rec, art, task_id)
+                _link_handoff_page(cfg, rec, art, task_id)
             elif ok and art and not art.exists():
                 log(f"{task_id}: turn finished but wrote no page at {art} — "
                     f"nothing for the driver to rule on")
@@ -939,7 +939,7 @@ def _inherited(cfg, rec, art) -> dict:
     The fleet's own fallback (the working directory's project) would usually
     agree, but a page the driver filed somewhere else by hand must not fall
     out of that project the moment its work is handed on."""
-    src = rec.get("routed_from")
+    src = rec.get("handoff_from") or rec.get("routed_from")
     if not src or str(art) == str(src):
         return {}
     sess = surface_mod.sessions(cfg)
@@ -961,11 +961,11 @@ def _project_of(cfg, rec, art) -> dict:
     return {"project": proj["name"]} if proj else {}
 
 
-def _link_routed_page(cfg, rec, art, task_id):
-    """A page built by a node a route activated is `derived-from` the page the
-    driver chose that route on — written once, to the link log the fleet
+def _link_handoff_page(cfg, rec, art, task_id):
+    """A page built by a node a handoff started is `derived-from` the page the
+    driver handed off from — written once, to the link log the fleet
     already reads, so the chain of pages shows which node each came from."""
-    src = rec.get("routed_from")
+    src = rec.get("handoff_from") or rec.get("routed_from")
     if not src:
         return
     sess = surface_mod.sessions(cfg)
@@ -977,6 +977,7 @@ def _link_routed_page(cfg, rec, art, task_id):
     if conversations.check_link(records, "derived-from", new, old) == "new":
         conversations.append_link(log_path, "derived-from", new, old, by="cadre-route")
         log(f"{task_id}: {Path(art).name} linked derived-from {Path(src).name}")
+    rec.pop("handoff_from", None)
     rec.pop("routed_from", None)
 
 
@@ -1476,8 +1477,8 @@ def cmd_surface(cfg, args):
 
 
 def cmd_handoff(cfg, args):
-    """Hand a task to a node: write the node event, the same `task:route` the
-    verdict form's hand-off lines write, through the same `write_route`.
+    """Hand a task to a node: write the node event, the same `task:handoff` the
+    verdict form's hand-off lines write, through the same `write_handoff`.
 
     Two callers. An AGENT, mid-turn, handing its own work to the next
     specialist with no person in the loop — it runs inside a session, so
@@ -1516,7 +1517,7 @@ def cmd_handoff(cfg, args):
                                              key=tasks_mod.key_for(task_id),
                                              kind="command", limit=10000)
                        if (e["payload"].get("target"), e["payload"].get("by")) ==
-                       (tasks_mod.TARGET_ROUTE, "agent"))
+                       (tasks_mod.TARGET_HANDOFF, "agent"))
         finally:
             board.close()
         if done >= cap:
@@ -1528,7 +1529,7 @@ def cmd_handoff(cfg, args):
              else json.loads(kept.read_text()))
     notes += [{"text": n} for n in args.note or []]
     try:
-        ev = tasks_mod.write_route(cfg, reg, task_id, args.node, str(page), notes,
+        ev = tasks_mod.write_handoff(cfg, reg, task_id, args.node, str(page), notes,
                                    by="agent" if agent else "driver")
     except tasks_mod.UnknownNode as e:
         sys.exit(f"refused, nothing written: {e}")

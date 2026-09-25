@@ -410,7 +410,7 @@ def test_the_engine_loads_every_workflow_as_one_set():
     loaded = engine.load_action_set(engine_seam.ACTIONS_PATHS)
     names = [a["name"] for a in loaded]
 
-    routes = ROOT / "config" / "actions-routes.json"
+    routes = ROOT / "config" / "actions-handoff.json"
     assert set(engine_seam.ACTIONS_PATHS) == {PIPELINE_ACTIONS, ACTIONS, routes}
     assert names == [a["name"] for a in engine.load_actions(PIPELINE_ACTIONS)] + \
                     [a["name"] for a in engine.load_actions(ACTIONS)] + \

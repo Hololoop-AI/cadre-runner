@@ -60,8 +60,8 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 ACTIONS_PATHS = (CONFIG_DIR / "actions-pipeline.json",
                  CONFIG_DIR / "actions-dialogue.json",
                  # the node event: one action that starts whichever node a
-                 # handoff names (config/actions-routes.json)
-                 CONFIG_DIR / "actions-routes.json")
+                 # handoff names (config/actions-handoff.json)
+                 CONFIG_DIR / "actions-handoff.json")
 
 PIPELINE = Path(__file__).resolve().parent.parent / "pipeline.py"
 
@@ -393,7 +393,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
             log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
     except Exception as e:
         log(f"engine: task skill install failed for {cwd}: {e}")
-    if payload.get("target") == tasks.TARGET_ROUTE:
+    if payload.get("target") == tasks.TARGET_HANDOFF:
         # The node event handed this task to a node. Its turns get their own
         # page and a session of their own; the reap links the new page
         # derived-from the one it was handed from, and from here `continue`
@@ -401,7 +401,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         rec["node"] = spec["node"]
         rec["page"] = str(Path(cfg.data_dir) / "surfaces"
                           / f"task-{task_id}-{spec['node']}.html")
-        rec["routed_from"] = str(payload.get("surface_prev") or "")
+        rec["handoff_from"] = str(payload.get("surface_prev") or "")
     session_id, resume = tasks.session_for(
         reg, task_id, payload.get("resume") == "session")
     extra = {k: v for k, v in payload.items() if k in PROMPT_VARS}
@@ -413,7 +413,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # `$routes` is the same text under the name prompts before the node
     # event used; an unpromoted prompt version still renders the live list.
     extra["routes"] = extra["nodes"]
-    extra["route_options"] = tasks.node_options(listed)
+    extra["handoff_options"] = tasks.node_options(listed)
     # ...and the command that writes the same event the form does, for a
     # node that hands on by itself.
     extra["handoff"] = handoff_command(cfg, task_id)
@@ -463,7 +463,7 @@ def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
         spec = rec["deferred"].pop(0)
         payload = (board.get(spec["event_id"]) or {}).get("payload") or {}
         prev = str(payload.get("surface_prev") or "")
-        if payload.get("target") == tasks.TARGET_ROUTE and prev:
+        if payload.get("target") == tasks.TARGET_HANDOFF and prev:
             # The page the work was handed on from is finished: the agent
             # that wrote it moved the work on. Close it like a driver's
             # handoff closes it, so Continue on it cannot reach the next node.
@@ -483,8 +483,8 @@ def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
 
 def handoff_command(cfg, task_id: str) -> str:
     """The shell line a session runs to hand its task to another node: the
-    same `task:route` event the verdict form writes, through the same
-    `tasks.write_route`. `<node>` is the one placeholder the agent fills."""
+    same `task:handoff` event the verdict form writes, through the same
+    `tasks.write_handoff`. `<node>` is the one placeholder the agent fills."""
     conf = getattr(cfg, "path", None)
     parts = [sys.executable, str(PIPELINE)]
     if conf:

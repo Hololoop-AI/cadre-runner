@@ -6,7 +6,7 @@ ended and the proposed commits were never made; the annotation went to
 `closing-annotations.json` and nothing read it. With the handoff:
 
     the task node's form offers it, rendered from the node registry
-    -> the driver picks it, with annotations    -> `task:route` node=implement
+    -> the driver picks it, with annotations    -> `task:handoff` node=implement
     -> the LIVE action set's one generic action spawns `implement`, in the
        same directory, reading
        the approved page as its spec and the annotations as its last words
@@ -98,7 +98,7 @@ def test_a_task_page_offers_implement_and_an_implement_page_offers_task():
     assert [x["name"] for x in tasks.handoff_nodes(n, exclude="implement")] == ["task"]
     line = tasks.node_options(listed)
     about = html.escape(tasks.NODES["implement"]["about"], quote=False)
-    assert line == ('<label><input type="radio" name="verdict" value="route:implement">'
+    assert line == ('<label><input type="radio" name="verdict" value="handoff:implement">'
                     f' Hand this to <strong>implement</strong> — {about}</label>\n')
     # nothing that could break the attribute contract
     assert '"' not in tasks.NODES["implement"]["about"]
@@ -114,9 +114,9 @@ def test_the_task_node_renders_the_handoff_inside_its_verdict_form(quiet_cli):
     prompt = calls[0]["prompt"]
     form = prompt[prompt.index("<form data-review-surface-question"):]
     form = form[:form.index("</form>")]
-    assert form.index("value=\"continue\"") < form.index("value=\"route:implement\"") \
+    assert form.index("value=\"continue\"") < form.index("value=\"handoff:implement\"") \
         < form.index("<button")
-    assert "$route_options" not in prompt and "$routes" not in prompt
+    assert "$handoff_options" not in prompt and "$routes" not in prompt
 
 
 # --------------------------------------------------------------------------- the walk
@@ -145,11 +145,11 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
         surface._handle_poll(
             cfg, reg, None, lambda *a: None, str(review_page), meta,
             poll_json(note("drop commit 3, it is superseded", "Commit 3 is the guard"),
-                      decision("route:implement")))
+                      decision("handoff:implement")))
     cmds = commands(cfg)
     routed = cmds[-1]
     assert {k: routed[k] for k in ("target", "node", "from", "by", "cwd", "surface_prev")} == {
-        "target": "task:route", "node": "implement", "from": "task", "by": "driver",
+        "target": "task:handoff", "node": "implement", "from": "task", "by": "driver",
         "cwd": str(work), "surface_prev": str(review_page)}
     # the annotation is carried, quoted under the text it was attached to
     assert "> Commit 3 is the guard\n\ndrop commit 3, it is superseded" in routed["feedback"]
@@ -171,7 +171,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
     assert str(review_page) in impl["prompt"]
     assert "drop commit 3, it is superseded" in impl["prompt"]
     assert "Implement — carry out what the driver approved" in impl["prompt"]
-    for var in ("$surface_prev", "$feedback", "$cwd", "$task ", "$route_options"):
+    for var in ("$surface_prev", "$feedback", "$cwd", "$task ", "$handoff_options"):
         assert var not in impl["prompt"], var
 
     # its page opens in the same task, the same project, derived-from the review
@@ -230,8 +230,8 @@ def test_a_handoff_queued_with_a_plain_approve_wins(quiet_cli):
     with jsonl_board(d):
         surface._handle_poll(cfg, reg, None, lambda *a: None, str(d / "p.html"), meta,
                              poll_json(decision("approve"), note("use message 2 as written"),
-                                       decision("route:implement")))
-    assert [c["target"] for c in commands(cfg)] == ["task:route"]
+                                       decision("handoff:implement")))
+    assert [c["target"] for c in commands(cfg)] == ["task:handoff"]
     assert "use message 2 as written" in commands(cfg)[0]["feedback"]
 
 
@@ -307,7 +307,7 @@ def test_handoff_command_rescues_an_already_approved_page_and_its_kept_notes(cap
         note=["cut message 2 as written"], no_kept=False))
     routed = commands(cfg)[-1]
     assert (routed["target"], routed["node"], routed["surface_prev"], routed["cwd"],
-            routed["by"]) == ("task:route", "implement", str(page), str(work), "driver")
+            routed["by"]) == ("task:handoff", "implement", str(page), str(work), "driver")
     assert "wrap this up" in routed["feedback"]
     assert "cut message 2 as written" in routed["feedback"]
     b, n = board(d), seeded(d)

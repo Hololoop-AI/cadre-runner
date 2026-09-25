@@ -155,7 +155,7 @@ attribute values anywhere on the page — they truncate HTML attributes.
      data:{gate:'task', task:'<TASK>', verdict:v}});">
 <label><input type="radio" name="verdict" value="approve"> Approve — this is done</label>
 <label><input type="radio" name="verdict" value="continue"> Continue — my annotations say what is next</label>
-$route_options<button type="submit">Queue verdict</button></form>
+$handoff_options<button type="submit">Queue verdict</button></form>
 ```
 
 Approve ends the dialogue. Continue sends the driver's annotations back as the

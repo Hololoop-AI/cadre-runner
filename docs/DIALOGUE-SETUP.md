@@ -143,7 +143,7 @@ event: `python3 pipeline.py handoff <task-id> --node <node>`, which is also how
 you hand off a page whose form has no such line — any notes kept from an
 earlier plain approve ride along.
 
-**Add a specialist** by registering it with `command:task:route` in its
+**Add a specialist** by registering it with `command:task:handoff` in its
 `reads` and a one-line `about`; it appears on every page and in every node's
 prompt from the next turn, with no action to write and no restart.
 

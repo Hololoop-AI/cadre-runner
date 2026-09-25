@@ -46,14 +46,23 @@ TOPIC = "tasks"
 TARGET_REQUEST = "task"
 TARGET_FEEDBACK = "task:feedback"
 TARGET_VERDICT = "task:verdict"
-TARGET_ROUTE = "task:route"
+TARGET_HANDOFF = "task:handoff"
+# What the handoff event was called before it was named for what it does. Still
+# accepted on read — the action triggers on both, and pages written before the
+# rename carry `route:<node>` in their forms. Never written.
+TARGET_ROUTE_LEGACY = "task:route"
+TARGET_HANDOFFS = (TARGET_HANDOFF, TARGET_ROUTE_LEGACY)
 
 NODE = "task"
 IMPLEMENT = "implement"
 
-# What a node lists in its `reads` to say it reacts to the node event — and
+# What a node lists in its `reads` to say it reacts to the handoff event — and
 # so to be offered on every page's verdict form and in every node's prompt.
-HANDOFF = "command:task:route"
+# Seeding rewrites a seeded node's reads every pass, so changing this migrates
+# `task` and `implement` on the next daemon pass; the legacy string stays
+# recognised for any node registered by hand before the rename.
+HANDOFF = "command:task:handoff"
+HANDOFF_LEGACY = "command:task:route"
 
 # The dialogue's own nodes. `about` is what the driver and the other nodes
 # read when choosing who takes the work next.
@@ -313,15 +322,15 @@ def write_verdict(cfg, task_id: str, verdict: str) -> dict:
 
 # --------------------------------------------------------------------------- the node event
 #
-# Routing is one event: `task:route` naming the node that reacts next. One
-# action (config/actions-routes.json) starts whichever node it names, so a new
+# A handoff is one event: `task:handoff` naming the node that reacts next. One
+# action (config/actions-handoff.json) starts whichever node it names, so a new
 # specialist needs no new action and no restart — registering it with
 # HANDOFF in its `reads` is what puts it on every page's form and in every
 # node's prompt. What connects to what is which nodes listen, not a list here.
 #
 # Three writers, one event: the driver's verdict form (surface bridge), an
 # agent handing off mid-dialogue (`pipeline.py handoff`), and the same command
-# typed by a person. All three go through `write_route`, which refuses a node
+# typed by a person. All three go through `write_handoff`, which refuses a node
 # that is not registered to hear the event — loudly, before anything is
 # written. `by` records which of them wrote it; no action reads it.
 
@@ -334,7 +343,10 @@ def handoff_nodes(nodes: Nodes, exclude: str | None = None) -> list[dict]:
     """The nodes a page may hand to, live from the registry: every node that
     listens for the node event, minus the one that built the page (Continue
     already sends it back there)."""
-    return [n for n in nodes.listening(HANDOFF) if n["name"] != exclude]
+    listed = {n["name"]: n for n in nodes.listening(HANDOFF)}
+    for n in nodes.listening(HANDOFF_LEGACY):
+        listed.setdefault(n["name"], n)
+    return [n for n in listed.values() if n["name"] != exclude]
 
 
 def describe_nodes(listed: list[dict]) -> str:
@@ -348,7 +360,7 @@ def describe_nodes(listed: list[dict]) -> str:
 
 def node_options(listed: list[dict]) -> str:
     """The verdict-form lines, one per node that can take the work
-    (`$route_options`). Rendered here rather than by the page author, so the
+    (`$handoff_options`). Rendered here rather than by the page author, so the
     choice reads the same on every page. Double quotes are stripped: the page
     contract forbids them inside attribute values."""
     lines = []
@@ -356,7 +368,7 @@ def node_options(listed: list[dict]) -> str:
         about = escape((n["about"] or "").replace('"', ""), quote=False)
         name = escape(n["name"], quote=False)
         lines.append(f'<label><input type="radio" name="verdict" '
-                     f'value="route:{n["name"]}"> Hand this to <strong>{name}</strong>'
+                     f'value="handoff:{n["name"]}"> Hand this to <strong>{name}</strong>'
                      + (f" — {about}" if about else "") + "</label>\n")
     return "".join(lines)
 
@@ -376,16 +388,16 @@ def check_handoff(cfg, node: str) -> None:
                       f"handoff: {', '.join(takers) or 'none'}")
 
 
-def write_route(cfg, reg, task_id: str, node: str, page: str, notes: list[dict],
-                by: str = "driver") -> dict:
-    """Write the node event: `node` reacts next. The annotations ride along as
+def write_handoff(cfg, reg, task_id: str, node: str, page: str, notes: list[dict],
+                  by: str = "driver") -> dict:
+    """Write the handoff event: `node` reacts next. The annotations ride along as
     `feedback` and the page the handoff was made from as `surface_prev`, so
     the node starts from what was seen. `from` is the node that built that
     page. Refuses an unregistered node before writing anything."""
     check_handoff(cfg, node)
     rec = record(reg, task_id)
     return _command(cfg, task_id,
-                    {"target": TARGET_ROUTE, "node": node,
+                    {"target": TARGET_HANDOFF, "node": node,
                      "from": rec.get("node") or NODE, "by": by,
                      "task": task_id, "story": task_id, "cwd": rec.get("cwd") or "",
                      "iteration": "1", "feedback": format_feedback(notes),

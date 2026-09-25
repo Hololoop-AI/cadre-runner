@@ -56,7 +56,12 @@ _DECISION_RE = re.compile(
 # same token — only the radio value differs.
 _TASK_DECISION_RE = re.compile(
     r"CADRE_DECISION gate=task story=([\w.-]+) task=([\w.-]+) "
-    r"verdict=(approve|continue|route:[\w.-]+)")
+    # `route:` is the name the hand-off verdict had before it was renamed for
+    # what it does. Every page written before the rename is still open with
+    # `route:<node>` in its form, so dropping it here would make the hand-off
+    # line on all of them parse as nothing and fall through to a plain
+    # feedback turn — the driver's chosen specialist silently ignored.
+    r"verdict=(approve|continue|(?:handoff|route):[\w.-]+)")
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
 
 def outbox_path() -> Path:
@@ -902,18 +907,22 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                               turn, which is why the config has no continue
                               branch to fire.
 
-        `route:<node>`     -> `task:route`, the node event: that node takes
-                              the work next (see tasks.py "the node event").
-                              A node not registered to take it is refused
-                              and the batch stranded, where the fleet shows it.
+        `handoff:<node>`   -> `task:handoff`: that node takes the work next
+                              (see tasks.py "the handoff event"). A node not
+                              registered to take it is refused and the batch
+                              stranded, where the fleet shows it. `route:` is
+                              accepted as the same thing: pages written before
+                              the rename are still open and their forms say
+                              route, and a driver ruling on one of those must
+                              not silently do nothing.
 
     Approve wins over annotations that arrived with it: a page the driver
     approved is finished, and re-spawning the session to answer notes on work
     that is done would restart a dialogue the driver just closed. Those notes
     are logged rather than written, so they are not silently gone.
 
-    A route in the same batch wins over approve. The handoff IS an approval
-    (config/actions-routes.json) that also carries the annotations forward as
+    A handoff in the same batch wins over approve. The handoff IS an approval
+    (config/actions-handoff.json) that also carries the annotations forward as
     the receiving agent's last instructions — so a batch holding both, a
     driver who clicked Approve and then changed their mind, must not lose the
     handoff and the notes to the plain close.
@@ -925,19 +934,22 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         return
     notes = list(free)
     approve = asked_to_continue = False
-    route = None
+    handoff = None
     for item in structured:
         if item.get("type") != "task_decision":
             continue
-        if item["verdict"].startswith("route:"):
-            route = item["verdict"].split(":", 1)[1]
+        # Both prefixes: `handoff:` is what forms say now, `route:` is what the
+        # pages already open say. Dropping the old one would make the hand-off
+        # line on every page written before today do nothing at all.
+        if item["verdict"].startswith(("handoff:", "route:")):
+            handoff = item["verdict"].split(":", 1)[1]
             notes.append(item)
         elif item["verdict"] == "approve":
             approve = True
         else:                       # continue: whatever it rode in on counts
             asked_to_continue = True
             notes.append(item)
-    if approve and not route:
+    if approve and not handoff:
         tasks_mod.write_verdict(cfg, task_id, "approve")
         if notes:
             # The dialogue is closed, so no session will read these — but the
@@ -951,8 +963,8 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         log(f"surface: {task_id} approved via surface — dialogue closed")
         end_session(cfg, path, log)
         return
-    if route:
-        _route(cfg, reg, log, path, meta, task_id, route, notes, raw, payload)
+    if handoff:
+        _handoff(cfg, reg, log, path, meta, task_id, handoff, notes, raw, payload)
         return
     if not any((n.get("text") or "").strip() for n in notes):
         if not asked_to_continue:
@@ -969,9 +981,9 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         f"{len(notes)} annotation(s) back to the session")
 
 
-def _route(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
-           notes: list[dict], raw: str = "", payload: dict | None = None) -> None:
-    """The driver picked the node that takes the work next: write the node
+def _handoff(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
+             notes: list[dict], raw: str = "", payload: dict | None = None) -> None:
+    """The driver picked the node that takes the work next: write the handoff
     event. A node that is not registered to take it is refused before
     anything is written — and not quietly: the batch is stranded, which
     badges the page on the fleet ("feedback reached no one") with the
@@ -980,7 +992,7 @@ def _route(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
     next page."""
     from . import tasks as tasks_mod
     try:
-        tasks_mod.write_route(cfg, reg, task_id, node, path, notes)
+        tasks_mod.write_handoff(cfg, reg, task_id, node, path, notes)
     except tasks_mod.UnknownNode as e:
         _dead_letter(cfg, log, path, meta, raw, payload, f"handoff refused: {e}")
         return
