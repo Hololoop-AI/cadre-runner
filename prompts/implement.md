@@ -121,4 +121,16 @@ $route_options<button type="submit">Queue verdict</button></form>
 ```
 
 Approve ends the dialogue. Continue sends the driver's annotations back to you,
-next round.
+next round. Any line after those two hands your page to another node — they
+are rendered from the node registry; copy them as they stand. The nodes that
+can take a handoff right now, and what each is for:
+
+$nodes
+
+**Handing on yourself.** Only when the approved page or the driver's words
+tell you to pass the result to another node: write your page first, then run
+
+    $handoff
+
+with `<node>` one of the names above. It refuses any other name and writes
+nothing; say so on your page if it does. The node starts when your turn ends.

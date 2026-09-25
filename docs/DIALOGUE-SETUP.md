@@ -132,14 +132,20 @@ only stages your answer in the browser tab; nothing leaves until you send.
 
 Your notes come back to the *same* session as its next turn, with the text each
 note was attached to. **Approve** ends the dialogue; **Continue** means your
-annotations say what is next; **Approve and hand off** approves what the page
-decided and sends it to an implementing agent. That agent works in the same
-directory, reads the approved page as its spec and your annotations as its last
-instructions, and writes its own page under the same conversation for you to
-rule on. It commits only what the page proposed and never pushes on its own.
-A page written before the handoff existed has no such line; hand it off with
-`python3 pipeline.py handoff <task-id>` — any notes kept from an earlier plain
-approve ride along.
+annotations say what is next; each **Hand this to <node>** line picks the
+specialist that reads the page and takes the work next — the lines are the
+nodes registered to take a handoff, read live from the node registry. That node
+works in the same directory, reads the page as its input and your annotations
+as its last instructions, and writes its own page under the same conversation
+for you to rule on (`implement`, for one, commits only what the page proposed
+and never pushes on its own). A session can hand on by itself with the same
+event: `python3 pipeline.py handoff <task-id> --node <node>`, which is also how
+you hand off a page whose form has no such line — any notes kept from an
+earlier plain approve ride along.
+
+**Add a specialist** by registering it with `command:task:route` in its
+`reads` and a one-line `about`; it appears on every page and in every node's
+prompt from the next turn, with no action to write and no restart.
 
 **Register a project section** so the fleet is a launchpad rather than a list —
 clicking the row prefills the New task box with that directory:
@@ -158,7 +164,8 @@ CADRE_CONFIG=$PWD/config.local.toml python3 pipeline.py surface register \
 | You answered and nothing happened | You pressed "Queue answer", not "Send to Agent". Every delivery is recorded in `~/.review-surface/feedback-journal.jsonl` — that file is the receipt. |
 | A task never spawns | The daemon caps at 4 concurrent runs and currently drops a firing that arrives at the cap. Re-dispatch. |
 | Editing a prompt in `prompts/` changed nothing | Seeding records a new version but does not promote it. `python3 pipeline.py promote task` (or `implement`) activates the text on disk; the daemon picks it up on its next pass. |
-| Editing `config/actions-*.json` changed nothing | The daemon reads its actions once, at start. Restart it. |
+| Editing `config/actions-*.json` changed nothing | The daemon reads its actions once, at start. Restart it. (Adding a node does NOT need this — the registry is re-read every pass.) |
+| A hand-off went nowhere | A node that is not registered to take a handoff is refused before anything is written: from a page, the batch is stranded and the row badges it; from the command, it exits non-zero naming the nodes that do. |
 | Page renders as unstyled white text | The authoring session wrote a fragment instead of a full document — a task-prompt failure, not a server one. |
 | `review-surface` starts but pages 404 | Something else owns port 4387. Use another port and set `CADRE_SURFACE_UPSTREAM` to match for the daemon and the fleet page. |
 
@@ -168,9 +175,10 @@ Killing all three processes loses nothing.
 
 ## What this does not do yet
 
-- **One destination.** "Approve and hand off" goes to the one implementing
-  agent. A second kind of handoff (a reviewer, a test writer) is one more
-  action in `config/actions-routes.json` plus its node — not built yet.
+- **Two specialists.** `task` and `implement` are the only nodes that take a
+  handoff today; a reviewer or a test writer is a node to register, not built.
+- **No registration command.** Registering a node is `Nodes(data_dir).register(...)`
+  in Python; there is no `pipeline.py` subcommand for it yet.
 - Lifecycle state is partly convention: a page is "decided" because its title
   says so. The store that replaces this is designed, not built.
 - One driver. There is no identity or attribution on annotations, so a second

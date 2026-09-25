@@ -162,21 +162,36 @@ Approve ends the dialogue. Continue sends the driver's annotations back as the
 next turn of this same session — which is you, next round, reading them as
 `$feedback`.
 
-### Where your work can go next — the handoff
+### Who takes the work next — the other nodes
 
-Any line in the form above beyond Approve and Continue is a ROUTE: approving
-the page AND handing what it decided to another agent, which does the work and
-writes its own page for the driver. These are the routes wired to a page you
-build:
+Any line in the form above beyond Approve and Continue hands the page to
+another node — a specialist agent that reads your page as its input, with the
+driver's annotations as its last instructions, does its part, and writes its
+own page for the driver. These are the nodes registered to take a handoff
+right now, and what each is for:
 
-$routes
+$nodes
 
-Those lines are rendered for you from the workflow's configuration — copy the
-form exactly as it stands; do not add, remove or reword route lines. What you
-DO own is making the page usable as a spec: if the driver hands it off, the
-receiving agent reads this page and nothing else of your session. So when your
-page proposes work (commits, a change, a build), state it concretely enough to
-be carried out cold — the exact files, the commands, the commit messages — and
-say in one sentence on the page which verdict you recommend and why. The
-driver's annotations ride along with a handoff as the receiving agent's last
-instructions; a plain Approve ends the dialogue and starts nothing.
+Those lines are rendered for you from the node registry — copy the form
+exactly as it stands; do not add, remove or reword them. What you DO own is
+making the page usable as that node's input: it reads this page and nothing
+else of your session. So when your page proposes work (commits, a change, a
+build), state it concretely enough to be carried out cold — the exact files,
+the commands, the commit messages — and say in one sentence on the page which
+verdict you recommend and why.
+
+**Handing on yourself.** When the ask or the driver's annotations tell you to
+pass the work to another node — rather than bring it back to the driver — you
+can write the same event the form writes. Write your page first (it is what
+the node reads), then run:
+
+    $handoff
+
+with `<node>` one of the names above. It refuses any other name and writes
+nothing; say so on your page if it does. The node starts when your turn ends,
+and your page is closed as handed on. Do not hand on unasked: by default the
+driver rules on your page.
+
+**If you were handed this work.** When `$surface_prev` names a page and this
+is round 1, another node handed you that page: read it first, it is your
+input, and `$feedback` is what you were asked to do with it.

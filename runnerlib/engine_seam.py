@@ -36,6 +36,8 @@ cost record all stay in `_run_stage` — one spawn path, not two.
 """
 
 import os
+import shlex
+import sys
 import time
 from pathlib import Path
 
@@ -57,9 +59,11 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 # data dir; including it here is a seeding change, not a list change.
 ACTIONS_PATHS = (CONFIG_DIR / "actions-pipeline.json",
                  CONFIG_DIR / "actions-dialogue.json",
-                 # the handoff: approve a dialogue page AND send it to an
-                 # agent that carries it out (config/actions-routes.json)
+                 # the node event: one action that starts whichever node a
+                 # handoff names (config/actions-routes.json)
                  CONFIG_DIR / "actions-routes.json")
+
+PIPELINE = Path(__file__).resolve().parent.parent / "pipeline.py"
 
 NAMESPACE = "cadre"
 STORIES_TOPIC = "stories"
@@ -127,21 +131,32 @@ def state(cfg) -> dict:
         # the operator's live state).
         os.environ["CADRE_DATA_DIR"] = str(cfg.data_dir)
         seed_nodes.seed(cfg.data_dir, cfg)      # idempotent; see seed_nodes
-        tasks.seed(cfg.data_dir, cfg)           # workflow #3's one node
-        _state[path] = {
-            "board": Board(path),
-            "nodes": Nodes(cfg.data_dir),
-            "actions": engine.load_action_set(ACTIONS_PATHS),
-        }
+        tasks.seed(cfg.data_dir, cfg)           # workflow #3's nodes
+        board = Board(path)
+        actions = engine.load_action_set(ACTIONS_PATHS)
+        start_new_actions_at_head(board, actions)
+        _state[path] = {"board": board, "nodes": Nodes(cfg.data_dir),
+                        "actions": actions}
     return _state[path]
 
 
-def actions_for(cfg) -> list[dict]:
-    """The action set this daemon RUNS — the cached one once a pass has
-    loaded it, so the routes a page offers are the routes the engine will
-    fire, not whatever the file says after an edit the daemon has not read."""
-    st = _state.get(str(board_path(cfg)))
-    return st["actions"] if st else engine.load_action_set(ACTIONS_PATHS)
+def start_new_actions_at_head(board: Board, actions: list[dict]) -> list[str]:
+    """An action installed into a board that has already been running starts
+    at the board's head, not at its first event.
+
+    The board keeps one cursor per action name, and a name it has never seen
+    reads from seq 0 — so a new action would fire on every matching event in
+    the board's history. For the node-event action that meant re-spawning
+    `implement` for a handoff a driver made days ago. A board with no cursors
+    at all is a fresh deployment, where reading from the start is right (a
+    task submitted before the daemon's first pass must still run)."""
+    known = board.consumers()
+    if not known:
+        return []
+    new = [a["name"] for a in actions if a["name"] not in known]
+    for name in new:
+        board.start_at_head(name)
+    return new
 
 
 def reset():
@@ -167,6 +182,9 @@ def tick_pass(cfg, reg, ghc, log, run_stage) -> dict:
     # traffic until a restart. One small JSON read per pass buys the registry's
     # own contract back: promotion is what puts a version in front of traffic.
     nodes = Nodes(cfg.data_dir)
+
+    # Turns that were handed work while a turn of theirs was still running.
+    run_deferred(cfg, reg, board, log, run_stage)
 
     for slug, story in reg.data["stories"].items():
         adopt_story(board, slug, story)
@@ -336,6 +354,20 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     """
     from . import tasks
     task_id = payload.get("task") or payload.get("story") or spec["key"].split(":", 1)[-1]
+    rec = tasks.record(reg, task_id)
+    if rec.get("active_runs"):
+        # A turn of this task is still running — typically the very agent that
+        # just handed the work on, before it has written its page and exited.
+        # Starting now would be refused by `_run_task` (one turn at a time),
+        # and dropping it is the silent no-op this project has paid for. So it
+        # waits, on the record, and `run_deferred` starts it once the running
+        # turn has been reaped and its page opened.
+        rec.setdefault("deferred", []).append(spec)
+        if hasattr(reg, "save"):
+            reg.save()
+        log(f"engine: {spec['node']} for {task_id} waits — a turn is still "
+            f"running; it starts when that turn ends")
+        return None
     cwd = str(payload.get("cwd") or "").strip()
     if not cwd.startswith("/"):
         # The ask is the only thing that names a working directory, so a
@@ -343,7 +375,6 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         # daemon happens to be — refuse it here rather than find out from the
         # session's transcript.
         raise RuntimeError(f"task {task_id}: cwd {cwd!r} is not an absolute path")
-    rec = tasks.record(reg, task_id)
     first = payload.get("target") == tasks.TARGET_REQUEST
     if first:
         # The project and the launch choice ride only the ask; every later
@@ -363,23 +394,29 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     except Exception as e:
         log(f"engine: task skill install failed for {cwd}: {e}")
     if payload.get("target") == tasks.TARGET_ROUTE:
-        # The driver pointed this task at another node. That node's turns get
-        # their own page (per-node surface awareness) and a session of their
-        # own; the reap links the new page derived-from the one the route was
-        # chosen on, and from here `continue` on it goes back through THIS node.
+        # The node event handed this task to a node. Its turns get their own
+        # page and a session of their own; the reap links the new page
+        # derived-from the one it was handed from, and from here `continue`
+        # on it goes back through THIS node.
         rec["node"] = spec["node"]
         rec["page"] = str(Path(cfg.data_dir) / "surfaces"
-                          / f"task-{task_id}-{payload.get('route') or spec['node']}.html")
+                          / f"task-{task_id}-{spec['node']}.html")
         rec["routed_from"] = str(payload.get("surface_prev") or "")
     session_id, resume = tasks.session_for(
         reg, task_id, payload.get("resume") == "session")
     extra = {k: v for k, v in payload.items() if k in PROMPT_VARS}
-    # Where this node's work can go next — it offers these on its page.
-    routes = tasks.routes_for(actions_for(cfg), spec["node"])
-    extra["routes"] = tasks.describe_routes(routes)
-    # ...and the exact form lines for them, so the choice renders the same
-    # words on every page instead of whatever the author improvised.
-    extra["route_options"] = tasks.route_options(routes)
+    # Who can take this work next, live from the registry: every node that
+    # listens for the node event. The prompt is told who they are and what
+    # each is for, and gets the exact form lines to offer the driver.
+    listed = tasks.handoff_nodes(Nodes(cfg.data_dir), exclude=spec["node"])
+    extra["nodes"] = tasks.describe_nodes(listed)
+    # `$routes` is the same text under the name prompts before the node
+    # event used; an unpromoted prompt version still renders the live list.
+    extra["routes"] = extra["nodes"]
+    extra["route_options"] = tasks.node_options(listed)
+    # ...and the command that writes the same event the form does, for a
+    # node that hands on by itself.
+    extra["handoff"] = handoff_command(cfg, task_id)
     # The project this task runs in: what else it may read, and where the
     # project's brief and recorded decisions live.
     extra["project"] = projects.prompt_block(projs, pid, cwd)
@@ -412,6 +449,49 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # `story` is None on purpose: there is no story record and inventing one
     # would put a repo-less row in front of `_poll_story` every pass.
     run_stage(cfg, reg, None, task_id, None, action)
+
+
+def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
+    """Start the turns `run_task_spawn` parked because their task was busy,
+    for every task whose running turn has since been reaped. One per task per
+    pass: the first one started makes the task busy again."""
+    from . import surface, tasks
+    started = 0
+    for task_id, rec in list(tasks.records(reg).items()):
+        if rec.get("active_runs") or not rec.get("deferred"):
+            continue
+        spec = rec["deferred"].pop(0)
+        payload = (board.get(spec["event_id"]) or {}).get("payload") or {}
+        prev = str(payload.get("surface_prev") or "")
+        if payload.get("target") == tasks.TARGET_ROUTE and prev:
+            # The page the work was handed on from is finished: the agent
+            # that wrote it moved the work on. Close it like a driver's
+            # handoff closes it, so Continue on it cannot reach the next node.
+            if (surface.sessions(cfg).get(prev) or {}).get("open"):
+                surface.end_session(cfg, prev, log)
+        try:
+            run_task_spawn(cfg, reg, board, log, run_stage, spec, payload)
+            started += 1
+        except Exception as e:
+            board.write(NAMESPACE, TASKS_TOPIC, spec["key"], "signal",
+                        {"status": "failed", "stage": spec["node"], "story": task_id,
+                         "error": f"{type(e).__name__}: {e}"[:300]},
+                        correlation_id=spec.get("correlation_id"))
+            log(f"engine: deferred {spec['node']} for {task_id} failed — {e}")
+    return started
+
+
+def handoff_command(cfg, task_id: str) -> str:
+    """The shell line a session runs to hand its task to another node: the
+    same `task:route` event the verdict form writes, through the same
+    `tasks.write_route`. `<node>` is the one placeholder the agent fills."""
+    conf = getattr(cfg, "path", None)
+    parts = [sys.executable, str(PIPELINE)]
+    if conf:
+        parts += ["--config", str(conf)]
+    parts += ["handoff", task_id, "--node"]
+    return " ".join(shlex.quote(p) for p in parts) + \
+        ' <node> --note "what the next node should do with this"'
 
 
 # --------------------------------------------------------------------------- round caps

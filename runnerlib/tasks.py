@@ -13,8 +13,9 @@ The event it writes:
     kind       command
     payload    {target: "task", task, story, title, task_text, cwd, iteration}
 
-A fourth, `task:route`, is the driver pointing the dialogue somewhere else:
-see "routes" below.
+A fourth, `task:route`, is the node event: it names the node that reacts
+next, and the driver's verdict form and an agent's own handoff write it the
+same way. See "the node event" below.
 
 `task` and `story` are the SAME id under two names — see the config's comment:
 the spawn seam routes on `story` and the node's command substitutes it, while
@@ -48,10 +49,24 @@ TARGET_VERDICT = "task:verdict"
 TARGET_ROUTE = "task:route"
 
 NODE = "task"
-# The node the handoff route activates (config/actions-routes.json): the
-# driver approved a page and this agent carries out what it decided.
 IMPLEMENT = "implement"
-NODES = (NODE, IMPLEMENT)
+
+# What a node lists in its `reads` to say it reacts to the node event — and
+# so to be offered on every page's verdict form and in every node's prompt.
+HANDOFF = "command:task:route"
+
+# The dialogue's own nodes. `about` is what the driver and the other nodes
+# read when choosing who takes the work next.
+NODES = {
+    NODE: {"reads": ["command:task", "command:task:feedback", HANDOFF],
+           "about": "the general agent: does what it is asked or handed "
+                    "(research, a design, a review, a change) and brings you "
+                    "a page to rule on"},
+    IMPLEMENT: {"reads": [HANDOFF, "command:task:feedback"],
+                "about": "carries out what the page decided: makes the change, "
+                         "commits only what the page proposed, and brings you "
+                         "a page reporting what it did"},
+}
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 DEFAULT_MODEL = "opus"
@@ -82,25 +97,27 @@ def prompt_text(prompts_dir=None, node: str = NODE) -> str:
 
 
 def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
-    """Install the dialogue's nodes: `task`, and `implement`, the one the
-    handoff route activates. Same timid-promotion contract as the other two
-    seeds: register what is missing, re-pin the operator dials on what exists,
-    record changed prompt text as a version WITHOUT promoting it."""
+    """Install the dialogue's nodes: `task` and `implement`. Same
+    timid-promotion contract as the other two seeds: register what is missing,
+    re-pin the operator dials (and what the node listens for, and its `about`)
+    on what exists, record changed prompt text as a version WITHOUT promoting
+    it."""
     nodes = Nodes(data_dir)
     out = {}
-    for node in NODES:
+    for node, spec in NODES.items():
         text = prompt_text(prompts_dir, node)
         model = cfg.model_for(node) if cfg else DEFAULT_MODEL
         effort = cfg.effort_for(node) if cfg else DEFAULT_EFFORT
         command = seed_nodes.command_for(
             effort, cfg.claude["bin"] if cfg else seed_nodes.DEFAULT_BIN)
-        meta = {"reads": [f"command:{node}"], "emits": ["signal", "report"]}
+        meta = {"reads": list(spec["reads"]), "emits": ["signal", "report"],
+                "about": spec["about"]}
         if node not in nodes.index["nodes"]:
             nodes.register(node, text, model, command, produced_by="seed", **meta)
             out[node] = "registered"
             continue
         rec = nodes.index["nodes"][node]
-        rec.update(model=model, command=command,
+        rec.update(model=model, command=command, about=meta["about"],
                    reads=list(meta["reads"]), emits=list(meta["emits"]))
         nodes._save()
         nodes._write_export(node)
@@ -272,16 +289,14 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict]) -> dict 
         # The bumped round has to survive a restart between this write and the
         # spawn it triggers, or the next turn renders as the round before it.
         reg.save()
-    # A page built by a node a route handed the task to goes BACK through that
-    # node, not through `task`: `node` is what that node's own feedback action
-    # matches on. Absent for the `task` node, so its command is unchanged.
-    node = rec.get("node") or NODE
+    # The feedback goes BACK through the node that built the page, whichever
+    # one that is: `node` names it, and the one feedback action starts it.
     return _command(cfg, task_id,
                     {"target": TARGET_FEEDBACK, "task": task_id, "story": task_id,
+                     "node": rec.get("node") or NODE,
                      "cwd": cwd or rec.get("cwd") or "",
                      "iteration": str(rec["iteration"]),
-                     "feedback": text, "resume": "session",
-                     **({"node": node} if node != NODE else {})})
+                     "feedback": text, "resume": "session"})
 
 
 def write_verdict(cfg, task_id: str, verdict: str) -> dict:
@@ -296,84 +311,82 @@ def write_verdict(cfg, task_id: str, verdict: str) -> dict:
                      "verdict": verdict})
 
 
-# --------------------------------------------------------------------------- routes
+# --------------------------------------------------------------------------- the node event
 #
-# A route is the driver pointing a board event. The node that built the page
-# knows where its work can go next — the actions that listen for a route from
-# it — and offers those as extra choices on the verdict form. The driver picks
-# one; the bridge writes `task:route` with that name; whichever action listens
-# for it fires (spawn another node, run a command, anything the vocabulary
-# says). The runner never decides what comes next: the action config does.
+# Routing is one event: `task:route` naming the node that reacts next. One
+# action (config/actions-routes.json) starts whichever node it names, so a new
+# specialist needs no new action and no restart — registering it with
+# HANDOFF in its `reads` is what puts it on every page's form and in every
+# node's prompt. What connects to what is which nodes listen, not a list here.
 #
-# A route action is any action on this topic whose trigger says
-#     payload_eq target = "task:route"   and   payload_eq route = "<name>"
-# and optionally scopes itself to pages built by one node with
-#     payload_eq from = "<node>"   (or payload_in from = [...])
+# Three writers, one event: the driver's verdict form (surface bridge), an
+# agent handing off mid-dialogue (`pipeline.py handoff`), and the same command
+# typed by a person. All three go through `write_route`, which refuses a node
+# that is not registered to hear the event — loudly, before anything is
+# written. `by` records which of them wrote it; no action reads it.
 
 
-def _conds(action: dict) -> list[dict]:
-    w = (action.get("trigger") or {}).get("where") or []
-    return w if isinstance(w, list) else [w]
+class UnknownNode(ValueError):
+    """A handoff to a node that is not registered to take one."""
 
 
-def routes_for(actions: list[dict], node: str) -> list[dict]:
-    """The routes a page built by `node` may offer, in config order: name,
-    what it activates, and the action's own `_why` as the description."""
-    out = []
-    for a in actions:
-        t = a.get("trigger") or {}
-        if (t.get("namespace"), t.get("topic"), t.get("kind")) != (NAMESPACE, TOPIC, "command"):
-            continue
-        eq = {c["field"]: c.get("value") for c in _conds(a) if c.get("op") == "payload_eq"}
-        into = {c["field"]: c.get("values") or [] for c in _conds(a) if c.get("op") == "payload_in"}
-        if eq.get("target") != TARGET_ROUTE or not eq.get("route"):
-            continue
-        if "from" in eq and eq["from"] != node:
-            continue
-        if "from" in into and node not in into["from"]:
-            continue
-        body = a.get("body") or {}
-        to = body.get("node") if body.get("type") == "spawn_node" else body.get("type") or "an event only"
-        out.append({"route": str(eq["route"]), "to": str(to), "action": a["name"],
-                    "why": str(a.get("_why") or "").strip(),
-                    "label": str(a.get("_label") or "").strip()})
-    return out
+def handoff_nodes(nodes: Nodes, exclude: str | None = None) -> list[dict]:
+    """The nodes a page may hand to, live from the registry: every node that
+    listens for the node event, minus the one that built the page (Continue
+    already sends it back there)."""
+    return [n for n in nodes.listening(HANDOFF) if n["name"] != exclude]
 
 
-def describe_routes(routes: list[dict]) -> str:
-    """The routes as the page author reads them in `$routes`."""
-    if not routes:
-        return ("None. No action listens for a route from this node, so offer no "
-                "route choices: the verdict form below stays exactly as written.")
-    return "\n".join(f"- `route:{r['route']}` → activates **{r['to']}**"
-                     + (f" — {r['why']}" if r["why"] else "") for r in routes)
+def describe_nodes(listed: list[dict]) -> str:
+    """The nodes as a prompt reads them in `$nodes`: who exists, what for."""
+    if not listed:
+        return ("None. No other registered node takes a handoff, so the form "
+                "offers no hand-off lines and there is nobody to hand to.")
+    return "\n".join(f"- **{n['name']}** — {n['about'] or '(no description registered)'}"
+                     for n in listed)
 
 
-def route_options(routes: list[dict]) -> str:
-    """The verdict-form lines for these routes, as the page author copies them
-    into the form (`$route_options`). Rendered here rather than left to the
-    author, so the words the driver reads for a handoff are the config's
-    `_label` and every page offers the same choice the same way. Double
-    quotes are stripped from the label: the page contract forbids them inside
-    attribute values, and a stray one would truncate the form."""
+def node_options(listed: list[dict]) -> str:
+    """The verdict-form lines, one per node that can take the work
+    (`$route_options`). Rendered here rather than by the page author, so the
+    choice reads the same on every page. Double quotes are stripped: the page
+    contract forbids them inside attribute values."""
     lines = []
-    for r in routes:
-        label = (r.get("label") or f"Route to {r['route']} — hand this to {r['to']}")
-        label = escape(label.replace('"', ""), quote=False)
+    for n in listed:
+        about = escape((n["about"] or "").replace('"', ""), quote=False)
+        name = escape(n["name"], quote=False)
         lines.append(f'<label><input type="radio" name="verdict" '
-                     f'value="route:{r["route"]}"> {label}</label>\n')
+                     f'value="route:{n["name"]}"> Hand this to <strong>{name}</strong>'
+                     + (f" — {about}" if about else "") + "</label>\n")
     return "".join(lines)
 
 
-def write_route(cfg, reg, task_id: str, route: str, page: str, notes: list[dict]) -> dict:
-    """The driver chose a route: point the board event there. The driver's
-    annotations ride along as `feedback`, and the page they chose it on as
-    `surface_prev`, so whatever the route activates starts from what they saw.
-    `from` is the node that built that page — what a scoped route matches."""
+def check_handoff(cfg, node: str) -> None:
+    """Raise UnknownNode unless `node` is registered AND listens for the node
+    event. Read from the registry on disk at call time — no cache to go stale."""
+    nodes = Nodes(cfg.data_dir)
+    takers = [n["name"] for n in handoff_nodes(nodes)]
+    if node in takers:
+        return
+    if node in nodes.names():
+        raise UnknownNode(
+            f"node {node!r} is registered but does not take a handoff (its reads "
+            f"lack {HANDOFF!r}); nodes that do: {', '.join(takers) or 'none'}")
+    raise UnknownNode(f"no node {node!r} is registered; nodes that take a "
+                      f"handoff: {', '.join(takers) or 'none'}")
+
+
+def write_route(cfg, reg, task_id: str, node: str, page: str, notes: list[dict],
+                by: str = "driver") -> dict:
+    """Write the node event: `node` reacts next. The annotations ride along as
+    `feedback` and the page the handoff was made from as `surface_prev`, so
+    the node starts from what was seen. `from` is the node that built that
+    page. Refuses an unregistered node before writing anything."""
+    check_handoff(cfg, node)
     rec = record(reg, task_id)
     return _command(cfg, task_id,
-                    {"target": TARGET_ROUTE, "route": route,
-                     "from": rec.get("node") or NODE,
+                    {"target": TARGET_ROUTE, "node": node,
+                     "from": rec.get("node") or NODE, "by": by,
                      "task": task_id, "story": task_id, "cwd": rec.get("cwd") or "",
                      "iteration": "1", "feedback": format_feedback(notes),
                      "surface_prev": page})

@@ -85,10 +85,14 @@ class Nodes:
 
     def register(self, name: str, prompt: str, model: str, command: str,
                  reads=None, emits=None, produced_by: str = "hand",
-                 replace: bool = False) -> dict:
+                 replace: bool = False, about: str = "") -> dict:
         """Install a node. Raises unless `replace=True` when the name is taken —
         an accidental re-register would otherwise silently retarget every action
-        that spawns this node."""
+        that spawns this node.
+
+        `about` is one sentence on what the node is for. It is what other nodes
+        and the driver read when choosing who takes the work next, so a node
+        without one is listed by name alone."""
         if not name or not isinstance(name, str):
             raise NodeError("node name is required")
         if not prompt or not prompt.strip():
@@ -100,7 +104,7 @@ class Nodes:
             raise NodeError(f"node {name!r} already registered (pass replace=True)")
 
         rec = self.index["nodes"].get(name, {"versions": []})
-        rec.update(model=model, command=command,
+        rec.update(model=model, command=command, about=str(about or "").strip(),
                    reads=list(reads or []), emits=list(emits or []))
         rec.setdefault("versions", [])
         self.index["nodes"][name] = rec
@@ -134,6 +138,15 @@ class Nodes:
     def names(self) -> list[str]:
         return sorted(self.index["nodes"])
 
+    def listening(self, event: str) -> list[dict]:
+        """Name and `about` of every node whose `reads` includes `event`, by
+        name. This is the one place `reads` is more than informational: it is
+        how a node says it reacts to an event, so the nodes offered for that
+        event are exactly the ones registered to hear it."""
+        return [{"name": n, "about": str(r.get("about") or "")}
+                for n, r in sorted(self.index["nodes"].items())
+                if event in (r.get("reads") or [])]
+
     def active(self, name: str) -> dict:
         """Everything a body needs to spawn this node right now."""
         rec = self._require(name)
@@ -142,7 +155,8 @@ class Nodes:
             raise NodeError(f"node {name!r}: no active version")
         path = self.version_path(version)
         return {"name": name, "version": version, "model": rec["model"],
-                "command": rec["command"], "reads": rec.get("reads", []),
+                "command": rec["command"], "about": rec.get("about", ""),
+                "reads": rec.get("reads", []),
                 "emits": rec.get("emits", []), "prompt_path": str(path),
                 "prompt": path.read_text()}
 
@@ -220,6 +234,8 @@ class Nodes:
         self.export_dir.mkdir(parents=True, exist_ok=True)
         front = [f"node: {name}", f"model: {node['model']}",
                  f"command: {node['command']}", f"version: {node['version']}"]
+        if node["about"]:
+            front.append("about: " + json.dumps(node["about"]))
         if node["reads"]:
             front.append("reads: " + json.dumps(node["reads"]))
         if node["emits"]:

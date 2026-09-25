@@ -268,7 +268,7 @@ def test_the_first_turn_starts_with_the_prefix_reads_siblings_and_later_turns_do
     rec["active_runs"].clear()
     b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
             {"target": tasks.TARGET_FEEDBACK, "task": "task-demo", "story": "task-demo",
-             "cwd": str(work), "iteration": "2", "feedback": "go on",
+             "node": "task", "cwd": str(work), "iteration": "2", "feedback": "go on",
              "resume": "session"})
     drive_recording_dirs(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
     second = calls[1]

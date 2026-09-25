@@ -93,12 +93,13 @@ def test_actions_dialogue_loads_and_validates():
     assert set(names) == {"task-requested", "task-feedback-resumes-the-session",
                           "task-approved-done"}
 
-    # the whole workflow spawns exactly one node, and it is the one the seed
-    # installs — a config naming a node nobody registers is a spawn that fails
-    # minutes later inside the engine
-    spawned = {a["body"]["node"] for a in loaded
+    # the ask always starts the node the seed installs; feedback starts the
+    # node the EVENT names (whoever built the page), so no node name is
+    # written into it
+    spawned = {a["name"]: a["body"]["node"] for a in loaded
                if (a.get("body") or {}).get("type") == "spawn_node"}
-    assert spawned == {tasks.NODE}
+    assert spawned == {"task-requested": tasks.NODE,
+                       "task-feedback-resumes-the-session": "{payload[node]}"}
 
 
 def test_the_dialogue_reaches_github_nowhere():
@@ -172,7 +173,7 @@ def test_surface_feedback_takes_the_next_turn_on_the_same_session():
 
     b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
             {"target": tasks.TARGET_FEEDBACK, "task": "task-demo",
-             "story": "task-demo", "cwd": "/tmp/work", "iteration": "2",
+             "story": "task-demo", "node": "task", "cwd": "/tmp/work", "iteration": "2",
              "feedback": "the second table is unreadable — fold it into prose",
              "resume": "session"})
     spawns, _ = engine.tick(b, acts, n, d)
@@ -543,7 +544,7 @@ def test_a_feedback_turn_resumes_the_recorded_session_at_round_two():
 
     b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
             {"target": tasks.TARGET_FEEDBACK, "task": "task-demo",
-             "story": "task-demo", "cwd": str(work), "iteration": "2",
+             "story": "task-demo", "node": "task", "cwd": str(work), "iteration": "2",
              "feedback": "the second table is unreadable — fold it into prose",
              "resume": "session"})
     drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
@@ -638,7 +639,7 @@ def test_annotations_on_a_task_surface_become_a_feedback_command():
     # the exact shape config/actions-dialogue.json documents — nothing more
     assert payloads[0] == {
         "target": "task:feedback", "task": "task-demo", "story": "task-demo",
-        "cwd": str(work), "iteration": "2", "resume": "session",
+        "node": "task", "cwd": str(work), "iteration": "2", "resume": "session",
         "feedback": "> The second table\n\nfold this into prose"
                     "\n\n---\n\nand say what you could not check"}
 

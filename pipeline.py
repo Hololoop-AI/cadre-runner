@@ -849,7 +849,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     v = {"task": task_id, "story": task_id, "cwd": str(cwd),
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
          "task_text": "", "feedback": "", "surface_prev": "",
-         "routes": tasks_mod.describe_routes([]), "route_options": "",
+         "routes": tasks_mod.describe_nodes([]), "route_options": "",
+         "nodes": tasks_mod.describe_nodes([]), "handoff": "",
          "project": projects_mod.NO_PROJECT}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
@@ -1475,36 +1476,66 @@ def cmd_surface(cfg, args):
 
 
 def cmd_handoff(cfg, args):
-    """Approve-and-hand-off for a page that cannot offer it: one written before
-    the handoff existed, or one whose dialogue is already closed. Writes the
-    same `task:route` event the verdict form's handoff line writes, so the
-    same action fires and the same `implement` node carries the page out.
+    """Hand a task to a node: write the node event, the same `task:route` the
+    verdict form's hand-off lines write, through the same `write_route`.
 
-    The driver's closing annotations — the notes that arrived alongside an
-    earlier plain approve and were kept in `closing-annotations.json` because
-    nothing would read them — ride along by default: they are exactly the last
-    instructions the handoff exists to deliver."""
+    Two callers. An AGENT, mid-turn, handing its own work to the next
+    specialist with no person in the loop — it runs inside a session, so
+    CADRE_RUN_ID is set and the task id defaults to CADRE_TASK; its turn is
+    still running when this writes, and the seam starts the next node once
+    that turn ends. And a PERSON rescuing a page whose form cannot offer the
+    handoff (written before it existed, or already closed): for them the
+    notes a plain approve kept in `closing-annotations.json` ride along by
+    default, since nothing else will ever read them.
+
+    An unregistered node is refused before anything is written, with the
+    nodes that DO take a handoff named, and a non-zero exit."""
+    agent = bool(os.environ.get("CADRE_RUN_ID"))
+    task_id = args.task_id or os.environ.get("CADRE_TASK") or ""
+    if not task_id:
+        sys.exit("which task? pass a task id (inside a session, CADRE_TASK is used)")
     reg = Registry(cfg.data_dir / "registry.json")
-    rec = tasks_mod.records(reg).get(args.task_id)
+    rec = tasks_mod.records(reg).get(task_id)
     if rec is None:
-        sys.exit(f"no dialogue task {args.task_id!r} in {cfg.data_dir}")
+        sys.exit(f"no dialogue task {task_id!r} in {cfg.data_dir}")
     page = Path(args.page or rec.get("page")
-                or surface_mod._dir(cfg) / f"task-{args.task_id}.html")
+                or surface_mod._dir(cfg) / f"task-{task_id}.html")
     if not page.is_file():
-        sys.exit(f"no page at {page}: the page IS the implementing agent's spec")
-    node = rec.get("node") or tasks_mod.NODE
-    known = [r["route"] for r in tasks_mod.routes_for(engine_seam.actions_for(cfg), node)]
-    if args.route not in known:
-        sys.exit(f"no action listens for route {args.route!r} from {node} "
-                 f"(listening: {', '.join(known) or 'none'})")
-    kept = cfg.data_dir / "logs" / args.task_id / "closing-annotations.json"
-    notes = ([] if args.no_kept or not kept.is_file()
+        sys.exit(f"no page at {page}: write the page first — it IS what the "
+                 f"next node reads")
+    if agent:
+        # A headless chain of agents handing to each other has no person to
+        # stop it, so agents get a budget per task; the driver's own
+        # handoffs do not count against it.
+        from runnerlib.blackboard import Board
+        cap = cfg.limits["max_rounds_per_stage"]
+        board = Board(engine_seam.board_path(cfg))
+        try:
+            done = sum(1 for e in board.peek(namespace=tasks_mod.NAMESPACE,
+                                             topic=tasks_mod.TOPIC,
+                                             key=tasks_mod.key_for(task_id),
+                                             kind="command", limit=10000)
+                       if (e["payload"].get("target"), e["payload"].get("by")) ==
+                       (tasks_mod.TARGET_ROUTE, "agent"))
+        finally:
+            board.close()
+        if done >= cap:
+            sys.exit(f"refused: this task has already been handed on {done} times "
+                     f"by agents (cap {cap}) — say on your page who should take it "
+                     f"next and let the driver choose")
+    kept = cfg.data_dir / "logs" / task_id / "closing-annotations.json"
+    notes = ([] if agent or args.no_kept or not kept.is_file()
              else json.loads(kept.read_text()))
     notes += [{"text": n} for n in args.note or []]
-    ev = tasks_mod.write_route(cfg, reg, args.task_id, args.route, str(page), notes)
-    print(f"{args.task_id}: handed off to {args.route} — board event {ev.get('id')}; "
-          f"{len(notes)} note(s) ride along; spec {page}")
-    print("the daemon spawns the implementing agent on its next pass")
+    try:
+        ev = tasks_mod.write_route(cfg, reg, task_id, args.node, str(page), notes,
+                                   by="agent" if agent else "driver")
+    except tasks_mod.UnknownNode as e:
+        sys.exit(f"refused, nothing written: {e}")
+    print(f"{task_id}: handed to {args.node} — board event {ev.get('id')}; "
+          f"{len(notes)} note(s) ride along; it reads {page}")
+    print(f"{args.node} starts on the daemon's next pass"
+          + (" after this turn ends" if agent else ""))
 
 
 def cmd_promote(cfg, args):
@@ -1703,11 +1734,14 @@ def main():
     p.add_argument("--kind", choices=list(library_mod.KINDS))
     p.add_argument("--dir", action="append", help="also scan <dir>/.claude (default: here)")
     p.add_argument("--json", action="store_true")
-    p = sub.add_parser("handoff", help="approve a page AND hand it to the implementing "
-                                       "agent — for pages whose form has no handoff line")
-    p.add_argument("task_id")
-    p.add_argument("--route", default=tasks_mod.IMPLEMENT)
-    p.add_argument("--page", help="the page to carry out (default: the task's page)")
+    p = sub.add_parser("handoff", help="hand a task to a node (the node event): an "
+                                       "agent handing on, or a page whose form "
+                                       "has no hand-off line")
+    p.add_argument("task_id", nargs="?", default="",
+                   help="default: $CADRE_TASK, set inside a session")
+    p.add_argument("--node", "--route", dest="node", default=tasks_mod.IMPLEMENT,
+                   help="the registered node that takes the work next")
+    p.add_argument("--page", help="the page the next node reads (default: the task's page)")
     p.add_argument("--note", action="append",
                    help="a last instruction for the agent (repeatable)")
     p.add_argument("--no-kept", action="store_true",

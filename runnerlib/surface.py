@@ -51,9 +51,9 @@ _DECISION_RE = re.compile(
 # approve|reject — and a dialogue has no PR and a `continue` instead of a
 # reject. Matched FIRST, so a task token can never be read as a pipeline one.
 #
-# `route:<name>` is the third kind of verdict: the page's author offered a
-# route (runnerlib/tasks.py "routes") and the driver pointed the task there.
-# Same form, same token — only the radio value differs.
+# `route:<node>` is the third kind of verdict: the driver picked the node
+# that takes the work next (runnerlib/tasks.py "the node event"). Same form,
+# same token — only the radio value differs.
 _TASK_DECISION_RE = re.compile(
     r"CADRE_DECISION gate=task story=([\w.-]+) task=([\w.-]+) "
     r"verdict=(approve|continue|route:[\w.-]+)")
@@ -524,7 +524,8 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
         # the dialogue's own commands and NOWHERE else — no PR mirror, no
         # merge, no `gh` at all, which is the claim that makes this workflow
         # the engine's agnosticism proof.
-        _task_bridge(cfg, reg, log, path, meta, structured, free)
+        _task_bridge(cfg, reg, log, path, meta, structured, free,
+                     raw=raw, payload=payload)
         return
     for item in structured:
         _apply(cfg, reg, ghc, log, path, meta, item)
@@ -884,7 +885,7 @@ def _dead_letter(cfg, log, path: str, meta: dict, raw: str,
 
 
 def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
-                 free: list[dict]) -> None:
+                 free: list[dict], raw: str = "", payload: dict | None = None) -> None:
     """Surface -> board, for workflow #3's pages only.
 
     The rest of this module mirrors driver feedback to a PR, because for the
@@ -901,10 +902,10 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                               turn, which is why the config has no continue
                               branch to fire.
 
-        `route:<name>`     -> `task:route`, the board event the driver pointed:
-                              whatever action listens for that route fires
-                              (see tasks.py "routes"). Only routes an action
-                              listens for are written.
+        `route:<node>`     -> `task:route`, the node event: that node takes
+                              the work next (see tasks.py "the node event").
+                              A node not registered to take it is refused
+                              and the batch stranded, where the fleet shows it.
 
     Approve wins over annotations that arrived with it: a page the driver
     approved is finished, and re-spawning the session to answer notes on work
@@ -951,7 +952,7 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         end_session(cfg, path, log)
         return
     if route:
-        _route(cfg, reg, log, path, task_id, route, notes)
+        _route(cfg, reg, log, path, meta, task_id, route, notes, raw, payload)
         return
     if not any((n.get("text") or "").strip() for n in notes):
         if not asked_to_continue:
@@ -968,23 +969,22 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         f"{len(notes)} annotation(s) back to the session")
 
 
-def _route(cfg, reg, log, path: str, task_id: str, route: str,
-           notes: list[dict]) -> None:
-    """The driver pointed the task at a route. Only a route some action
-    listens for is written — one nobody listens for would be an event that
-    activates nothing, so it is kept on disk and said out loud instead. A
-    written route hands the work off: this page's session ends, and whatever
-    the route activates writes the next page."""
-    from . import engine_seam, tasks as tasks_mod
-    node = (tasks_mod.records(reg).get(task_id) or {}).get("node") or tasks_mod.NODE
-    known = {r["route"] for r in tasks_mod.routes_for(engine_seam.actions_for(cfg), node)}
-    if route not in known:
-        kept = _keep(cfg, task_id, "unrouted-verdicts.json", notes)
-        log(f"surface: {task_id} chose route {route!r}, which no action listens "
-            f"for from {node} — nothing written; kept at {kept}")
+def _route(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
+           notes: list[dict], raw: str = "", payload: dict | None = None) -> None:
+    """The driver picked the node that takes the work next: write the node
+    event. A node that is not registered to take it is refused before
+    anything is written — and not quietly: the batch is stranded, which
+    badges the page on the fleet ("feedback reached no one") with the
+    driver's words kept verbatim, and the page stays open so they can pick
+    again. A written handoff ends this page's session; the node writes the
+    next page."""
+    from . import tasks as tasks_mod
+    try:
+        tasks_mod.write_route(cfg, reg, task_id, node, path, notes)
+    except tasks_mod.UnknownNode as e:
+        _dead_letter(cfg, log, path, meta, raw, payload, f"handoff refused: {e}")
         return
-    tasks_mod.write_route(cfg, reg, task_id, route, path, notes)
-    log(f"surface: {task_id} routed to {route} from {Path(path).name} "
+    log(f"surface: {task_id} handed to {node} from {Path(path).name} "
         f"with {sum(1 for n in notes if (n.get('text') or '').strip())} annotation(s)")
     end_session(cfg, path, log)
 

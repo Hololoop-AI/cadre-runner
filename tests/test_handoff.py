@@ -5,9 +5,10 @@ commits, approved with an annotation alongside. With `approve` the dialogue
 ended and the proposed commits were never made; the annotation went to
 `closing-annotations.json` and nothing read it. With the handoff:
 
-    the task node's form offers it, in the config's words
-    -> the driver picks it, with annotations          -> `task:route implement`
-    -> the LIVE action set spawns `implement`, in the same directory, reading
+    the task node's form offers it, rendered from the node registry
+    -> the driver picks it, with annotations    -> `task:route` node=implement
+    -> the LIVE action set's one generic action spawns `implement`, in the
+       same directory, reading
        the approved page as its spec and the annotations as its last words
     -> its page opens in the same task, the same project, linked derived-from
        the approved page, and the fleet shows one conversation
@@ -28,7 +29,6 @@ from tests.test_dialogue_actions import (FakeCfg, FakeReg, PROMPTS, board,
                                          poll_json, request, scratch, seeded)
 
 LIVE = engine.load_action_set(engine_seam.ACTIONS_PATHS)
-LABEL = next(a["_label"] for a in LIVE if a["name"] == "task-approved-handed-to-implement")
 
 REVIEW_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="stylesheet" href="/surface-theme.css"><title>Code review</title></head><body>
@@ -47,6 +47,15 @@ def decision(verdict: str, typed: str = "") -> dict:
 @pytest.fixture
 def quiet_cli(monkeypatch):
     monkeypatch.setattr(surface, "_run_cli", lambda *a, **k: "")
+
+
+@pytest.fixture(autouse=True)
+def not_inside_a_session(monkeypatch):
+    """These tests are the driver's side. Run from inside a Cadre session the
+    environment says otherwise (CADRE_RUN_ID, CADRE_TASK), and the handoff
+    command would take itself for an agent."""
+    for var in ("CADRE_RUN_ID", "CADRE_TASK"):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
@@ -80,17 +89,19 @@ def reap(monkeypatch):
 # --------------------------------------------------------------------------- the offer
 
 
-def test_the_live_config_offers_the_handoff_on_task_pages_only():
-    routes = tasks.routes_for(LIVE, "task")
-    assert [(r["route"], r["to"]) for r in routes] == [("implement", "implement")]
-    # the implementing agent's own page is not offered a second handoff
-    assert tasks.routes_for(LIVE, "implement") == []
-    line = tasks.route_options(routes)
-    assert line == (f'<label><input type="radio" name="verdict" value="route:implement">'
-                    f' {html.escape(LABEL, quote=False)}</label>\n')
-    # driver-facing words, and nothing that could break the attribute contract
-    assert "Approve and hand off" in LABEL and '"' not in LABEL
-    assert "implement" not in LABEL.lower() and "route" not in LABEL.lower()
+def test_a_task_page_offers_implement_and_an_implement_page_offers_task():
+    d = scratch()
+    n = seeded(d)
+    listed = tasks.handoff_nodes(n, exclude="task")
+    assert [x["name"] for x in listed] == ["implement"]
+    # the page's own node is not offered: Continue already goes back to it
+    assert [x["name"] for x in tasks.handoff_nodes(n, exclude="implement")] == ["task"]
+    line = tasks.node_options(listed)
+    about = html.escape(tasks.NODES["implement"]["about"], quote=False)
+    assert line == ('<label><input type="radio" name="verdict" value="route:implement">'
+                    f' Hand this to <strong>implement</strong> — {about}</label>\n')
+    # nothing that could break the attribute contract
+    assert '"' not in tasks.NODES["implement"]["about"]
 
 
 def test_the_task_node_renders_the_handoff_inside_its_verdict_form(quiet_cli):
@@ -137,8 +148,8 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
                       decision("route:implement")))
     cmds = commands(cfg)
     routed = cmds[-1]
-    assert {k: routed[k] for k in ("target", "route", "from", "cwd", "surface_prev")} == {
-        "target": "task:route", "route": "implement", "from": "task",
+    assert {k: routed[k] for k in ("target", "node", "from", "by", "cwd", "surface_prev")} == {
+        "target": "task:route", "node": "implement", "from": "task", "by": "driver",
         "cwd": str(work), "surface_prev": str(review_page)}
     # the annotation is carried, quoted under the text it was attached to
     assert "> Commit 3 is the guard\n\ndrop commit 3, it is superseded" in routed["feedback"]
@@ -150,7 +161,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
     # the LIVE action set spawns implement — only it — in the same directory
     spawns, _ = engine.tick(b, LIVE, n, d)
     assert [(s["action"], s["node"]) for s in spawns] == [
-        ("task-approved-handed-to-implement", "implement")]
+        ("task-handed-to-a-node", "implement")]
     drive(cfg, reg, b, spawns[0], calls)
     impl = calls[-1]
     assert impl["cwd"] == str(work)
@@ -190,7 +201,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
         "task:feedback", "implement", "session")
     spawns, _ = engine.tick(b, LIVE, n, d)
     assert [(s["action"], s["node"]) for s in spawns] == [
-        ("implement-feedback-resumes-implement", "implement")]
+        ("task-feedback-resumes-the-session", "implement")]
     drive(cfg, reg, b, spawns[0], calls)
     assert calls[-1]["resume"] is True and calls[-1]["session_id"] == impl["session_id"]
     assert calls[-1]["env"]["CADRE_SURFACE_OUT"] == impl["env"]["CADRE_SURFACE_OUT"]
@@ -213,6 +224,7 @@ def test_a_handoff_queued_with_a_plain_approve_wins(quiet_cli):
     close would drop the handoff and the notes with it."""
     d, work = scratch(), scratch()
     cfg, reg = FakeCfg(d), FakeReg()
+    seeded(d)
     tasks.record(reg, "task-demo")["cwd"] = str(work)
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
     with jsonl_board(d):
@@ -289,20 +301,21 @@ def test_handoff_command_rescues_an_already_approved_page_and_its_kept_notes(cap
     kept.parent.mkdir(parents=True)
     kept.write_text('[{"text": "wrap this up", "anchor": "", "prompt": ""}]')
 
+    tasks.seed(d)
     pipeline.cmd_handoff(cfg, argparse.Namespace(
-        task_id="task-demo", route="implement", page=None,
+        task_id="task-demo", node="implement", page=None,
         note=["cut message 2 as written"], no_kept=False))
     routed = commands(cfg)[-1]
-    assert (routed["target"], routed["route"], routed["surface_prev"], routed["cwd"]) == (
-        "task:route", "implement", str(page), str(work))
+    assert (routed["target"], routed["node"], routed["surface_prev"], routed["cwd"],
+            routed["by"]) == ("task:route", "implement", str(page), str(work), "driver")
     assert "wrap this up" in routed["feedback"]
     assert "cut message 2 as written" in routed["feedback"]
     b, n = board(d), seeded(d)
     spawns, _ = engine.tick(b, LIVE, n, d)
     assert [s["node"] for s in spawns] == ["implement"]
 
-    # a route nobody listens for is refused before anything is written
-    with pytest.raises(SystemExit):
+    # a node nobody registered is refused before anything is written
+    with pytest.raises(SystemExit, match="no node 'nowhere' is registered"):
         pipeline.cmd_handoff(cfg, argparse.Namespace(
-            task_id="task-demo", route="nowhere", page=None, note=None, no_kept=False))
+            task_id="task-demo", node="nowhere", page=None, note=None, no_kept=False))
     assert len(commands(cfg)) == 1

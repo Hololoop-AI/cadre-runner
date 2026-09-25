@@ -250,6 +250,21 @@ class Board:
                                   (consumer,)).fetchone()
         return row["seq"] if row else 0
 
+    def consumers(self) -> set[str]:
+        with self._lock:
+            return {r["consumer"] for r in self.db.execute("SELECT consumer FROM cursors")}
+
+    def start_at_head(self, consumer: str) -> int:
+        """Put a consumer that has no cursor yet at the board's head, so its
+        first read sees only what is written from now on. A consumer that
+        already has a cursor is left where it is. Returns its cursor."""
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO cursors (consumer, seq) "
+                "SELECT ?, COALESCE(MAX(seq), 0) FROM events WHERE true "
+                "ON CONFLICT(consumer) DO NOTHING", (consumer,))
+        return self.cursor(consumer)
+
     def read_since(self, consumer: str, *, namespace=None, topic=None, key=None,
                    kind=None, correlation_id=None, limit: int | None = None,
                    now: float | None = None) -> list[dict]:
