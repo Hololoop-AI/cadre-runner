@@ -96,8 +96,11 @@ def check_actions(data_dir: Path, paths=ACTION_FILES) -> list[Check]:
             continue
         names = [a["name"] for a in actions]
         dupes = {n for n in names if names.count(n) > 1}
+        # A node named by the event (`{payload[node]}`) is checked when the
+        # event is written (tasks.write_route), not here: there is no name yet.
         spawned = {a["body"]["node"] for a in actions
-                   if (a.get("body") or {}).get("type") == "spawn_node"}
+                   if (a.get("body") or {}).get("type") == "spawn_node"
+                   and "{" not in a["body"]["node"]}
         unknown = sorted(spawned - installed)
         ok = not dupes and not unknown
         out.append(Check(f"actions {Path(path).name}", ok,
@@ -163,6 +166,50 @@ def check_claude(cfg=None) -> Check:
     return Check("claude on PATH", bool(found), found or f"{binary!r} not found")
 
 
+def check_surface_cli() -> Check:
+    """Is the review-surface CLI on PATH?
+
+    This is the check that earns the whole file. `surface.available()` is
+    `which("review-surface") is not None`, and every surface operation returns
+    early and SILENTLY when it is false — no page is opened, no annotation is
+    collected, nothing is logged. Moving the daemon to systemd once gave it a
+    PATH without npm's global bin, and twelve annotations sat unread for hours
+    while every other sign said healthy. A fresh install hits the same wall
+    whenever step 3's symlink lands somewhere not on PATH.
+    """
+    from . import surface as surface_mod
+    found = shutil.which("review-surface")
+    if found:
+        return Check("review-surface on PATH", True, found)
+    return Check("review-surface on PATH", False,
+                 "not found — the surface bridge disables itself silently "
+                 "without it: no pages open, no annotations come back. "
+                 "Link dist/cli.mjs into a directory on PATH.")
+
+
+def check_surface_server() -> Check:
+    """Is something answering on the page server's address?
+
+    A reachable server is not proof it is the right one, but an unreachable
+    one is proof the loop cannot close: pages are written to disk and never
+    become anything a person can open.
+    """
+    import urllib.error
+    import urllib.request
+
+    from . import surface as surface_mod
+    url = surface_mod.upstream()
+    try:
+        urllib.request.urlopen(url, timeout=2).read(1)
+        return Check("review-surface server", True, url)
+    except urllib.error.HTTPError:
+        return Check("review-surface server", True, f"{url} (answering)")
+    except Exception as e:
+        return Check("review-surface server", False,
+                     f"nothing answering at {url} ({type(e).__name__}) — "
+                     "start it, or set CADRE_SURFACE_UPSTREAM to where it runs")
+
+
 def run(data_dir: Path, cfg=None, seed: bool = True, skip_tools: bool = False
         ) -> list[Check]:
     checks = check_nodes(data_dir, cfg, seed=seed)
@@ -171,6 +218,8 @@ def run(data_dir: Path, cfg=None, seed: bool = True, skip_tools: bool = False
     if not skip_tools:
         checks.append(check_gh())
         checks.append(check_claude(cfg))
+        checks.append(check_surface_cli())
+        checks.append(check_surface_server())
     return checks
 
 
