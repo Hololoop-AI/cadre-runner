@@ -113,7 +113,14 @@ def test_the_judge_node_is_not_an_agent_cli():
     node = n.active(seed_eval_nodes.JUDGE_NODE)
     assert node["command"].startswith("python3 ")
     assert "judge_spec.py" in node["command"]
-    assert "claude" not in node["command"]
+    # The point is that no AGENT CLI is invoked, so check what is being run
+    # rather than the whole string. The command embeds an absolute path, and
+    # a substring test failed for anyone whose checkout lived under a
+    # directory with "claude" in its name — `~/.claude/...` or a scratch dir —
+    # which is a test that breaks on where you cloned it, not on what it does.
+    invoked = [tok for tok in node["command"].split()
+               if not tok.startswith("-") and not tok.startswith("{")]
+    assert not any(Path(tok).name.startswith("claude") for tok in invoked), invoked
     assert node["model"] == "sonnet"
 
     event = {"id": "e1", "key": "eval:judge-sample",

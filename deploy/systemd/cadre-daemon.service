@@ -1,0 +1,25 @@
+[Unit]
+Description=Cadre dialogue daemon (engine-only)
+Documentation=https://github.com/Hololoop-AI/cadre-runner/blob/true-prototype/docs/DIALOGUE-SETUP.md
+After=network.target cadre-surface.service
+Wants=cadre-surface.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/cadre/cadre-runner
+Environment=CADRE_CONFIG=%h/Projects/cadre/cadre-runner/config.local.toml
+Environment=CADRE_ENGINE=only
+# PATH matters more here than anywhere else in the deployment. The runner
+# shells out to the `review-surface` CLI, and surface.available() is a
+# which() call that silently disables the ENTIRE surface bridge when it
+# fails: no page opens, no annotation returns, nothing is logged. systemd's
+# default PATH is /usr/local/bin:/usr/bin, which excludes both npm's global
+# bin and ~/.local/bin — twelve annotations sat unread for hours that way.
+# `pipeline.py preflight` checks this; run it if the loop goes quiet.
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/bin/python3 %h/Projects/cadre/cadre-runner/pipeline.py run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

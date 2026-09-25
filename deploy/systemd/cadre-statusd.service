@@ -1,0 +1,21 @@
+[Unit]
+Description=Cadre fleet page
+Documentation=https://github.com/Hololoop-AI/cadre-runner/blob/true-prototype/docs/DIALOGUE-SETUP.md
+After=network.target cadre-surface.service
+Wants=cadre-surface.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/cadre/cadre-runner
+Environment=CADRE_CONFIG=%h/Projects/cadre/cadre-runner/config.local.toml
+# The fleet page shells out to the same CLI as the daemon (session listing,
+# attach, ownership, ending a session) and fails the same silent way without
+# it. This unit shipped without the PATH the daemon had, so those calls were
+# no-ops on the author's own machine for days. Keep the two in sync.
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/bin/python3 %h/Projects/cadre/cadre-runner/statusd.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

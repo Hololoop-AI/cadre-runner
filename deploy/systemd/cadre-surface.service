@@ -1,0 +1,15 @@
+[Unit]
+Description=review-surface page server (Cadre)
+Documentation=https://github.com/Hololoop-AI/cadre-runner/blob/true-prototype/docs/DIALOGUE-SETUP.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/review-surface
+Environment=REVIEW_SURFACE_NO_OPEN=1
+ExecStart=/usr/bin/node %h/Projects/review-surface/dist/cli.mjs server --port 4387
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
