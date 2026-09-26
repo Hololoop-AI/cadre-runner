@@ -916,16 +916,19 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                               route, and a driver ruling on one of those must
                               not silently do nothing.
 
-    Approve wins over annotations that arrived with it: a page the driver
-    approved is finished, and re-spawning the session to answer notes on work
-    that is done would restart a dialogue the driver just closed. Those notes
-    are logged rather than written, so they are not silently gone.
+    Approve and handoff are not rival verdicts. On the page, approving IS
+    handing on: the Approve line carries a hand-to target, preselected, and the
+    form sends `handoff:<node>` when one is set. A bare `approve` reaches here
+    only when the driver deliberately cleared that target — "settled, and it
+    stops with me" — or from an older page written before the target existed.
 
-    A handoff in the same batch wins over approve. The handoff IS an approval
-    (config/actions-handoff.json) that also carries the annotations forward as
-    the receiving agent's last instructions — so a batch holding both, a
-    driver who clicked Approve and then changed their mind, must not lose the
-    handoff and the notes to the plain close.
+    So a handoff in the same batch wins over approve: a batch holding both is a
+    driver who clicked Approve and then picked someone, and must not lose the
+    handoff to the plain close.
+
+    A bare approve carrying written annotations does not discard them. Those
+    words are usually the decision itself, so they buy one closing turn (see
+    `tasks.mark_closing`) and the verdict is written when that turn is reaped.
     """
     from . import tasks as tasks_mod
     task_id = meta.get("task") or ""

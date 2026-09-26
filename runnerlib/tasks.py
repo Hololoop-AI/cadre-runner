@@ -376,19 +376,42 @@ def describe_nodes(listed: list[dict]) -> str:
                      for n in listed)
 
 
+#: Who approval hands to when the driver does not say otherwise. Approving a
+#: page IS handing it on — the driver said "this is settled", and settled work
+#: has a next step. Offering "approve" and "hand this to implement" as rival
+#: radio buttons made them look like different decisions and let an approved
+#: page stop dead. So the second choice is no longer a rival: it is a target,
+#: preselected, that the driver can change or clear.
+DEFAULT_TAKER = "implement"
+
+
+def default_taker(listed: list[dict]) -> str:
+    """The node the approve line points at before the driver touches it."""
+    names = [n["name"] for n in listed]
+    if DEFAULT_TAKER in names:
+        return DEFAULT_TAKER
+    return names[0] if len(names) == 1 else ""
+
+
 def node_options(listed: list[dict]) -> str:
-    """The verdict-form lines, one per node that can take the work
-    (`$handoff_options`). Rendered here rather than by the page author, so the
-    choice reads the same on every page. Double quotes are stripped: the page
-    contract forbids them inside attribute values."""
-    lines = []
+    """The hand-to selector that rides with Approve (`$handoff_options`).
+    Rendered here rather than by the page author, so the choice reads the same
+    on every page. Double quotes are stripped: the page contract forbids them
+    inside attribute values."""
+    if not listed:
+        return ""
+    chosen = default_taker(listed)
+    opts = []
     for n in listed:
         about = escape((n["about"] or "").replace('"', ""), quote=False)
         name = escape(n["name"], quote=False)
-        lines.append(f'<label><input type="radio" name="verdict" '
-                     f'value="handoff:{n["name"]}"> Hand this to <strong>{name}</strong>'
-                     + (f" — {about}" if about else "") + "</label>\n")
-    return "".join(lines)
+        sel = " selected" if n["name"] == chosen else ""
+        label = f"{name} — {about}" if about else name
+        opts.append(f'<option value="{name}"{sel}>{label}</option>')
+    opts.append('<option value=""%s>nobody — just close it here</option>'
+                % ("" if chosen else " selected"))
+    return ('<label class="handto">…and hand it to '
+            '<select name="next">' + "".join(opts) + "</select></label>\n")
 
 
 def check_handoff(cfg, node: str) -> None:

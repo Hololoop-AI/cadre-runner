@@ -111,19 +111,23 @@ values anywhere on the page.
 
 ```html
 <form data-review-surface-question="verdict" onsubmit="event.preventDefault();
-  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
+  const f=new FormData(event.currentTarget); let v=f.get('verdict'); if(!v) return;
+  const n=f.get('next'); if(v==='approve'&&n) v='handoff:'+n;
   window.reviewSurface.queuePrompt('CADRE_DECISION gate=task story=<TASK> task=<TASK> verdict='+v,
     {tag:'choice', text:'Task verdict: '+v, element:event.currentTarget,
      data:{gate:'task', task:'<TASK>', verdict:v}});">
-<label><input type="radio" name="verdict" value="approve"> Approve — this is done</label>
 <label><input type="radio" name="verdict" value="continue"> Continue — my annotations say what is next</label>
+<label><input type="radio" name="verdict" value="approve"> Approve — this is settled</label>
 $handoff_options<button type="submit">Queue verdict</button></form>
 ```
 
-Approve ends the dialogue. Continue sends the driver's annotations back to you,
-next round. Any line after those two hands your page to another node — they
-are rendered from the node registry; copy them as they stand. The nodes that
-can take a handoff right now, and what each is for:
+Continue sends the driver's annotations back to you, next round. Approve means
+settled, and settled work has a next step, so approve carries a hand-to target
+rather than competing with one: whoever is preselected takes your page as their
+input with the driver's annotations attached, and the driver can change it or
+clear it to close outright. The selector is rendered from the node registry —
+copy it as it stands, and never split the nodes back out into rival radio
+buttons. The nodes that can take a handoff right now, and what each is for:
 
 $nodes
 

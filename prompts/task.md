@@ -166,26 +166,32 @@ attribute values anywhere on the page — they truncate HTML attributes.
 
 ```html
 <form data-review-surface-question="verdict" onsubmit="event.preventDefault();
-  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
+  const f=new FormData(event.currentTarget); let v=f.get('verdict'); if(!v) return;
+  const n=f.get('next'); if(v==='approve'&&n) v='handoff:'+n;
   window.reviewSurface.queuePrompt('CADRE_DECISION gate=task story=<TASK> task=<TASK> verdict='+v,
     {tag:'choice', text:'Task verdict: '+v, element:event.currentTarget,
      data:{gate:'task', task:'<TASK>', verdict:v}});">
-<label><input type="radio" name="verdict" value="approve"> Approve — this is done</label>
 <label><input type="radio" name="verdict" value="continue"> Continue — my annotations say what is next</label>
+<label><input type="radio" name="verdict" value="approve"> Approve — this is settled</label>
 $handoff_options<button type="submit">Queue verdict</button></form>
 ```
 
-Approve ends the dialogue. Continue sends the driver's annotations back as the
-next turn of this same session — which is you, next round, reading them as
-`$feedback`.
+Continue sends the driver's annotations back as the next turn of this same
+session — which is you, next round, reading them as `$feedback`.
+
+Approve means settled, and settled work has a next step, so approve carries a
+hand-to target rather than competing with one. Whoever is preselected takes the
+page as their input with the driver's annotations attached; the driver can
+change the target or clear it to close the dialogue outright. Do not add an
+approve line that has no target, and do not turn the nodes back into rival
+radio buttons — that split is exactly what made an approved page stop dead.
 
 ### Who takes the work next — the other nodes
 
-Any line in the form above beyond Approve and Continue hands the page to
-another node — a specialist agent that reads your page as its input, with the
-driver's annotations as its last instructions, does its part, and writes its
-own page for the driver. These are the nodes registered to take a handoff
-right now, and what each is for:
+The hand-to target is another node — a specialist agent that reads your page as
+its input, with the driver's annotations as its last instructions, does its
+part, and writes its own page for the driver. These are the nodes registered to
+take a handoff right now, and what each is for:
 
 $nodes
 

@@ -96,12 +96,30 @@ def test_a_task_page_offers_implement_and_an_implement_page_offers_task():
     assert [x["name"] for x in listed] == ["implement"]
     # the page's own node is not offered: Continue already goes back to it
     assert [x["name"] for x in tasks.handoff_nodes(n, exclude="implement")] == ["task"]
+    # approving IS handing on, so the nodes are a target that rides with
+    # Approve — preselected — not a rival verdict the driver may skip past
     line = tasks.node_options(listed)
     about = html.escape(tasks.NODES["implement"]["about"], quote=False)
-    assert line == ('<label><input type="radio" name="verdict" value="handoff:implement">'
-                    f' Hand this to <strong>implement</strong> — {about}</label>\n')
+    assert f'<option value="implement" selected>implement — {about}</option>' in line
+    assert '<option value="" >' not in line and 'name="next"' in line
+    assert 'type="radio"' not in line, "a target, not a competing verdict"
+    # clearing the target is possible but is not where the form starts
+    assert '<option value="">nobody — just close it here</option>' in line
     # nothing that could break the attribute contract
     assert '"' not in tasks.NODES["implement"]["about"]
+
+
+def test_with_no_obvious_taker_the_form_starts_on_nobody():
+    """Defaulting to whichever node happens to be first would spawn work the
+    driver never chose. `implement` is the one safe default; past that the
+    driver picks."""
+    listed = [{"name": "review", "about": "reads it cold"},
+              {"name": "assembly", "about": "puts it together"}]
+    line = tasks.node_options(listed)
+    assert '<option value="" selected>' in line
+    assert tasks.default_taker(listed) == ""
+    # ...but a lone node is unambiguous enough to preselect
+    assert tasks.default_taker(listed[:1]) == "review"
 
 
 def test_the_task_node_renders_the_handoff_inside_its_verdict_form(quiet_cli):
@@ -114,8 +132,11 @@ def test_the_task_node_renders_the_handoff_inside_its_verdict_form(quiet_cli):
     prompt = calls[0]["prompt"]
     form = prompt[prompt.index("<form data-review-surface-question"):]
     form = form[:form.index("</form>")]
-    assert form.index("value=\"continue\"") < form.index("value=\"handoff:implement\"") \
-        < form.index("<button")
+    assert form.index('value="continue"') < form.index('value="approve"') \
+        < form.index('name="next"') < form.index("<button")
+    # the old split — approve and the nodes as rival radios — is what let an
+    # approved page stop dead, so it must not come back
+    assert 'value="handoff:' not in form
     assert "$handoff_options" not in prompt and "$routes" not in prompt
 
 

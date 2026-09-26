@@ -68,7 +68,7 @@ def test_the_action_names_no_node_the_event_does():
 def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resumed():
     d, work = scratch(), scratch()
     cfg, reg, b, calls = first_turn(d, work)
-    assert "value=\"handoff:review\"" not in calls[0]["prompt"]
+    assert '<option value="review"' not in calls[0]["prompt"]
 
     # a new specialist: registering it is the whole of adding it
     register_review(d)
@@ -81,10 +81,9 @@ def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resum
     prompt = calls[-1]["prompt"]
     # the prompt is told who exists and what for, and the form offers it
     assert f"- **review** — {REVIEW_ABOUT}" in prompt
-    assert ('<input type="radio" name="verdict" value="handoff:review"> '
-            f'Hand this to <strong>review</strong> — {REVIEW_ABOUT}') in prompt
+    assert f'<option value="review">review — {REVIEW_ABOUT}</option>' in prompt
     # pipeline stages are registered too, but do not take a handoff
-    assert "**build**" not in prompt and "handoff:build" not in prompt
+    assert "**build**" not in prompt and '<option value="build"' not in prompt
     for var in ("$nodes", "$handoff", "$handoff_options"):
         assert var not in prompt, var
 
@@ -103,8 +102,9 @@ def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resum
     assert calls[-1]["env"]["CADRE_SURFACE_OUT"].endswith("task-task-demo-review.html")
     assert page1 in calls[-1]["prompt"]
     # the review page offers task and implement, not itself
-    assert "handoff:task" in calls[-1]["prompt"] and "handoff:implement" in calls[-1]["prompt"]
-    assert "handoff:review" not in calls[-1]["prompt"]
+    later = calls[-1]["prompt"]
+    assert '<option value="task"' in later and '<option value="implement"' in later
+    assert '<option value="review"' not in later
 
     # Continue on the review page resumes review, through the one feedback action
     tasks.record(reg, "task-demo")["active_runs"] = {}
@@ -309,7 +309,7 @@ def test_the_form_offers_the_new_token_and_the_action_accepts_both():
     register_review(d)
     listed = tasks.handoff_nodes(Nodes(d))
     form = tasks.node_options(listed)
-    assert 'value="handoff:review"' in form and 'value="route:' not in form
+    assert '<option value="review"' in form and "route:" not in form
 
     spec = json.loads((engine_seam.CONFIG_DIR / "actions-handoff.json").read_text())
     where = spec["actions"][0]["trigger"]["where"][0]
