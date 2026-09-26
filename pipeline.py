@@ -190,9 +190,40 @@ def _finish_intake(cfg, reg, ghc, slug, story, ok):
 # --------------------------------------------------------------------------- daemon
 
 
+# How long startup waits for the page server before giving up on it. `up`
+# starts the server and the daemon together, so the first look can land before
+# the server is listening.
+SURFACE_WAIT_SECONDS = 30
+
+
+def _preflight_or_exit(cfg):
+    """Refuse to run without review-surface.
+
+    Without the tool or its server the daemon still starts agents, but no page
+    they write ever opens and no annotation comes back — a loop that looks
+    alive and never closes. Every other failed check is printed and tolerated
+    (a dialogue-only machine has no business with `gh auth`)."""
+    from runnerlib import preflight
+    checks = preflight.run(cfg.data_dir, cfg, seed=False)
+    server = next(i for i, c in enumerate(checks) if c.name == "review-surface server")
+    deadline = time.time() + SURFACE_WAIT_SECONDS
+    while not checks[server].ok and time.time() < deadline:
+        time.sleep(1)
+        checks[server] = preflight.check_surface_server()
+    if all(c.ok for c in checks):
+        return
+    table = preflight.render(checks)
+    fatal = [c.name for c in checks if not c.ok
+             and c.name in ("review-surface on PATH", "review-surface server")]
+    if fatal:
+        sys.exit(f"{table}\n\nrefusing to start: {', '.join(fatal)} failed")
+    log("preflight:\n" + table)
+
+
 def cmd_run(cfg, args, single_pass=False):
     ghc = GitHub(cfg.data_dir / "etags.json")
     board = board_mod.make_board(cfg.intake)
+    _preflight_or_exit(cfg)
     log(f"runner up — poll every {cfg.runner['poll_interval']}s"
         f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
@@ -965,7 +996,10 @@ def _reap_tasks(cfg, reg):
                 if ok and art and art.exists() and surface_mod.available():
                     surface_mod.end_session(cfg, str(art), log)
                 continue
-            if ok and art and art.exists() and surface_mod.available():
+            if ok and art and art.exists() and not surface_mod.available():
+                log(f"{task_id}: page {art.name} written but not opened — "
+                    f"review-surface is not on the daemon's PATH")
+            elif ok and art and art.exists():
                 # `task` is the meta the feedback bridge scopes on: only a
                 # session opened here is a dialogue turn's page.
                 surface_mod.open_session(

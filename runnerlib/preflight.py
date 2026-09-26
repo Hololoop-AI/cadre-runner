@@ -177,14 +177,27 @@ def check_surface_cli() -> Check:
     while every other sign said healthy. A fresh install hits the same wall
     whenever step 3's symlink lands somewhere not on PATH.
     """
-    from . import surface as surface_mod
     found = shutil.which("review-surface")
-    if found:
-        return Check("review-surface on PATH", True, found)
-    return Check("review-surface on PATH", False,
-                 "not found — the surface bridge disables itself silently "
-                 "without it: no pages open, no annotations come back. "
-                 "Link dist/cli.mjs into a directory on PATH.")
+    if not found:
+        return Check("review-surface on PATH", False,
+                     "not found — the surface bridge disables itself silently "
+                     "without it: no pages open, no annotations come back. "
+                     "Link dist/cli.mjs into a directory on PATH.")
+    # Found is not the same as runs: the tool is a node script, and a PATH
+    # with the shim on it but not `node` passes `which` and exits 127 on use.
+    try:
+        proc = subprocess.run([found, "--help"], capture_output=True, text=True,
+                              timeout=5)
+    except Exception as e:
+        return Check("review-surface on PATH", False,
+                     f"{found} does not run: {type(e).__name__}: {e}")
+    if proc.returncode != 0:
+        lines = [ln for ln in ((proc.stderr or "") + (proc.stdout or "")).splitlines()
+                 if ln.strip()]
+        return Check("review-surface on PATH", False,
+                     f"{found} exits {proc.returncode}"
+                     + (f": {lines[-1].strip()}" if lines else ""))
+    return Check("review-surface on PATH", True, found)
 
 
 def check_surface_server() -> Check:

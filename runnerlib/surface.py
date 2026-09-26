@@ -490,10 +490,20 @@ def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[dict]]:
     return payload, structured, free
 
 
+# A missing tool is said once every ten minutes, not once per pass.
+UNAVAILABLE_LOG_EVERY = 600
+_unavailable_logged = 0.0
+
+
 def tick(cfg, reg, ghc, log) -> None:
     """One daemon pass: consume new outbox signals (short one-shot poll per
     signalled session) -> open sessions for new pending questions."""
     if not available():
+        global _unavailable_logged
+        if time.time() - _unavailable_logged >= UNAVAILABLE_LOG_EVERY:
+            _unavailable_logged = time.time()
+            log(f"surface: {CLI} is not on PATH — no page opens and no "
+                "annotation is collected until it is")
         return
     try:
         _tick(cfg, reg, ghc, log)

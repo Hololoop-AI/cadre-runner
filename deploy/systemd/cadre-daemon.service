@@ -15,7 +15,7 @@ Environment=CADRE_ENGINE=only
 # fails: no page opens, no annotation returns, nothing is logged. systemd's
 # default PATH is /usr/local/bin:/usr/bin, which excludes both npm's global
 # bin and ~/.local/bin — twelve annotations sat unread for hours that way.
-# `pipeline.py preflight` checks this; run it if the loop goes quiet.
+# `python3 -m runnerlib.preflight` checks this; run it if the loop goes quiet.
 Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/bin/python3 %h/Projects/cadre/cadre-runner/pipeline.py run
 Restart=on-failure
