@@ -222,6 +222,101 @@ def _preflight_or_exit(cfg):
     log("preflight:\n" + table)
 
 
+# --------------------------------------------------------------------------- up
+
+# What `up` tolerates failing: the PR pipeline's GitHub login (a machine that
+# only runs dialogues never needs it) and the page server, which `up` starts.
+UP_TOLERATED = ("gh auth", "review-surface server")
+
+
+def _up_children(cfg, args, start_server: bool) -> list[tuple[str, list[str]]]:
+    """(name, argv) for each piece `up` runs, in start order. Every piece uses
+    this interpreter and this config, so none of them can disagree about
+    either."""
+    here = Path(__file__).resolve().parent
+    conf = ["--config", args.config] if args.config else []
+    out = []
+    if start_server:
+        from urllib.parse import urlparse
+        port = urlparse(surface_mod.upstream()).port or 4387
+        out.append(("surface", [shutil.which(surface_mod.CLI) or surface_mod.CLI,
+                                "server", "--port", str(port)]))
+    out.append(("statusd", [sys.executable, str(here / "statusd.py")]))
+    out.append(("daemon", [sys.executable, str(here / "pipeline.py"), *conf, "run"]))
+    return out
+
+
+def _supervise(children, env=None, grace=10) -> int:
+    """Run the children, each output line prefixed with its name, until Ctrl-C
+    or until any one exits; then stop the rest. Returns the exit status: 0 for
+    Ctrl-C, 1 when a child ended on its own (nothing here is meant to end)."""
+    import threading
+    width = max(len(name) for name, _ in children)
+    procs = []
+
+    def pump(name, stream):
+        for line in stream:
+            print(f"{name:<{width}} | {line.rstrip()}", flush=True)
+
+    try:
+        for name, argv in children:
+            # A session of its own: Ctrl-C reaches `up` alone, and `up` decides
+            # the order things stop in.
+            p = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+            threading.Thread(target=pump, args=(name, p.stdout), daemon=True).start()
+            procs.append((name, p))
+        status = 0
+        while True:
+            ended = [(n, p) for n, p in procs if p.poll() is not None]
+            if ended:
+                n, p = ended[0]
+                log(f"up: {n} exited ({p.returncode}) — stopping the rest")
+                status = 1
+                break
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        log("up: stopping")
+        status = 0
+    for n, p in procs:
+        if p.poll() is None:
+            p.terminate()
+    deadline = time.time() + grace
+    for n, p in procs:
+        try:
+            p.wait(timeout=max(0.1, deadline - time.time()))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    return status
+
+
+def cmd_up(cfg, args):
+    """Everything Cadre needs, in the foreground of one terminal: the page
+    server, the fleet page and the daemon. Ctrl-C stops all three.
+
+    Starting them from the shell preflight just checked is the point: a
+    service manager gives each piece its own environment, and a PATH that
+    differs from the one that was checked is how the surface bridge went
+    quiet before."""
+    from runnerlib import preflight
+    server_running = preflight.check_surface_server().ok
+    checks = preflight.run(cfg.data_dir, cfg)
+    blocking = [c.name for c in checks if not c.ok and c.name not in UP_TOLERATED]
+    if not all(c.ok for c in checks):
+        print(preflight.render(checks), flush=True)
+    if blocking:
+        sys.exit(f"\nrefusing to start: {', '.join(blocking)} failed")
+    if server_running:
+        log(f"up: a page server is already answering at {surface_mod.upstream()} — using it")
+    env = {**os.environ, "REVIEW_SURFACE_NO_OPEN": "1",
+           # the dialogue daemon, as the service unit runs it
+           "CADRE_ENGINE": os.environ.get("CADRE_ENGINE") or "only",
+           **({"CADRE_CONFIG": args.config} if args.config else {})}
+    sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))
+
+
 def cmd_run(cfg, args, single_pass=False):
     ghc = GitHub(cfg.data_dir / "etags.json")
     board = board_mod.make_board(cfg.intake)
@@ -1778,6 +1873,8 @@ def main():
     p.add_argument("--story-id", help="board id, e.g. ENG-123 (default: timestamp)")
     p.add_argument("--title")
     p.add_argument("--variant", choices=["change-spec", "spec-as-source"])
+    sub.add_parser("up", help="start the page server, the fleet page and the daemon "
+                              "in this terminal; Ctrl-C stops all three")
     sub.add_parser("run", help="the daemon: poll and dispatch until stopped")
     sub.add_parser("once", help="one daemon pass, then exit — it dispatches for real")
     sub.add_parser("status", help="print registered dialogue tasks and pipeline stories")
@@ -1867,7 +1964,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff,
-     "project": cmd_project, "library": cmd_library,
+     "project": cmd_project, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

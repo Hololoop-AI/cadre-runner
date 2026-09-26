@@ -262,6 +262,11 @@ def main(argv=None) -> int:
                     help="check the registry as it stands; do not run the seeds")
     ap.add_argument("--skip-tools", action="store_true",
                     help="skip the gh/claude checks (CI without credentials)")
+    ap.add_argument("--no-server", action="store_true",
+                    help="skip the page-server check (an install that has not "
+                         "started the server yet: `pipeline.py up` starts it)")
+    ap.add_argument("--no-gh", action="store_true",
+                    help="skip the gh check (a machine that only runs dialogues)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -272,6 +277,9 @@ def main(argv=None) -> int:
         cfg = config_mod.load(args.config)
         data_dir = cfg.data_dir
     checks = run(data_dir, cfg, seed=not args.no_seed, skip_tools=args.skip_tools)
+    skipped = ({"review-surface server"} if args.no_server else set()) | (
+        {"gh auth"} if args.no_gh else set())
+    checks = [c for c in checks if c.name not in skipped]
     if args.json:
         print(json.dumps([{"check": c.name, "ok": c.ok, "detail": c.detail}
                           for c in checks], indent=2))
