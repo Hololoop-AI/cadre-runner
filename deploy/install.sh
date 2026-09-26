@@ -21,9 +21,9 @@ set -euo pipefail
 # setup function below.
 RUNNER_DIR="${CADRE_RUNNER_DIR:-$HOME/Projects/cadre/cadre-runner}"
 SURFACE_DIR="${CADRE_SURFACE_DIR:-$HOME/Projects/review-surface}"
-SURFACE_REF=647225d3b3d3541d411026789b72cd12cc9a365b    # feat/feedback-journal
+SURFACE_REF=2e88f287ffef9ba6553bd75f0482a88265cd54f6    # review-surface main, after the pinned-style merge
 COMPONENTS=(
-  "cadre-runner|https://github.com/Hololoop-AI/cadre-runner.git|true-prototype|$RUNNER_DIR|setup_runner"
+  "cadre-runner|https://github.com/Hololoop-AI/cadre-runner.git|main|$RUNNER_DIR|setup_runner"
   "review-surface|https://github.com/Hololoop-AI/review-surface.git|$SURFACE_REF|$SURFACE_DIR|setup_surface"
   # The blackboard's real implementation is a Rust crate. When it exists it
   # joins here, and its setup installs Rust into your home folder with rustup
