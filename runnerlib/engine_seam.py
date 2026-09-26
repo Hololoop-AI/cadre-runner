@@ -388,9 +388,13 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     if str(rec.get("run") or "").startswith("skill:"):
         skills.append(rec["run"].split(":", 1)[1])
     try:
-        linked = claude_run.install_task_skills(cwd, cfg.skills_source, extra=skills)
+        linked, missing = claude_run.install_task_skills(cwd, cfg.skills_source,
+                                                         extra=skills)
         if linked:
             log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
+        if missing:
+            log(f"engine: skills not found for {cwd}: {', '.join(missing)} — looked in "
+                f"{claude_run.REPO_SKILLS} and {cfg.skills_source}")
     except Exception as e:
         log(f"engine: task skill install failed for {cwd}: {e}")
     if payload.get("target") == tasks.TARGET_HANDOFF:

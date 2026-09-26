@@ -95,8 +95,9 @@ Skills reach a session two different ways, and you want both:
 
 - **A dialogue's own skills** are symlinked into the working directory at spawn
   by the runner — today that is `auto-surface`, which owns page quality (the
-  contract that makes a page readable to someone with no session history). This
-  needs only `skills_source` below to point at the clone; nothing else.
+  contract that makes a page readable to someone with no session history). It
+  ships with the runner in `.agents/skills/`, so it needs nothing from you; the
+  daemon logs any such skill it cannot find.
 - **Everything a session invokes by name** (`investigating`, `verification`,
   `systematic-debugging`, and ~80 others) is loaded from `~/.claude/skills`,
   which `setup-claude.sh` fills with symlinks into the same clone. Skip it and a

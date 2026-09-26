@@ -100,15 +100,70 @@ def test_task_dialogues_get_their_skills_in_any_cwd():
     cwd = scratch() / "some-project"          # NOT a git repo — must still work
     cwd.mkdir()
 
-    linked = claude_run.install_task_skills(cwd, source)
-    assert linked == claude_run.TASK_SKILLS
+    linked, missing = claude_run.install_task_skills(cwd, source)
+    assert linked == claude_run.TASK_SKILLS and missing == []
     for name in claude_run.TASK_SKILLS:
-        assert (cwd / ".claude" / "skills" / name).is_symlink()
+        link = cwd / ".claude" / "skills" / name
+        assert link.is_symlink()
+        # the copy that ships with Cadre wins over the skills tree
+        assert Path(os.readlink(link)) == claude_run.REPO_SKILLS / name
 
     # idempotent: a second spawn links nothing and raises nothing
-    assert claude_run.install_task_skills(cwd, source) == []
-    # a missing source is a no-op, never an error in the spawn path
-    assert claude_run.install_task_skills(cwd, scratch() / "gone") == []
+    assert claude_run.install_task_skills(cwd, source) == ([], [])
+
+    # a skill found nowhere is reported missing, never an error in the spawn path
+    repo_skills = claude_run.REPO_SKILLS
+    try:
+        claude_run.REPO_SKILLS = scratch()
+        assert claude_run.install_task_skills(scratch(), scratch() / "gone") == (
+            [], claude_run.TASK_SKILLS)
+    finally:
+        claude_run.REPO_SKILLS = repo_skills
+
+
+def test_cadre_ships_its_own_page_skill():
+    """auto-surface used to exist only as an untracked link into one person's
+    skills repo, so any other machine ran without it."""
+    skill = claude_run.REPO_SKILLS / "auto-surface" / "SKILL.md"
+    assert skill.is_file()
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(skill)],
+                             cwd=ROOT, capture_output=True)
+    assert tracked.returncode == 0, "the skill must be tracked, not a local file"
+
+
+def test_a_link_to_an_older_copy_is_re_pointed():
+    """A directory linked to the personal-repo copy before Cadre shipped its
+    own kept that link forever: an existing link was never looked at again."""
+    old = scratch() / "auto-surface"
+    old.mkdir()
+    cwd = scratch()
+    (cwd / ".claude" / "skills").mkdir(parents=True)
+    (cwd / ".claude" / "skills" / "auto-surface").symlink_to(old)
+
+    linked, _ = claude_run.install_task_skills(cwd, scratch())
+    assert linked == ["auto-surface"]
+    assert Path(os.readlink(cwd / ".claude" / "skills" / "auto-surface")) == \
+        claude_run.REPO_SKILLS / "auto-surface"
+
+
+def test_a_linked_skill_is_never_committed():
+    """The link is an absolute path into this machine's home folder."""
+    repo = _checkout()
+    sub = repo / "service"
+    sub.mkdir()
+    for cwd in (repo, sub):
+        claude_run.install_task_skills(cwd, scratch())
+    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
+    assert ".claude/skills/auto-surface" in exclude
+    assert "service/.claude/skills/auto-surface" in exclude
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
+                            cwd=repo, capture_output=True, text=True).stdout
+    assert "auto-surface" not in status, status
+    # and again adds nothing twice
+    (repo / ".claude" / "skills" / "auto-surface").unlink()
+    claude_run.install_task_skills(repo, scratch())
+    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
+    assert exclude.count(".claude/skills/auto-surface") == 1
 
 
 # --------------------------------------------------------------------------- hosts and paths
