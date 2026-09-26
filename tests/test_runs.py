@@ -52,7 +52,7 @@ assert (run_dir / "prompt.txt").read_text() == "prompt text"
 # `claude -p` waits 600s for background work and then kills it, exiting 0 with
 # whatever the session said before delegating. A research round lost ten of
 # its twelve agents that way and reported success having written no page.
-# The `timeout` wrapper is the only thing that should end a long round.
+# The run's deadline is the only thing that should end a long round.
 env_probe = tmp / "env-cli"
 env_probe.write_text('#!/bin/sh\nprintf "%s" "$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" > "$SEEN"\n')
 env_probe.chmod(0o755)
@@ -135,6 +135,56 @@ lost = {"pid": 999999999, "run_dir": str(tmp / "nope"), "started": time.time()}
 assert runs.finished(lost)
 ok, _, _, record = runs.outcome(lost)
 assert not ok and record["lost"]
+
+# -- the ceiling: an overdue run is stopped by the daemon, not GNU timeout -----
+# macOS has no `timeout`; prefixing it made every turn there exit 127.
+sleeper = tmp / "sleeper"
+sleeper.write_text("#!/bin/sh\nsleep 60\n")
+sleeper.chmod(0o755)
+run_dir_t = tmp / "run-overdue"
+pid = runs.spawn("unused", "p", wt, "opus", "high", "bypass", 60, run_dir_t,
+                 argv=[str(sleeper)])
+now = time.time()
+overdue = {"pid": pid, "run_dir": str(run_dir_t), "started": now - 100,
+           "deadline": now - 1}
+assert not runs.finished(overdue)
+assert runs.enforce_deadline({**overdue, "deadline": now + 60}) is None, "not due yet"
+note = runs.enforce_deadline(overdue, now=now)
+assert note and "timed out after 100 s" in note and "SIGTERM" in note
+for _ in range(50):
+    if runs.finished(overdue):
+        break
+    time.sleep(0.1)
+assert runs.finished(overdue), "SIGTERM to the group did not end the run"
+ok, result, _, record = runs.outcome(overdue)
+assert not ok and record["timed_out"] and not record["lost"]
+assert result == "timed out after 100 s"
+assert not record["rate_limited"] and not record["transient"]
+
+# an agent that ignores SIGTERM keeps the run open until SIGKILL, 30 s later
+stubborn = tmp / "stubborn"
+stubborn.write_text("#!/bin/sh\ntrap '' TERM\nsleep 60\n")
+stubborn.chmod(0o755)
+run_dir_s = tmp / "run-stubborn"
+pid = runs.spawn("unused", "p", wt, "opus", "high", "bypass", 60, run_dir_s,
+                 argv=[str(stubborn)])
+time.sleep(0.3)                     # let the trap be installed
+now = time.time()
+held = {"pid": pid, "run_dir": str(run_dir_s), "started": now - 10, "deadline": now}
+assert "SIGTERM" in runs.enforce_deadline(held, now=now)
+time.sleep(0.3)
+assert not runs.finished(held), "the agent is still running; not finished"
+assert runs.enforce_deadline(held, now=now + runs.KILL_GRACE - 1) is None
+assert "SIGKILL" in runs.enforce_deadline(held, now=now + runs.KILL_GRACE)
+for _ in range(50):
+    if runs.finished(held):
+        break
+    time.sleep(0.1)
+assert runs.finished(held), "SIGKILL to the group did not end the run"
+assert runs.outcome(held)[1] == "timed out after 10 s"
+
+# a run from before runs carried a deadline is left alone
+assert runs.enforce_deadline({"pid": 1, "run_dir": str(tmp), "started": 0}) is None
 
 # -- worktree lifecycle -------------------------------------------------------
 repo = tmp / "repo"

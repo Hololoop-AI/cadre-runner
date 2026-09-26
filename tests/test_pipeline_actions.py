@@ -1027,6 +1027,7 @@ def test_surface_prev_reaches_the_next_spec_session():
 
     class FakeRuns:
         RunsBusy = runs_mod.RunsBusy
+        deadline = staticmethod(runs_mod.deadline)
 
         @staticmethod
         def key_active(*a):
@@ -1103,6 +1104,7 @@ def _spawn_harness(d, executed):
 
     class Runs:
         RunsBusy = runs_mod.RunsBusy
+        deadline = staticmethod(runs_mod.deadline)
         key_active = staticmethod(lambda *a: False)
         all_active = staticmethod(lambda *a: [])
         branch_held = staticmethod(lambda *a: False)
@@ -1167,17 +1169,20 @@ def test_the_nodes_command_is_the_command_that_runs():
         assert executed[0][:2] == ["/bin/sh", "-c"] and executed[0][3] == "sh"
         argv = executed[0][4:]
 
-        assert argv[:2] == ["timeout", str(cfg.claude["timeout_seconds"])]
-        assert argv[2:4] == ["my-agent", "--file"]
+        # no `timeout` prefix: the ceiling is the run's deadline, enforced by
+        # the daemon (GNU timeout does not exist on macOS)
+        assert argv[:2] == ["my-agent", "--file"]
+        assert abs(run["deadline"] - run["started"]
+                   - cfg.claude["timeout_seconds"]) < 5
         # the rendered prompt travels as ONE argument, whatever is in it
-        assert argv[4] == (Path(run["run_dir"]) / "prompt.txt").read_text()
+        assert argv[2] == (Path(run["run_dir"]) / "prompt.txt").read_text()
         # {session} became the flag pair this run's session needs, {permission}
         # the config's permission mode — expansions, not one token each
-        assert argv[5:7] == ["--session-id", run["session_id"]]
-        assert argv[7:] == ["--dangerously-skip-permissions", "--task", "nex-1"]
+        assert argv[3:5] == ["--session-id", run["session_id"]]
+        assert argv[5:] == ["--dangerously-skip-permissions", "--task", "nex-1"]
         # nothing Claude Code-shaped survives in the invocation itself (the
         # prompt is prose and may say anything)
-        assert not any("claude" in a for a in argv[:4] + argv[5:]), argv
+        assert not any("claude" in a for a in argv[:2] + argv[3:]), argv
 
         # ...and the legacy path — no node spec — is untouched
         executed.clear()
@@ -1185,9 +1190,9 @@ def test_the_nodes_command_is_the_command_that_runs():
         pipeline._run_stage(cfg, reg, None, "nex-1", story,
                             {"type": "run_stage", "stage": "build", "slice": "core"})
         legacy = executed[0][4:]
-        assert legacy[:4] == ["timeout", "7200", "claude", "-p"]
-        assert legacy[5:11] == ["--model", "opus", "--effort", "high",
-                                "--output-format", "json"]
+        assert legacy[:2] == ["claude", "-p"]
+        assert legacy[3:9] == ["--model", "opus", "--effort", "high",
+                               "--output-format", "json"]
         assert legacy[-1] == "--dangerously-skip-permissions"
     finally:
         restore()

@@ -17,6 +17,7 @@ Concurrency safety rests on three guards, all enforced at spawn:
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -171,7 +172,12 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
     session_id is chosen by the caller rather than read back afterwards: a run
     that dies (usage limit, reboot) never prints its id, and without it the
     session's transcript — the actual work — is unreachable. resume=True
-    continues that session instead of starting a new one."""
+    continues that session instead of starting a new one.
+
+    `timeout` is not enforced here. The caller records `deadline(timeout)` on
+    the run and the reap pass enforces it (`enforce_deadline`): the GNU
+    `timeout` wrapper this used to prepend does not exist on macOS, where it
+    made every turn exit 127."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "prompt.txt").write_text(prompt)
     if argv:
@@ -186,7 +192,6 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
                 + session_args(session_id, resume)
                 + permission_args(permission_mode)
                 + dir_args(add_dirs))
-    argv = ["timeout", str(int(timeout))] + argv
     env = {**os.environ,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),
            "CADRE_RUN_ERR": str(run_dir / "err.txt"),
@@ -196,8 +201,9 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
            # it delegated. One research round fanned out twelve agents, had
            # ten shot out from under it at the ceiling, and reported success
            # with the text "Waiting on the agents now." — no page, $49.92.
-           # 0 means wait; the `timeout` wrapper above is the real ceiling and
-           # the only one that should be deciding when a round has gone long.
+           # 0 means wait; the run's deadline (`enforce_deadline`) is the real
+           # ceiling and the only one that should be deciding when a round has
+           # gone long.
            "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",
            **(extra_env or {})}
     proc = subprocess.Popen(
@@ -222,7 +228,68 @@ def _reap(pid: int) -> bool:
         return False  # a prior daemon's child, or already collected
 
 
+# ------------------------------------------------------------------ the ceiling
+
+# Seconds between asking an overdue run to stop and making it.
+KILL_GRACE = 30
+
+
+def deadline(timeout) -> float:
+    """When a run spawned now has gone on too long: the value to store as the
+    run record's `deadline`."""
+    return time.time() + int(timeout)
+
+
+def _signal_group(pgid: int, sig) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def enforce_deadline(run: dict, now: float | None = None) -> str | None:
+    """Stop a run that is past its `deadline`: SIGTERM its process group, then
+    SIGKILL it KILL_GRACE seconds later. Marks the run record so `outcome`
+    reports it as timed out; returns a line to log when it signalled.
+
+    Spawns start a new session, so the wrapper's pid is the process group and
+    the agent under it goes with it. A run with no deadline (spawned before
+    runs carried one) is left alone."""
+    now = time.time() if now is None else now
+    due = run.get("deadline")
+    if not due or now < due or run.get("kill_sent"):
+        return None
+    if "term_sent" not in run:
+        if Path(run["run_dir"], "exit").exists():
+            return None             # finished on its own; the reap collects it
+        run["term_sent"] = now
+        run["timed_out_after"] = round(now - run.get("started", now))
+        _signal_group(run["pid"], signal.SIGTERM)
+        return f"timed out after {run['timed_out_after']} s — SIGTERM to pid {run['pid']}"
+    if now - run["term_sent"] >= KILL_GRACE:
+        run["kill_sent"] = now
+        if _group_alive(run["pid"]):
+            _signal_group(run["pid"], signal.SIGKILL)
+            return f"still running {KILL_GRACE} s after SIGTERM — SIGKILL to pid {run['pid']}"
+    return None
+
+
 def finished(run: dict) -> bool:
+    if run.get("term_sent") and not run.get("kill_sent"):
+        # Stopping: the wrapper may be gone while the agent under it is still
+        # shutting down. Not finished until the whole group is, or SIGKILL
+        # has gone out.
+        _reap(run["pid"])
+        if _group_alive(run["pid"]):
+            return False
     if Path(run["run_dir"], "exit").exists():
         _reap(run["pid"])  # exit file is the outcome; this just clears the zombie
         return True
@@ -247,6 +314,8 @@ def outcome(run: dict):
             rc = 1
     else:
         rc = -1  # process gone, no exit file — the run was lost
+    if run.get("timed_out_after") is not None:
+        rc = 124    # stopped at its deadline, whatever the wrapper managed to write
     stdout = (run_dir / "out.json").read_text() if (run_dir / "out.json").exists() else ""
     record = {
         "cwd": run.get("worktree"), "model": run.get("model"),
@@ -269,6 +338,12 @@ def outcome(run: dict):
         except json.JSONDecodeError:
             record["raw_stdout"] = stdout[-8000:]
     text = result_text or stdout
+    if record["timed_out"]:
+        # a timeout is the run's own failure, never a pause to resume
+        record["rate_limited"] = record["transient"] = False
+        result_text = result_text or (
+            f"timed out after {run.get('timed_out_after', record['seconds'])} s")
+        return False, result_text, usage, record
     record["rate_limited"] = rc != 0 and is_rate_limited(text)
     record["transient"] = rc != 0 and not record["rate_limited"] and is_transient(text)
     return rc == 0, result_text, usage, record

@@ -100,6 +100,8 @@ def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
         return slug, story, None
     ghc = GitHub(cfg.data_dir / "etags.json")
     while any(not runs_mod.finished(r) for r in story["active_runs"].values()):
+        for r in story["active_runs"].values():
+            runs_mod.enforce_deadline(r)
         time.sleep(10)
     _reap_runs(cfg, reg, ghc, slug, story)
     reg.save()
@@ -813,6 +815,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         "repo": story["repo"], "branch": branch, "model": model,
         "effort": effort,
         "worktree": str(wt), "run_dir": str(run_dir), "started": time.time(),
+        "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         "session_id": session_id, "action": action,
     }
     log(f"{slug}: spawned stage {stage}"
@@ -820,6 +823,7 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         + (f" on PR #{pr}" if pr else "") + f" — pid {pid}")
     if wait:
         while not runs_mod.finished(story["active_runs"][rid]):
+            runs_mod.enforce_deadline(story["active_runs"][rid])
             time.sleep(10)
         _reap_runs(cfg, reg, ghc, slug, story)
 
@@ -947,6 +951,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
         "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
         "repo": "", "branch": "", "model": model, "effort": effort,
         "worktree": str(cwd), "run_dir": str(run_dir), "started": time.time(),
+        "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         "session_id": session_id, "resumed": bool(action.get("resume")),
         "iteration": rec["iteration"], "action": action,
     }
@@ -966,6 +971,8 @@ def _reap_tasks(cfg, reg):
     """
     for task_id, rec in list(tasks_mod.records(reg).items()):
         for rid, run in list((rec.get("active_runs") or {}).items()):
+            if note := runs_mod.enforce_deadline(run):
+                log(f"{task_id}: turn {run.get('iteration')} {note}")
             if not runs_mod.finished(run):
                 continue
             ok, result, usage, record = runs_mod.outcome(run)
@@ -1086,6 +1093,8 @@ def _reap_runs(cfg, reg, ghc, slug, story):
     apply the stage's registry effects. Runs in every pass before events, so
     completions register before anything new dispatches."""
     for rid, run in list((story.get("active_runs") or {}).items()):
+        if note := runs_mod.enforce_deadline(run):
+            log(f"{slug}: stage {run['stage']} {note}")
         if not runs_mod.finished(run):
             continue
         ok, result, usage, record = runs_mod.outcome(run)
@@ -1247,8 +1256,12 @@ def _resume_parked(cfg, reg, ghc, slug, story):
                        "CADRE_SESSION_ID": run["session_id"], "CADRE_RUN_ID": rid})
         del story["parked_runs"][rid]
         story.setdefault("active_runs", {})[rid] = {
-            **{k: v for k, v in run.items() if k not in ("parked_for", "parked_at")},
+            # a parked run can be one that hit its deadline; the revival is a
+            # new process with a new ceiling, not the old one still stopping
+            **{k: v for k, v in run.items() if k not in (
+                "parked_for", "parked_at", "term_sent", "kill_sent", "timed_out_after")},
             "pid": pid, "started": time.time(), "resumed": True,
+            "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         }
         board_events.emit("session_revived", story=slug, stage=run["stage"],
                           tickets=[t for t, _, _ in answers])
@@ -1293,6 +1306,7 @@ def _resume_paused(cfg, reg, ghc, slug, story):
         del story["paused_runs"][rid]
         story.setdefault("active_runs", {})[rid] = {
             **run, "pid": pid, "started": time.time(), "resumed": True,
+            "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         }
         log(f"{slug}: resumed stage {run['stage']} session {run['session_id'][:8]} — pid {pid}")
 
