@@ -31,6 +31,7 @@ from runnerlib import tasks as tasks_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib import gh
 from runnerlib.gh import NOT_MODIFIED, GitHub
+from runnerlib.nodes import NodeError, Nodes
 from runnerlib.registry import Registry, classify_branch, feature_branch, slugify, stage_branch
 
 VARIANT_DESC = {
@@ -196,6 +197,7 @@ def cmd_run(cfg, args, single_pass=False):
         f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     status_mod.install_page(cfg)
+    _log_stale_nodes(cfg)
     # SIGCHLD stays at default ON PURPOSE. Ignoring it auto-reaps children,
     # which makes CPython's waitpid hit ECHILD and report returncode 0 for
     # EVERY subprocess — measured 20/20 failing commands reading as success.
@@ -750,8 +752,10 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
     # The node registry's ACTIVE prompt version when the engine drove this
     # spawn; prompts/*.md when the legacy path did. Same $var substitution
     # either way — the registry stores the template, not a rendered prompt.
-    prompt = (Template(action["prompt_template"]).safe_substitute(v)
-              if action.get("prompt_template") else claude_run.render(stage, v))
+    template = action.get("prompt_template") or claude_run.template(stage)
+    prompt = Template(template).safe_substitute(v)
+    _log_unfilled(cfg, stage, template, v,
+                  action.get("node_version") or f"prompts/{stage}.md")
     run_dir = cfg.data_dir / "runs" / slug / rid
     session_id = str(uuid.uuid4())
     pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, model,
@@ -787,6 +791,33 @@ def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
         while not runs_mod.finished(story["active_runs"][rid]):
             time.sleep(10)
         _reap_runs(cfg, reg, ghc, slug, story)
+
+
+def _log_unfilled(cfg, node, template, variables, active):
+    """Say so when a prompt reaches its session with a `$name` nobody filled.
+
+    `safe_substitute` leaves an unknown placeholder in place without a word,
+    which is how an unpromoted prompt version lost its handoff lines after the
+    rename: the session read a literal `$route_options` and the driver's form
+    had nothing in it."""
+    missing = claude_run.unfilled(template, variables)
+    if not missing:
+        return
+    try:
+        latest = Nodes(cfg.data_dir).latest(node)
+    except NodeError:
+        latest = ""
+    for name in missing:
+        log(f"prompt for {node} left ${name} unfilled — active version "
+            f"{(active or '?')[:12]}, latest {(latest or '?')[:12]}")
+
+
+def _log_stale_nodes(cfg):
+    """At startup: every node running an older prompt than the one recorded,
+    with the command that puts the new one in front of traffic."""
+    for n in Nodes(cfg.data_dir).stale():
+        log(f"node {n['name']}: active version {n['active'][:12]} is not the latest "
+            f"recorded {n['latest'][:12]} — run `pipeline.py promote {n['name']}`")
 
 
 def surface_out(cfg, stage, slug, pr=None, page=None) -> Path | None:
@@ -855,6 +886,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
     prompt = Template(action["prompt_template"]).safe_substitute(v)
+    _log_unfilled(cfg, stage, action["prompt_template"], v,
+                  action.get("node_version", ""))
     if action.get("invoke"):
         # A skill, workflow or agent the ask picked: a slash or @agent-
         # prefix at the very front of the prompt is how `claude -p` launches

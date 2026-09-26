@@ -160,6 +160,24 @@ class Nodes:
                 "emits": rec.get("emits", []), "prompt_path": str(path),
                 "prompt": path.read_text()}
 
+    def latest(self, name: str) -> str:
+        """The version recorded last — by a seed, usually: an edited prompt
+        file lands here without being promoted."""
+        versions = self._require(name)["versions"]
+        return versions[-1]["id"] if versions else ""
+
+    def stale(self) -> list[dict]:
+        """Every node whose active version is not its latest recorded one:
+        an edit that is on disk and in the registry, but not in front of
+        traffic."""
+        out = []
+        for name, rec in sorted(self.index["nodes"].items()):
+            latest = self.latest(name)
+            if latest and rec.get("active_version") != latest:
+                out.append({"name": name, "active": rec.get("active_version") or "",
+                            "latest": latest})
+        return out
+
     def history(self, name: str) -> list[dict]:
         """Oldest first. Each row carries its parent and who produced it."""
         rec = self._require(name)

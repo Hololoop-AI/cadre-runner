@@ -414,6 +414,9 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # event used; an unpromoted prompt version still renders the live list.
     extra["routes"] = extra["nodes"]
     extra["handoff_options"] = tasks.node_options(listed)
+    # ...and `$route_options` is the form lines under their name from before
+    # the handoff rename, for the same reason.
+    extra["route_options"] = extra["handoff_options"]
     # ...and the command that writes the same event the form does, for a
     # node that hands on by itself.
     extra["handoff"] = handoff_command(cfg, task_id)
