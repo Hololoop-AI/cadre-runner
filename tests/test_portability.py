@@ -165,6 +165,34 @@ def test_the_event_stub_writes_where_the_runner_lives():
                 os.environ[k] = v
 
 
+# --------------------------------------------------------------------------- one host's tools
+
+# Commands and paths that exist on the machine this was written on and not on
+# a Mac: GNU `timeout` (every turn exited 127 there), systemd, GNU-only flags,
+# and anyone's home directory. A comment may name them; code may not.
+LINUX_ONLY = {
+    "calls timeout": r"""\[\s*["']timeout["']|["']timeout\s""",
+    "calls systemctl": r"""["']systemctl\b""",
+    "uses readlink -f": r"readlink\s+-f",
+    "uses stat -c": r"stat\s+-c",
+    "contains /home/": r"/home/",
+}
+
+
+def test_no_source_file_assumes_this_host():
+    import re
+    sources = [ROOT / "pipeline.py", ROOT / "statusd.py",
+               *sorted((ROOT / "runnerlib").glob("*.py"))]
+    found = []
+    for path in sources:
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+            for what, pattern in LINUX_ONLY.items():
+                if re.search(pattern, code):
+                    found.append(f"{path.relative_to(ROOT)}:{n} {what}: {line.strip()}")
+    assert not found, "\n".join(found)
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_"):

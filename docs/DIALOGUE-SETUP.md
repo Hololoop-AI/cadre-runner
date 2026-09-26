@@ -9,7 +9,29 @@ The PR-gated pipeline in the main [README](../README.md) is a different mode of
 the same runner. Nothing here requires it, and none of it touches your repos
 unless a task you dispatch does.
 
-Tested on Fedora (laptop and one server). Nothing in it is Fedora-specific.
+Tested on Fedora (laptop and one server). macOS is supported by the installer
+and the launcher but has not been run on a Mac yet; the first run there is the
+test.
+
+## Quick start
+
+```bash
+git clone -b true-prototype https://github.com/Hololoop-AI/cadre-runner.git \
+    ~/Projects/cadre/cadre-runner
+cd ~/Projects/cadre/cadre-runner
+bash deploy/install.sh        # clones the page server, writes a config, runs preflight
+python3 pipeline.py up        # page server + daemon + fleet page; Ctrl-C stops all three
+```
+
+Then open **http://127.0.0.1:8181**. The installer needs no admin rights and is
+safe to re-run: it never overwrites a config you edited and leaves existing
+checkouts alone. If preflight fails, its table names the check and what to do.
+On Linux, `bash deploy/install.sh --services` also installs and starts systemd
+user services, so nothing needs a terminal open.
+
+`up` runs preflight first and refuses to start if anything it needs is
+missing. It uses the Python you start it with, so if the installer printed a
+different interpreter (a Mac's `python3` is 3.9), start `up` with that one.
 
 ## What you need first
 
@@ -20,12 +42,32 @@ Tested on Fedora (laptop and one server). Nothing in it is Fedora-specific.
 | Claude Code CLI, signed in | every turn is a headless `claude -p` run | `claude --version` |
 | `git`, and read access to the two repos below | | `gh auth status` |
 
+`gh` is only for the PR pipeline. Without it the installer warns and dialogues
+work.
+
+### On a Mac, without admin rights
+
+Everything installs into your home folder:
+
+| Thing | How |
+|---|---|
+| git | `xcode-select --install` (the command-line developer tools) |
+| Python 3.11+ | install [uv](https://docs.astral.sh/uv/), then `uv python install 3.12`. macOS's own `python3` is 3.9, which is too old. |
+| Node 22+ | [fnm](https://github.com/Schniz/fnm) or [nvm](https://github.com/nvm-sh/nvm), then `fnm install 22` / `nvm install 22` |
+| Claude Code | the native installer: `curl -fsSL https://claude.ai/install.sh \| bash`, then `claude` once to sign in |
+
+Make sure `~/.local/bin` is on your `PATH` (add it in `~/.zshrc`). The installer
+links the page server's CLI there, and `up` refuses to start without it.
+
 Billing note: turns run as whatever account the CLI is signed in as. If you use
 an OAuth token from a file, export it before starting the daemon and unset
 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL`, or the API
 key silently outranks it.
 
-## Install
+## Install by hand
+
+The installer does all of this. These are the steps it takes, for when you
+need to do one of them yourself.
 
 ```bash
 mkdir -p ~/Projects/cadre && cd ~/Projects/cadre
@@ -94,8 +136,9 @@ change.
 
 ## Run
 
-Three processes. Run them in three terminals to start; make them services once
-you trust it.
+`python3 pipeline.py up` starts the three processes below in one terminal and
+prefixes each line of their output with its name. To run them separately
+instead, one terminal each:
 
 ```bash
 # 1. page server

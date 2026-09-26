@@ -86,4 +86,4 @@ Stage sessions run in a **runner-owned checkout** (`<data_dir>/checkouts/<repo>`
 - Run logs (full prompt, result, cost): `<data_dir>/logs/<story>/<timestamp>-<stage>.json`
 - Un-escalate a story: edit `registry.json`, set its `status` back to `"active"`.
 - Intake ran but nothing registered: the discovery step needs the planning PR on branch `pipe/<slug>/planning` — inspect the log, fix the repo state, re-run `start` (intake resumes partial work).
-- Work-laptop setup: install `gh` (authed), Claude Code CLI (logged in), Python 3.11+, copy this `runner/` dir + the `skills/` source dir, set `skills_source` in config.
+- Work-laptop setup (Linux or macOS, no admin rights): `bash deploy/install.sh`, then `python3 pipeline.py up` — see [docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md). The PR pipeline also needs `gh` authenticated.
