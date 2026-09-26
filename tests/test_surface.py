@@ -606,3 +606,52 @@ def test_reopening_a_page_keeps_where_it_belongs(tmp_path, monkeypatch):
     # an explicit new title still wins — carrying is a fallback, not a lock
     sf.open_session(Cfg(), art, "task", lambda m: None, title="d1 (DECIDED)")
     assert sf.sessions(Cfg())[str(art)]["title"] == "d1 (DECIDED)"
+
+
+# ------------------------------------------------------------ a failing tool
+
+def _fake_cli(tmp_path, monkeypatch, body):
+    from runnerlib import surface as sf
+    tool = tmp_path / "review-surface"
+    tool.write_text("#!/bin/sh\n" + body + "\n")
+    tool.chmod(0o755)
+    monkeypatch.setattr(sf, "CLI", str(tool))
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **k: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    return Cfg()
+
+
+def test_a_tool_that_cannot_start_is_logged_not_read_as_an_empty_reply(tmp_path, monkeypatch):
+    """The daemon's PATH without `node` on it: the tool's shim exits 127. That
+    used to come back as the error text, which a poll read as "no feedback"."""
+    from runnerlib import surface as sf
+    cfg = _fake_cli(tmp_path, monkeypatch,
+                    "echo \"/usr/bin/env: 'node': No such file or directory\" >&2; exit 127")
+    art = tmp_path / "page.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(cfg, {str(art): {"open": True}})
+    logs = []
+
+    sf._consume(cfg, None, None, logs.append, str(art), {"open": True})
+    sf.end_session(cfg, str(art), logs.append)
+
+    assert any("consume poll failed for page.html" in m and "exited 127" in m
+               and "'node': No such file or directory" in m for m in logs), logs
+    assert any(m.startswith("surface: end failed for page.html") for m in logs), logs
+
+
+def test_a_session_that_is_over_is_an_answer_even_on_a_non_zero_exit(tmp_path, monkeypatch):
+    """`poll` on an ended session exits 1 and says so. That reply closes the
+    session record; raising on it would leave the record open forever."""
+    from runnerlib import surface as sf
+    cfg = _fake_cli(tmp_path, monkeypatch,
+                    "echo 'error: No active Review Surface session for this file'; exit 1")
+    art = tmp_path / "page.html"
+    art.write_text("<!doctype html>")
+    sf._save_sessions(cfg, {str(art): {"open": True}})
+
+    assert "No active Review Surface session" in sf._run_cli(["poll", str(art)])
+    sf._consume(cfg, None, None, lambda m: None, str(art), {"open": True})
+    assert sf.sessions(cfg)[str(art)]["open"] is False

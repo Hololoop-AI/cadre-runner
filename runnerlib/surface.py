@@ -270,9 +270,30 @@ def author_notice(cfg, story: str, title: str, message_html: str) -> Path:
 
 # ------------------------------------------------------------------ lifecycle
 
+# What the tool prints when the session a command names is already over. A
+# plain `poll` says so AND exits 1; that is an answer `_handle_poll` reads (it
+# closes the session record), not a failure.
+SESSION_OVER = r"ended the session|No active Review Surface session"
+
+
+class SurfaceCLIError(RuntimeError):
+    """The review-surface tool ran and failed."""
+
+
 def _run_cli(args: list[str], timeout: int = 25) -> str:
+    """Run the tool; its output, or SurfaceCLIError on a non-zero exit.
+
+    A failure used to come back as its error text, which every caller read as
+    an empty reply: a tool whose `node` is missing from the daemon's PATH
+    exits 127, and the driver's notes were never collected, with no log."""
     r = subprocess.run([CLI, *args], capture_output=True, text=True, timeout=timeout)
-    return (r.stdout or "") + (r.stderr or "")
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode != 0 and not re.search(SESSION_OVER, out, re.IGNORECASE):
+        lines = [ln for ln in ((r.stderr or "").strip() or out.strip()).splitlines()
+                 if ln.strip()]
+        raise SurfaceCLIError(f"{CLI} {args[0] if args else ''} exited {r.returncode}"
+                              + (f": {lines[-1].strip()}" if lines else ""))
+    return out
 
 
 def _create_session_quietly(path: Path) -> str:
@@ -324,8 +345,8 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
 def end_session(cfg, path: str, log) -> None:
     try:
         _run_cli(["end", path])
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"surface: end failed for {Path(path).name}: {e}")
     s = sessions(cfg)
     if path in s:
         s[path]["open"] = False
@@ -501,7 +522,7 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
     # "Send & End" delivers the final feedback once with an ended status —
     # process prompts whenever present, close whenever the session is over.
     if status == "ended" or re.search(
-            r"ended the session|No active Review Surface session", raw, re.IGNORECASE):
+            SESSION_OVER, raw, re.IGNORECASE):
         s2 = sessions(cfg)
         if path in s2 and s2[path].get("open"):
             s2[path]["open"] = False
