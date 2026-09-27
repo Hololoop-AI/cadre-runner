@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from runnerlib import activity as activity_mod
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
 from runnerlib import library as library_mod
@@ -592,6 +593,41 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
     return out
 
 
+def live_turns(data_dir: Path | None = None, now: float | None = None) -> dict:
+    """{task id: one clause saying what its running turn is doing}.
+
+    Only tasks the registry says have a run in flight are looked at, so this
+    never speaks about a turn that has finished. The clause comes from the
+    session's own transcripts (runnerlib.activity) — nothing is asked of the
+    agent, because a turn deep in a fan-out is exactly the turn that would
+    forget to report.
+
+    Empty for anything it cannot answer for. A task with no clause renders the
+    way it always did, which is the point: this only ever adds detail.
+    """
+    d = DATA_DIR if data_dir is None else data_dir
+    try:
+        reg = json.loads((Path(d) / "registry.json").read_text(encoding="utf-8"))
+        tasks = dict(reg.get("tasks") or {})
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for task_id, rec in tasks.items():
+        if not isinstance(rec, dict) or not rec.get("active_runs"):
+            continue
+        # The run record carries the directory the turn is in, which is not
+        # always the task's own cwd once a handoff has moved the work.
+        run = next(iter(rec["active_runs"].values()), {})
+        cwd = (run or {}).get("worktree") or rec.get("cwd") or ""
+        sid = (run or {}).get("session_id") or rec.get("session_id") or ""
+        if not cwd or not sid:
+            continue
+        said = activity_mod.phrase(activity_mod.snapshot(cwd, sid, now), now)
+        if said:
+            out[task_id] = said
+    return out
+
+
 def closed_pages(projs: dict, data_dir: Path | None = None) -> dict:
     """{project id: [closed page sessions, newest first]} from the runner's
     session store — pages whose session ended stay on record there with
@@ -1066,7 +1102,7 @@ def load_graph() -> tuple[list, dict, dict]:
 def render_fleet(snap: dict, now: float | None = None,
                  statuses: dict | None = None, graph: tuple | None = None,
                  projs: dict | None = None, finished: dict | None = None,
-                 starting: dict | None = None) -> str:
+                 starting: dict | None = None, doing: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1077,9 +1113,12 @@ def render_fleet(snap: dict, now: float | None = None,
     count of closed pages per project id; every live project gets a section
     even with nothing open in it. `starting` is starting_tasks(): work that
     has been launched but has no page yet, which must still be visible or a
-    launch looks like it did nothing and gets repeated."""
+    launch looks like it did nothing and gets repeated. `doing` is
+    live_turns(): what each in-flight turn is actually doing, which replaces a
+    bare "working" badge wherever it has something to say."""
     now = time.time() if now is None else now
     statuses = statuses or {}
+    doing = doing or {}
     records, holders, pages = graph or ([], {}, {})
     snap = {**snap, "surfaces": conv_mod.collapse(snap.get("surfaces") or [],
                                                   records, holders, pages)}
@@ -1099,6 +1138,12 @@ def render_fleet(snap: dict, now: float | None = None,
         owned = (None if sf.get("kind") in (None, "page") or not sf.get("artifact")
                  else not surface_mod.unowned(sf))
         label, cls = agent_state_badge(st, now, owned=owned)
+        # "agent working" is true and says nothing. When the transcripts can
+        # say what the turn is doing, that replaces it — a row that has been
+        # quiet for half an hour must be able to prove it is alive.
+        said = doing.get(str(sf.get("task") or ""))
+        if said and cls == "running":
+            label = said
         bits = strand
         if label:
             bits += f'<span class="badge {cls}">{escape(label)}</span>'
@@ -1198,7 +1243,7 @@ def render_fleet(snap: dict, now: float | None = None,
         start = [s for m in [p, *projects_mod.members(projs, p["id"])]
                  for s in (starting or {}).get(m["id"], [])]
         if start:
-            parts.insert(0, starting_rows(start, now))
+            parts.insert(0, starting_rows(start, now, doing))
         n_live += len(start)
         count = f'<span class="badge">{n_live} running</span>' if n_live else ""
         done = (f'<a class="hist" href="/project/{escape(p["id"])}#finished">'
@@ -1252,7 +1297,7 @@ def render_fleet(snap: dict, now: float | None = None,
 def render_home(snap: dict, notice: str = "", now: float | None = None,
                 statuses: dict | None = None, graph: tuple | None = None,
                 projs: dict | None = None, finished: dict | None = None,
-                starting: dict | None = None) -> str:
+                starting: dict | None = None, doing: dict | None = None) -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
     fragment is re-fetched when the fleet stream reports a change."""
     now = time.time() if now is None else now
@@ -1278,7 +1323,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
         '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing)}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
@@ -1433,7 +1478,8 @@ def render_library(entries: list[dict], scanned: list[str]) -> str:
         f'{"".join(cards)}</div></body></html>')
 
 
-def starting_rows(starting: list[dict], now: float) -> str:
+def starting_rows(starting: list[dict], now: float,
+                  doing: dict | None = None) -> str:
     """Launched, no page yet. Says which of the three it is — waiting for a
     slot, mid-round, or finished having written nothing — because "nothing
     visible" is what made the driver launch the same work four times. The
@@ -1443,7 +1489,12 @@ def starting_rows(starting: list[dict], now: float) -> str:
     for s in starting:
         age = now - (s.get("since") or 0)
         if s.get("running"):
-            what = "working — its page appears when this round ends"
+            # What it is DOING, when the transcripts can say. A turn that fans
+            # out goes quiet for half an hour, and "working" alone is what made
+            # the driver assume a healthy run had died.
+            said = (doing or {}).get(s["task"])
+            what = (f"working — {said}" if said
+                    else "working — its page appears when this round ends")
         elif s.get("ran"):
             what = "ran, but wrote no page"
         elif s.get("failed"):
@@ -1524,7 +1575,8 @@ def _task_label(task_id: str) -> str:
 
 def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
                    entries: list[dict], notice: str = "", now: float | None = None,
-                   starting: list[dict] | None = None) -> str:
+                   starting: list[dict] | None = None,
+                   doing: dict | None = None) -> str:
     """One project's own page: the launcher, what runs in it, what finished,
     and what a task launched here is told."""
     now = time.time() if now is None else now
@@ -1594,7 +1646,7 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
         '</h1></header>'
         f'<p class="meta">{" · ".join(meta)}</p>{banner}{launch}'
         f'<section class="card project"><h2>running</h2>'
-        f'{starting_rows(starting or [], now)}'
+        f'{starting_rows(starting or [], now, doing)}'
         f'{rows_html or ("" if starting else "<p class=empty>Nothing running.</p>")}</section>'
         f'<section class="card" id="finished"><h2>finished · {len(closed)}</h2>'
         f'{done or "<p class=empty>Nothing finished yet.</p>"}</section>'
@@ -1971,14 +2023,16 @@ class Handler(BaseHTTPRequestHandler):
         projs = load_projects()
         finished = {pid: len(rows) for pid, rows in closed_pages(projs).items()}
         starting = starting_tasks(projs)
+        doing = live_turns()
         if query.get("partial"):
             self._send_html(render_fleet(snap, statuses=statuses, graph=graph,
                                          projs=projs, finished=finished,
-                                         starting=starting))
+                                         starting=starting, doing=doing))
             return
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph,
-                                    projs=projs, finished=finished, starting=starting))
+                                    projs=projs, finished=finished, starting=starting,
+                                    doing=doing))
 
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
@@ -1994,8 +2048,10 @@ class Handler(BaseHTTPRequestHandler):
                 if str(r.get("project") or "") in names]
         # This project's section exactly as the fleet draws it, without the
         # finished count (the page lists finished work itself).
+        doing = live_turns()
         rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
-                                 projs={**mine, p["id"]: {**p, "group": None, "archived": False}}) if rows else ""
+                                 projs={**mine, p["id"]: {**p, "group": None, "archived": False}},
+                                 doing=doing) if rows else ""
         closed_all = closed_pages(projs)
         closed = sorted((m for k in mine for m in closed_all.get(k, [])),
                         key=lambda m: -(m.get("opened") or 0))
@@ -2006,7 +2062,7 @@ class Handler(BaseHTTPRequestHandler):
         starting.sort(key=lambda s: -(s.get("since") or 0))
         self._send_html(render_project(p, projs, rows_html, closed, entries,
                                        notice=(query.get("notice") or [""])[0],
-                                       starting=starting))
+                                       starting=starting, doing=doing))
 
     def _serve_library(self):
         dirs = [d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()]
