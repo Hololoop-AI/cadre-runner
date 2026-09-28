@@ -21,7 +21,7 @@ set -euo pipefail
 # setup function below.
 RUNNER_DIR="${CADRE_RUNNER_DIR:-$HOME/Projects/cadre/cadre-runner}"
 SURFACE_DIR="${CADRE_SURFACE_DIR:-$HOME/Projects/review-surface}"
-SURFACE_REF=2e88f287ffef9ba6553bd75f0482a88265cd54f6    # review-surface main, after the pinned-style merge
+SURFACE_REF=a2ff0901f8f01af415af31e073e0a9db447e5de3    # review-surface main, incl. the presence fix
 COMPONENTS=(
   "cadre-runner|https://github.com/Hololoop-AI/cadre-runner.git|main|$RUNNER_DIR|setup_runner"
   "review-surface|https://github.com/Hololoop-AI/review-surface.git|$SURFACE_REF|$SURFACE_DIR|setup_surface"

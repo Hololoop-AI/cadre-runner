@@ -121,14 +121,35 @@ def test_task_dialogues_get_their_skills_in_any_cwd():
         claude_run.REPO_SKILLS = repo_skills
 
 
+def _tracked(path) -> bool | None:
+    """True/False if git can answer, None outside a checkout — a clean-room copy
+    of the tree is not a repo, and a test that fails there is crying wolf about
+    the one situation it exists to certify."""
+    if not (ROOT / ".git").exists():
+        return None
+    return subprocess.run(["git", "ls-files", "--error-unmatch", str(path)],
+                          cwd=ROOT, capture_output=True).returncode == 0
+
+
 def test_cadre_ships_its_own_page_skill():
     """auto-surface used to exist only as an untracked link into one person's
     skills repo, so any other machine ran without it."""
     skill = claude_run.REPO_SKILLS / "auto-surface" / "SKILL.md"
     assert skill.is_file()
-    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(skill)],
-                             cwd=ROOT, capture_output=True)
-    assert tracked.returncode == 0, "the skill must be tracked, not a local file"
+    assert _tracked(skill) is not False, "the skill must be tracked, not a local file"
+
+
+def test_no_machines_own_config_is_shipped():
+    """config.local.toml carries this host's paths and this person's
+    allowed_actors. Tracking it hands a fresh machine someone else's
+    skills_source and an actor list it is not in — and the installer then
+    declines to overwrite the file it finds, so the wrong config sticks. The
+    installer writes this per machine; the repo must not carry one."""
+    assert _tracked(ROOT / "config.local.toml") is not True, \
+        "config.local.toml must be gitignored, not committed"
+    example = ROOT / "config.example.toml"
+    assert example.is_file(), "there still has to be something to copy from"
+    assert _tracked(example) is not False
 
 
 def test_a_link_to_an_older_copy_is_re_pointed():
