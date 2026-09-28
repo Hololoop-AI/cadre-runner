@@ -16,7 +16,7 @@ test.
 ## Quick start
 
 ```bash
-git clone -b true-prototype https://github.com/Hololoop-AI/cadre-runner.git \
+git clone https://github.com/Hololoop-AI/cadre-runner.git \
     ~/Projects/cadre/cadre-runner
 cd ~/Projects/cadre/cadre-runner
 bash deploy/install.sh        # clones the page server, writes a config, runs preflight

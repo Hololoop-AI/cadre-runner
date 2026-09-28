@@ -1,3 +1,40 @@
+# Cadre — Local Runner
+
+Two modes share this runner. **Most people want the first one.**
+
+## Installing it
+
+```bash
+git clone https://github.com/Hololoop-AI/cadre-runner.git ~/Projects/cadre/cadre-runner
+cd ~/Projects/cadre/cadre-runner
+bash deploy/install.sh        # clones the page server, writes a config, runs preflight
+python3 pipeline.py up        # everything, in one terminal; Ctrl-C stops it
+```
+
+Then open **http://127.0.0.1:8181**. Linux and macOS, no admin rights needed,
+safe to re-run. Preflight is the gate: if it fails, its table names the check
+and the fix, and nothing claims to have worked when it did not.
+
+**Read [docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md) first** — it lists the
+four prerequisites the installer cannot install for you (Python 3.11+, Node 22+,
+git, the Claude Code CLI), with the no-admin way to get each on a Mac, and it
+explains what you are looking at once the page is up.
+
+## The two modes
+
+**Dialogue (the one in daily use).** You ask for something, an agent does it and
+writes you a page, you answer on the page, and the same session continues from
+your answer. No GitHub, no PRs, no tracker — the whole loop is local. This is
+what `install.sh` and `pipeline.py up` set up, and it is what the fleet page at
+:8181 drives. See [docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md).
+
+**PR-gated pipeline (the rest of this file).** The original mode: a daemon that
+drives a story lifecycle through the GitHub UI, where merging a stage PR is what
+advances it. It needs `gh` and repo access. Nothing in the dialogue mode
+requires it.
+
+---
+
 # PR-Gated Pipeline — Local Runner
 
 The "work version" of the pipeline in `../design.md`: a polling daemon that drives the full story lifecycle through the GitHub UI, executing every stage as a headless `claude -p` session on this machine. No GitHub Actions, no claude-code-action — just `gh`, `git`, `python3` (3.11+), and the Claude Code CLI on a laptop.
