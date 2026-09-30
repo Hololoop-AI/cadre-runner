@@ -22,6 +22,7 @@ from runnerlib import board_events
 from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
+from runnerlib import node_cli
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -1727,6 +1728,12 @@ def cmd_handoff(cfg, args):
           + (" after this turn ends" if agent else ""))
 
 
+def cmd_node(cfg, args):
+    """Cadre's node CLI (runnerlib/node_cli.py) under the runner's own entry
+    point, reading the same config: `pipeline.py node list|show|add|record|promote`."""
+    sys.exit(node_cli.main(args.argv, cfg=cfg))
+
+
 def cmd_promote(cfg, args):
     """Put a dialogue node's prompt, as it is on disk now, in front of traffic.
 
@@ -1940,6 +1947,10 @@ def main():
     p = sub.add_parser("promote", help="activate a dialogue node's prompt as it is "
                                        "on disk (seeding records edits, never activates them)")
     p.add_argument("node", choices=list(tasks_mod.NODES))
+    p = sub.add_parser("node", add_help=False,
+                       help="nodes: list, show, add (any harness), record and promote "
+                            "prompt versions (`pipeline.py node` alone lists them)")
+    p.add_argument("argv", nargs=argparse.REMAINDER)
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
     p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect",
                                       "register"])
@@ -1963,7 +1974,7 @@ def main():
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
-     "promote": cmd_promote, "handoff": cmd_handoff,
+     "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "project": cmd_project, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
