@@ -136,8 +136,55 @@ def state(cfg) -> dict:
         actions = engine.load_action_set(ACTIONS_PATHS)
         start_new_actions_at_head(board, actions)
         _state[path] = {"board": board, "nodes": Nodes(cfg.data_dir),
-                        "actions": actions}
+                        "actions": actions, "actions_seen": _actions_stamp(),
+                        "actions_error": None}
     return _state[path]
+
+
+def _actions_stamp() -> tuple:
+    """What the action files look like on disk: (path, mtime, size) each. A
+    change here is the only reason to re-read them."""
+    out = []
+    for p in ACTIONS_PATHS:
+        try:
+            st = Path(p).stat()
+            out.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((str(p), None, None))
+    return tuple(out)
+
+
+def current_actions(st: dict, log) -> list[dict]:
+    """The action set for this pass, re-read when a file changed on disk —
+    the same contract the node registry already keeps, so adding or editing
+    an action no longer needs a daemon restart.
+
+    An edit that does not load (bad JSON, an unknown operator, a name used
+    twice) does not take the daemon down and does not half-apply: the last set
+    that loaded keeps running, and the refusal is logged once per broken
+    version of the files — loudly, because an edit that silently does nothing
+    is the failure this project keeps paying for. A newly added action starts
+    at the board's head, exactly as at startup."""
+    stamp = _actions_stamp()
+    if stamp == st["actions_seen"]:
+        return st["actions"]
+    st["actions_seen"] = stamp
+    try:
+        fresh = engine.load_action_set(ACTIONS_PATHS)
+    except engine.ActionError as e:
+        st["actions_error"] = str(e)
+        log(f"engine: ACTIONS NOT RELOADED — {e}; still running the previous "
+            f"{len(st['actions'])} action(s) until the files load")
+        return st["actions"]
+    old = {a["name"] for a in st["actions"]}
+    new = start_new_actions_at_head(st["board"], fresh)
+    names = {a["name"] for a in fresh}
+    st["actions"], st["actions_error"] = fresh, None
+    log(f"engine: actions reloaded — {len(fresh)} action(s)"
+        + (f"; added {', '.join(sorted(names - old))}" if names - old else "")
+        + (f"; removed {', '.join(sorted(old - names))}" if old - names else "")
+        + (f" (new ones start at the board's head: {', '.join(new)})" if new else ""))
+    return fresh
 
 
 def start_new_actions_at_head(board: Board, actions: list[dict]) -> list[str]:
@@ -174,7 +221,7 @@ def tick_pass(cfg, reg, ghc, log, run_stage) -> dict:
     must not import pipeline.py (which imports the seam), and the daemon owns
     the spawn machinery either way."""
     st = state(cfg)
-    board, actions = st["board"], st["actions"]
+    board, actions = st["board"], current_actions(st, log)
     # The node registry is re-opened every pass, never cached: `Nodes.__init__`
     # reads index.json once and holds it, so a cached handle in a daemon that
     # runs for weeks would pin every node's command and active prompt version
