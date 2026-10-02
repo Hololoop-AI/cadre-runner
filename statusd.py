@@ -2089,7 +2089,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             while True:
-                chunk = resp.read(8192)
+                # read1, not read: read(8192) waits for 8 KB, so a server-sent
+                # event stream (review-surface's live reload, agent replies,
+                # presence) sat in this buffer and never reached the browser.
+                chunk = resp.read1(8192)
                 if not chunk:
                     break
                 if chunked:
