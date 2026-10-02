@@ -254,6 +254,9 @@ def _supervise(children, env=None, grace=10) -> int:
     import threading
     width = max(len(name) for name, _ in children)
     procs = []
+    # A closed terminal is a Ctrl-C: stop the children in order rather than
+    # die and leave them running.
+    signal.signal(signal.SIGHUP, signal.default_int_handler)
 
     def pump(name, stream):
         for line in stream:
@@ -333,7 +336,22 @@ def cmd_run(cfg, args, single_pass=False):
     # That was the root cause of "git worktree add succeeded but the tree is
     # empty" (NEX-160): the add failed and nothing could see it. Wrapper
     # zombies are reaped explicitly in runs.finished() instead.
+    #
+    # A stop (systemctl stop/restart, `up` shutting down, a closed terminal)
+    # finishes the pass in hand: killed mid-pass, a turn's reap or a registry
+    # save is lost. The handler only raises a flag; the loop reads it at the
+    # top of the next pass and between the 1 s steps of its sleep.
+    stopping = []
+
+    def _stop(signum, _frame):
+        stopping.append(signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _stop)
     while True:
+        if stopping:
+            log(f"stopped ({signal.Signals(stopping[0]).name}) — the last pass finished")
+            return
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
@@ -386,7 +404,9 @@ def cmd_run(cfg, args, single_pass=False):
         if single_pass:
             return
         try:
-            time.sleep(cfg.runner["poll_interval"])
+            wake = time.time() + cfg.runner["poll_interval"]
+            while not stopping and time.time() < wake:
+                time.sleep(min(1.0, max(0.0, wake - time.time())))
         except KeyboardInterrupt:
             log("stopped")
             return
