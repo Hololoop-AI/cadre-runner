@@ -259,7 +259,7 @@ def test_open_session_prefers_the_quiet_http_path(tmp_path, monkeypatch):
     from runnerlib import surface as sf
     calls = {"cli": 0, "http": 0}
     monkeypatch.setattr(sf, "_create_session_quietly",
-                        lambda p: (calls.__setitem__("http", calls["http"] + 1)
+                        lambda p, delivery="push": (calls.__setitem__("http", calls["http"] + 1)
                                    or "/session/abc123"))
     monkeypatch.setattr(sf, "_run_cli",
                         lambda a, timeout=25: (calls.__setitem__("cli", calls["cli"] + 1)
@@ -586,7 +586,7 @@ def test_reopening_a_page_keeps_where_it_belongs(tmp_path, monkeypatch):
     adopted discussion used to fall out of its project group and render as a
     bare task id the moment its new dialogue wrote a round."""
     from runnerlib import surface as sf
-    monkeypatch.setattr(sf, "_create_session_quietly", lambda p: "/session/k1")
+    monkeypatch.setattr(sf, "_create_session_quietly", lambda p, delivery="push": "/session/k1")
     monkeypatch.setattr(sf.board_events, "emit", lambda *a, **kw: None)
 
     class Cfg:
@@ -655,3 +655,44 @@ def test_a_session_that_is_over_is_an_answer_even_on_a_non_zero_exit(tmp_path, m
     assert "No active Review Surface session" in sf._run_cli(["poll", str(art)])
     sf._consume(cfg, None, None, lambda m: None, str(art), {"open": True})
     assert sf.sessions(cfg)[str(art)]["open"] is False
+
+
+def test_pages_the_daemon_collects_open_as_push(tmp_path, monkeypatch):
+    """A page the daemon collects from the outbox is opened as push delivery,
+    so the page server stops telling the driver "your agent is not
+    listening" while the loop is running. An external page belongs to
+    whoever registered it, who may hold a real poll, so it stays poll."""
+    from runnerlib import surface as sf
+    seen = {}
+    monkeypatch.setattr(sf, "_create_session_quietly",
+                        lambda p, delivery="push": seen.__setitem__(Path(p).name, delivery)
+                        or "/session/" + Path(p).stem)
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **kw: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    for name, kind in (("task.html", "task"), ("ext.html", "external")):
+        (tmp_path / name).write_text("<!doctype html>")
+        sf.open_session(Cfg(), tmp_path / name, kind, lambda m: None)
+    assert seen == {"task.html": "push", "ext.html": "poll"}
+
+
+def test_the_quiet_open_asks_the_server_for_the_delivery_mode(monkeypatch):
+    from runnerlib import surface as sf
+    import urllib.request
+    sent = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return b'{"url": "http://127.0.0.1:4387/session/abc"}'
+
+    def fake_urlopen(req, timeout=10):
+        sent.update(json.loads(req.data))
+        return Resp()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert sf._create_session_quietly(Path("/tmp/x.html")) == "/session/abc"
+    assert sent == {"file": "/tmp/x.html", "delivery": "push"}
