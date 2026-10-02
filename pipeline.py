@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import board_events
+from runnerlib import codestamp
 from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
@@ -329,6 +330,7 @@ def cmd_run(cfg, args, single_pass=False):
         f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     status_mod.install_page(cfg)
+    status_mod.CODE = codestamp.Stamp()
     _log_stale_nodes(cfg)
     # SIGCHLD stays at default ON PURPOSE. Ignoring it auto-reaps children,
     # which makes CPython's waitpid hit ECHILD and report returncode 0 for

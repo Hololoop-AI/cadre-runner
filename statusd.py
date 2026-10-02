@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import codestamp
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
 from runnerlib import library as library_mod
@@ -90,6 +91,9 @@ PANEL_LINKS = STRANDED_DIR.parent / "panel-links.jsonl"
 # The durable project records (runnerlib/projects.py), same data dir.
 DATA_DIR = STRANDED_DIR.parent.parent
 SURFACE = surface_mod.upstream()
+# What this process loaded at startup, to say so on the page once an edit to
+# it is waiting for a restart (codestamp.py).
+_CODE = codestamp.Stamp()
 BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
 BLOCKED = {"/shutdown"}
@@ -1291,7 +1295,30 @@ def render_fleet(snap: dict, now: float | None = None,
         rows = "".join(_story_html(s, now) for s in p["stories"])
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(p["repo"])}</span>{flag}</h2>{rows}</section>')
-    return "".join(out)
+    return code_line(snap, now=now) + "".join(out)
+
+
+def code_line(snap: dict, own=None, now: float | None = None) -> str:
+    """One line naming whichever process runs older code than the folder
+    holds: the daemon (its snapshot's `code`) or this page server (`own`, its
+    startup stamp). Empty while both are current."""
+    own = _CODE if own is None else own
+    behind = []
+    code = snap.get("code") or {}
+    if code.get("running") and code.get("tree") and code["running"] != code["tree"]:
+        behind.append(("the daemon", code.get("since"), code.get("head")))
+    if own.stale():
+        behind.append(("the fleet page", own.since, own.head))
+    if not behind:
+        return ""
+    who = " and ".join(
+        f'{name} (started {escape(_rel_time(since or 0, now))}'
+        + (f' on {escape(head)}' if head else "") + ")"
+        for name, since, head in behind)
+    verb, them = ("is", "it") if len(behind) == 1 else ("are", "them")
+    return ('<section class="card stale"><p><span class="badge needs">stale code</span> '
+            f'{who[0].upper()}{who[1:]} {verb} running code older than this folder; '
+            f'edits wait until you restart {them}.</p></section>')
 
 
 def render_home(snap: dict, notice: str = "", now: float | None = None,

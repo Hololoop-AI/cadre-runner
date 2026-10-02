@@ -66,7 +66,9 @@ def stubbed_pass(during_reap=None):
             (pipeline.surface_mod, "tick", lambda *_a: None),
             (pipeline.surface_mod, "reconcile_merged_holds", lambda *_a: None),
             (pipeline.engine_seam, "enabled", lambda: False),
-            (pipeline.runs_mod, "all_active", lambda *_a: [])]
+            (pipeline.runs_mod, "all_active", lambda *_a: []),
+            # `run` stamps its code into the status module; keep that local
+            (pipeline.status_mod, "CODE", None)]
     saved_mods = [(m, n, getattr(m, n)) for m, n, _ in mods]
     handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
     for n, v in names.items():
