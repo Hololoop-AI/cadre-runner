@@ -667,8 +667,10 @@ def test_engine_only_skips_legacy_stage_dispatch_but_keeps_registry_effects():
     pipeline.poller.collect_events = lambda *a: (list(events), 0)
     pipeline.surface_mod.available = lambda: False
     try:
-        # legacy (flag off): the tests merge dispatches a build run
-        pipeline._poll_story(cfg, reg, None, "nex-1", story)
+        # legacy (flag off): the tests merge dispatches a build run. Off
+        # explicitly — the daemon's own environment exports CADRE_ENGINE=only.
+        with engine_mode(None):
+            pipeline._poll_story(cfg, reg, None, "nex-1", story)
         assert [a["stage"] for a in spawned] == ["build"]
         assert story["status"] == "done"          # story_done fired too
 
