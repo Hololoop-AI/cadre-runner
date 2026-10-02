@@ -208,7 +208,7 @@ CADRE_CONFIG=$PWD/config.local.toml python3 pipeline.py surface register \
 | You answered and nothing happened | You pressed "Queue answer", not "Send to Agent". Every delivery is recorded in `~/.review-surface/feedback-journal.jsonl` — that file is the receipt. |
 | A task never spawns | The daemon caps at 4 concurrent runs and currently drops a firing that arrives at the cap. Re-dispatch. |
 | Editing a prompt in `prompts/` changed nothing | Seeding records a new version but does not promote it. `python3 pipeline.py promote task` (or `implement`) activates the text on disk; the daemon picks it up on its next pass. |
-| Editing `config/actions-*.json` changed nothing | The daemon reads its actions once, at start. Restart it. (Adding a node does NOT need this — the registry is re-read every pass.) |
+| Editing `config/actions-*.json` changed nothing | The daemon re-reads the action files on its next pass after they change. If the log says `ACTIONS NOT RELOADED`, the edit did not load (bad JSON, unknown operator, duplicate name) and the previous set is still running — fix the file; no restart either way. |
 | A hand-off went nowhere | A node that is not registered to take a handoff is refused before anything is written: from a page, the batch is stranded and the row badges it; from the command, it exits non-zero naming the nodes that do. |
 | Page renders as unstyled white text | The authoring session wrote a fragment instead of a full document — a task-prompt failure, not a server one. |
 | `review-surface` starts but pages 404 | Something else owns port 4387. Use another port and set `CADRE_SURFACE_UPSTREAM` to match for the daemon and the fleet page. |

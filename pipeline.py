@@ -19,9 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
 from runnerlib import board_events
+from runnerlib import codestamp
 from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
+from runnerlib import node_cli
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -253,6 +255,9 @@ def _supervise(children, env=None, grace=10) -> int:
     import threading
     width = max(len(name) for name, _ in children)
     procs = []
+    # A closed terminal is a Ctrl-C: stop the children in order rather than
+    # die and leave them running.
+    signal.signal(signal.SIGHUP, signal.default_int_handler)
 
     def pump(name, stream):
         for line in stream:
@@ -325,6 +330,7 @@ def cmd_run(cfg, args, single_pass=False):
         f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
         + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
     status_mod.install_page(cfg)
+    status_mod.CODE = codestamp.Stamp()
     _log_stale_nodes(cfg)
     # SIGCHLD stays at default ON PURPOSE. Ignoring it auto-reaps children,
     # which makes CPython's waitpid hit ECHILD and report returncode 0 for
@@ -332,7 +338,22 @@ def cmd_run(cfg, args, single_pass=False):
     # That was the root cause of "git worktree add succeeded but the tree is
     # empty" (NEX-160): the add failed and nothing could see it. Wrapper
     # zombies are reaped explicitly in runs.finished() instead.
+    #
+    # A stop (systemctl stop/restart, `up` shutting down, a closed terminal)
+    # finishes the pass in hand: killed mid-pass, a turn's reap or a registry
+    # save is lost. The handler only raises a flag; the loop reads it at the
+    # top of the next pass and between the 1 s steps of its sleep.
+    stopping = []
+
+    def _stop(signum, _frame):
+        stopping.append(signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _stop)
     while True:
+        if stopping:
+            log(f"stopped ({signal.Signals(stopping[0]).name}) — the last pass finished")
+            return
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
@@ -385,7 +406,9 @@ def cmd_run(cfg, args, single_pass=False):
         if single_pass:
             return
         try:
-            time.sleep(cfg.runner["poll_interval"])
+            wake = time.time() + cfg.runner["poll_interval"]
+            while not stopping and time.time() < wake:
+                time.sleep(min(1.0, max(0.0, wake - time.time())))
         except KeyboardInterrupt:
             log("stopped")
             return
@@ -975,6 +998,20 @@ def _surface_env(cfg, stage, slug, pr=None, page=None) -> dict:
     return {"CADRE_SURFACE_OUT": str(path)} if path else {}
 
 
+# A dialogue turn runs in the driver's own tree with the driver's own git
+# credentials, and nothing it is asked for is a push: what reaches GitHub is
+# the driver's call. Git reads these as config, so every push to GitHub, by
+# https or ssh, resolves to a URL no transport serves and fails before it
+# connects. Fetch and pull are untouched (pushInsteadOf rewrites pushes only).
+NO_PUSH_ENV = {
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "url.cadre-no-push://blocked/.pushInsteadOf",
+    "GIT_CONFIG_VALUE_0": "https://github.com/",
+    "GIT_CONFIG_KEY_1": "url.cadre-no-push://blocked/.pushInsteadOf",
+    "GIT_CONFIG_VALUE_1": "git@github.com:",
+}
+
+
 def _run_task(cfg, reg, task_id, action, skip_cap=False):
     """Spawn one turn of a dialogue (workflow #3), in the driver's own tree.
 
@@ -1037,7 +1074,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          **({"add_dirs": action["add_dirs"]} if action.get("add_dirs") else {}),
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
-                                    "CADRE_RUN_ID": rid,
+                                    "CADRE_RUN_ID": rid, **NO_PUSH_ENV,
                                     # the task's page, whichever node a handoff
                                     # handed it to
                                     **_surface_env(cfg, tasks_mod.NODE, task_id,
@@ -1727,6 +1764,12 @@ def cmd_handoff(cfg, args):
           + (" after this turn ends" if agent else ""))
 
 
+def cmd_node(cfg, args):
+    """Cadre's node CLI (runnerlib/node_cli.py) under the runner's own entry
+    point, reading the same config: `pipeline.py node list|show|add|record|promote`."""
+    sys.exit(node_cli.main(args.argv, cfg=cfg))
+
+
 def cmd_promote(cfg, args):
     """Put a dialogue node's prompt, as it is on disk now, in front of traffic.
 
@@ -1940,6 +1983,10 @@ def main():
     p = sub.add_parser("promote", help="activate a dialogue node's prompt as it is "
                                        "on disk (seeding records edits, never activates them)")
     p.add_argument("node", choices=list(tasks_mod.NODES))
+    p = sub.add_parser("node", add_help=False,
+                       help="nodes: list, show, add (any harness), record and promote "
+                            "prompt versions (`pipeline.py node` alone lists them)")
+    p.add_argument("argv", nargs=argparse.REMAINDER)
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
     p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect",
                                       "register"])
@@ -1963,7 +2010,7 @@ def main():
     {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
-     "promote": cmd_promote, "handoff": cmd_handoff,
+     "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "project": cmd_project, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)

@@ -43,8 +43,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import codestamp
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
+from runnerlib import costs as costs_mod
 from runnerlib import library as library_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
@@ -90,6 +92,9 @@ PANEL_LINKS = STRANDED_DIR.parent / "panel-links.jsonl"
 # The durable project records (runnerlib/projects.py), same data dir.
 DATA_DIR = STRANDED_DIR.parent.parent
 SURFACE = surface_mod.upstream()
+# What this process loaded at startup, to say so on the page once an edit to
+# it is waiting for a restart (codestamp.py).
+_CODE = codestamp.Stamp()
 BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
 BLOCKED = {"/shutdown"}
@@ -105,7 +110,14 @@ TASKS_PATH = "/tasks"
 REPAIR_PATH = "/repair"
 PROJECTS_PATH = "/projects"
 LIBRARY_PATH = "/library"
+COSTS_PATH = "/costs"
 STREAM_PATH = "/fleet/events"
+# A surface opens inside the fleet's own frame, so the fleet stays one click
+# away. Opening review-surface's /session/<key> as the whole tab left the
+# driver with nothing to click but the browser's back button.
+VIEW_PATH = "/view/"
+SESSION_PREFIX = "/session/"
+SESSION_KEY = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MAX_TASK_BYTES = 64 * 1024
 # The page is pushed, not polled: it refreshes when the fleet stream says
 # something changed. This slow poll runs only while the stream is down.
@@ -130,6 +142,74 @@ RANK_NEEDS_HUMAN, RANK_FINISHED, RANK_RUNNING = 0, 1, 2
 RANK_LABELS = {RANK_NEEDS_HUMAN: "needs you",
                RANK_FINISHED: "finished",
                RANK_RUNNING: "in progress"}
+
+
+# ---------------------------------------------------------------- surface view
+
+def view_href(path) -> str:
+    """Where a link to a surface should go: its framed view when it is a
+    review-surface session, the path unchanged otherwise."""
+    p = str(path or "")
+    return VIEW_PATH + p[len(SESSION_PREFIX):] if p.startswith(SESSION_PREFIX) else p
+
+
+def framable_header(path: str, name: str, value: str):
+    """A proxied response header, adjusted so the fleet may frame a session.
+
+    review-surface refuses all framing of /session/<key> by default. Through
+    this proxy the fleet and the session share one origin, so allowing 'self'
+    lets exactly the fleet frame it and still refuses every other site.
+    Returns the value to send, or None to drop the header."""
+    if not path.startswith(SESSION_PREFIX):
+        return value
+    lname = name.lower()
+    if lname == "x-frame-options":
+        return None
+    if lname == "content-security-policy":
+        return value.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+    return value
+
+
+_VIEW_CSS = """
+html,body{margin:0;height:100%;background:#0f1115;color:#e8e6e1;
+  font:14px/1.4 system-ui,sans-serif}
+body{display:flex;flex-direction:column}
+.bar{display:flex;gap:1rem;align-items:center;padding:.45rem .9rem;
+  border-bottom:1px solid #2a2e36;flex:none}
+.bar a{color:#8fc7ff;text-decoration:none}
+.bar a:hover{text-decoration:underline}
+.bar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:#9aa4b2}
+iframe{flex:1;border:0;width:100%;background:#fff}
+"""
+
+# The frame is same-origin with this page (both come through this server), so
+# the bar can read the surface's own title, and follow it when a link inside
+# the surface moves the frame to another surface.
+_VIEW_JS = """
+const f=document.getElementById('surface'),t=document.getElementById('title'),
+  alone=document.getElementById('alone');
+f.addEventListener('load',()=>{try{const d=f.contentDocument;
+  if(d&&d.title){t.textContent=d.title;document.title=d.title+' — Cadre';}
+  const p=f.contentWindow.location.pathname;
+  if(p.startsWith('/session/')){alone.href=p;
+    history.replaceState(null,'','/view/'+p.slice(9));}
+}catch(e){}});
+"""
+
+
+def render_view(key: str) -> str:
+    """The fleet's frame around one surface: a bar with the way back, and the
+    surface itself filling the rest of the window."""
+    src = SESSION_PREFIX + escape(key)
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>Surface — Cadre</title><style>{_VIEW_CSS}</style></head><body>'
+            '<nav class="bar"><a href="/">← fleet</a>'
+            '<span class="title" id="title"></span>'
+            f'<a id="alone" href="{src}" target="_blank" rel="noopener">open alone ↗</a></nav>'
+            f'<iframe id="surface" src="{src}" title="surface"></iframe>'
+            f'<script>{_VIEW_JS}</script></body></html>')
 
 
 # --------------------------------------------------------------------- model
@@ -378,7 +458,7 @@ def render_dead_letter(name: str, rec: dict) -> str:
     title = escape(str(sess.get("title") or Path(str(rec.get("artifact") or name)).name))
     back = '<p class="meta"><a href="/">← fleet</a>'
     if sess.get("path"):
-        back += f' · <a href="{escape(str(sess["path"]))}">open surface</a>'
+        back += f' · <a href="{escape(view_href(sess["path"]))}">open surface</a>'
     back += "</p>"
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -440,7 +520,7 @@ def render_history(sf: dict, batches: list[dict]) -> str:
     title = escape(str(sf.get("title") or sf.get("task") or "surface"))
     back = '<p class="meta"><a href="/">← fleet</a>'
     if sf.get("path"):
-        back += f' · <a href="{escape(str(sf["path"]))}">open surface</a>'
+        back += f' · <a href="{escape(view_href(sf["path"]))}">open surface</a>'
     back += "</p>"
     body = "".join(rows) or '<section class="card"><p class="empty">No feedback sent on this surface yet.</p></section>'
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -675,6 +755,8 @@ h1{font-family:var(--serif);font-weight:600;font-size:1.55rem;margin:0;
  letter-spacing:.2px}h1 .dot{color:var(--accent)}
 header .updated{margin-left:auto;color:var(--label);font-size:.74rem;
  font-family:var(--mono)}
+header a.costs{color:var(--accent);font-size:.74rem;font-family:var(--mono);
+ text-decoration:none}header a.costs:hover{text-decoration:underline}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
  padding:.9rem 1.1rem;margin-bottom:.9rem}
 .card h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;
@@ -1055,7 +1137,7 @@ def _links_html(view: dict) -> str:
     bits = []
     for sf in view["surfaces"]:
         label = sf["kind"].replace("_", " ")
-        bits.append(f'<a href="{escape(sf["path"])}">surface: {escape(label)}</a>')
+        bits.append(f'<a href="{escape(view_href(sf["path"]))}">surface: {escape(label)}</a>')
         for name in sf.get("stranded") or []:
             bits.append(f'<a href="/stranded/{escape(name)}">stranded feedback</a>')
     for pr in view["prs"]:
@@ -1102,7 +1184,8 @@ def load_graph() -> tuple[list, dict, dict]:
 def render_fleet(snap: dict, now: float | None = None,
                  statuses: dict | None = None, graph: tuple | None = None,
                  projs: dict | None = None, finished: dict | None = None,
-                 starting: dict | None = None, doing: dict | None = None) -> str:
+                 starting: dict | None = None, doing: dict | None = None,
+                 spent: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1115,10 +1198,13 @@ def render_fleet(snap: dict, now: float | None = None,
     has been launched but has no page yet, which must still be visible or a
     launch looks like it did nothing and gets repeated. `doing` is
     live_turns(): what each in-flight turn is actually doing, which replaces a
-    bare "working" badge wherever it has something to say."""
+    bare "working" badge wherever it has something to say. `spent` is
+    costs_mod.per_task(): dollars each task's finished turns have cost, shown
+    on its row."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     doing = doing or {}
+    spent = spent or {}
     records, holders, pages = graph or ([], {}, {})
     snap = {**snap, "surfaces": conv_mod.collapse(snap.get("surfaces") or [],
                                                   records, holders, pages)}
@@ -1151,6 +1237,11 @@ def render_fleet(snap: dict, now: float | None = None,
         if upd:
             bits += f'<span class="badge">upd {escape(_rel_time(upd, now))}</span>'
         return bits
+
+    def _spent(sf) -> str:
+        usd = spent.get(str(sf.get("task") or ""))
+        return (f'<span class="badge" title="what this task\'s finished turns cost">'
+                f'{escape(costs_mod.usd(usd))}</span>' if usd else "")
 
     def _history_link(sf) -> str:
         n = len(journal_batches(str(sf.get("artifact") or "")))
@@ -1188,9 +1279,9 @@ def render_fleet(snap: dict, now: float | None = None,
                 # the whole row is the click target — a 12px "open surface"
                 # link under each row made every open a precision task
                 row = (f'<div class="rowline">'
-                       f'<a class="row" href="{escape(str(sf["path"]))}">'
+                       f'<a class="row" href="{escape(view_href(sf["path"]))}">'
                        f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
-                       f'<span class="go">open →</span></a>'
+                       f'{_spent(sf)}<span class="go">open →</span></a>'
                        f'{_history_link(sf)}{_page_link(sf)}</div>')
             elif sf.get("cwd"):
                 # A dispatch target: clicking prefills the task box's cwd.
@@ -1273,8 +1364,8 @@ def render_fleet(snap: dict, now: float | None = None,
     def _orow(sf, label):
         when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
         return (f'<div class="rowline">'
-                f'<a class="row" href="{escape(str(sf.get("path")))}">'
-                f'<span class="title">{escape(label)}</span>{_live(sf)}{when}'
+                f'<a class="row" href="{escape(view_href(sf.get("path")))}">'
+                f'<span class="title">{escape(label)}</span>{_live(sf)}{when}{_spent(sf)}'
                 f'<span class="go">open →</span></a>'
                 f'{_history_link(sf)}{_page_link(sf)}</div>')
 
@@ -1291,13 +1382,37 @@ def render_fleet(snap: dict, now: float | None = None,
         rows = "".join(_story_html(s, now) for s in p["stories"])
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(p["repo"])}</span>{flag}</h2>{rows}</section>')
-    return "".join(out)
+    return code_line(snap, now=now) + "".join(out)
+
+
+def code_line(snap: dict, own=None, now: float | None = None) -> str:
+    """One line naming whichever process runs older code than the folder
+    holds: the daemon (its snapshot's `code`) or this page server (`own`, its
+    startup stamp). Empty while both are current."""
+    own = _CODE if own is None else own
+    behind = []
+    code = snap.get("code") or {}
+    if code.get("running") and code.get("tree") and code["running"] != code["tree"]:
+        behind.append(("the daemon", code.get("since"), code.get("head")))
+    if own.stale():
+        behind.append(("the fleet page", own.since, own.head))
+    if not behind:
+        return ""
+    who = " and ".join(
+        f'{name} (started {escape(_rel_time(since or 0, now))}'
+        + (f' on {escape(head)}' if head else "") + ")"
+        for name, since, head in behind)
+    verb, them = ("is", "it") if len(behind) == 1 else ("are", "them")
+    return ('<section class="card stale"><p><span class="badge needs">stale code</span> '
+            f'{who[0].upper()}{who[1:]} {verb} running code older than this folder; '
+            f'edits wait until you restart {them}.</p></section>')
 
 
 def render_home(snap: dict, notice: str = "", now: float | None = None,
                 statuses: dict | None = None, graph: tuple | None = None,
                 projs: dict | None = None, finished: dict | None = None,
-                starting: dict | None = None, doing: dict | None = None) -> str:
+                starting: dict | None = None, doing: dict | None = None,
+                spent: dict | None = None, week_usd: float | None = None) -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
     fragment is re-fetched when the fleet stream reports a change."""
     now = time.time() if now is None else now
@@ -1313,6 +1428,8 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<style>{_CSS}</style></head><body><div class="wrap">'
         '<header><h1>Cadre<span class="dot">.</span> agent fleet</h1>'
         f'<span class="updated">snapshot {escape(str(stamp))}</span>'
+        + (f'<a class="costs" href="{COSTS_PATH}">{escape(costs_mod.usd(week_usd))} '
+           'in 7 days</a>' if week_usd is not None else "") +
         '<span id="live" class="live">connecting…</span></header>'
         f'{banner}'
         # No fleet-wide task box: work belongs to a project, and the box asked
@@ -1323,9 +1440,10 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
         '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing, spent=spent)}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
+        f'<a href="{COSTS_PATH}">what each run cost</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
         f'</div><script>{_PAGE_JS}</script></body></html>')
 
@@ -1478,6 +1596,75 @@ def render_library(entries: list[dict], scanned: list[str]) -> str:
         f'{"".join(cards)}</div></body></html>')
 
 
+def load_costs(data_dir: Path | None = None) -> tuple[list[dict], dict]:
+    """(every finished turn, {task id: project}) — read off the daemon's own
+    history log and registry, the same read-only way live_turns() does."""
+    d = Path(DATA_DIR if data_dir is None else data_dir)
+    try:
+        reg = json.loads((d / "registry.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        reg = {}
+    if not isinstance(reg, dict):
+        reg = {}
+    projs = projects_mod.load(d)
+    return costs_mod.read(d / "history.jsonl"), costs_mod.task_projects(reg, projs)
+
+
+def _cost_rows(buckets: list[dict], label, limit: int | None = None) -> str:
+    usd = costs_mod.usd
+    rows = []
+    for b in buckets[:limit]:
+        avg = b["usd"] / max(1, b["runs"] - b["unpriced"])
+        unpriced = f' · {b["unpriced"]} unpriced' if b["unpriced"] else ""
+        rows.append(f'<tr><td class="desc">{label(b)}</td>'
+                    f'<td class="inv">{usd(b["usd"])}</td>'
+                    f'<td class="scope">{b["runs"]} turn{"s" if b["runs"] != 1 else ""}'
+                    f'{unpriced} · {usd(avg)} avg</td></tr>')
+    return "".join(rows)
+
+
+def render_costs(summary: dict, now: float | None = None) -> str:
+    """Where the money went: totals, then the same spend by node (the kind of
+    work — a dialogue turn, implement, a pipeline stage), by project and by
+    task, then the newest turns one by one."""
+    now = time.time() if now is None else now
+    usd = costs_mod.usd
+    s = summary
+    unpriced = (f' {s["unpriced"]} turn{"s" if s["unpriced"] != 1 else ""} reported no cost '
+                '(lost, timed out, or paused on a usage limit) and are left out of the sums.'
+                if s["unpriced"] else "")
+    head = (f'<section class="card"><h2>Spent</h2><p><b>{usd(s["total_usd"])}</b> across '
+            f'{s["priced"]} priced turns · <b>{usd(s["last_7d_usd"])}</b> in the last 7 days · '
+            f'<b>{usd(s["last_24h_usd"])}</b> in the last 24 hours.</p>'
+            f'<p class="empty">A turn\'s cost is what Claude Code reported when it ended, so a '
+            f'turn still running shows up here once it finishes.{unpriced}</p></section>')
+    node = _cost_rows(s["by_node"], lambda b: escape(b["key"]))
+    proj = _cost_rows(s["by_project"], lambda b: escape(b["key"]))
+    task = _cost_rows(s["by_task"], lambda b: (
+        f'{escape(_task_label(b["key"]))} '
+        f'<span class="scope">{escape(b.get("project") or "")}</span>'), limit=40)
+    recent = "".join(
+        f'<tr><td class="desc">{escape(_task_label(str(e.get("story") or "")))}</td>'
+        f'<td class="inv">{usd(c) if (c := costs_mod.cost_of(e)) is not None else "—"}</td>'
+        f'<td class="scope">{escape(str(e.get("stage") or ""))} · '
+        f'{escape(str(e.get("model") or ""))} · {round(float(e.get("seconds") or 0) / 60)} min · '
+        f'{escape(_rel_time(float(e.get("ended") or 0), now))}'
+        f'{"" if e.get("ok") else " · failed"}</td></tr>' for e in s["recent"])
+
+    def card(title, body):
+        return (f'<section class="card"><h2>{title}</h2><table class="lib">{body}</table></section>'
+                if body else "")
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>Cadre — costs</title><style>{_CSS}</style></head>'
+        '<body><div class="wrap"><header><h1>Costs<span class="dot">.</span></h1></header>'
+        f'<p class="meta"><a href="/">← fleet</a> · <a href="{COSTS_PATH}.json">as JSON</a></p>'
+        f'{head}{card("By node", node)}{card("By project", proj)}'
+        f'{card("By task · most expensive first", task)}{card("Newest turns", recent)}'
+        '</div></body></html>')
+
+
 def starting_rows(starting: list[dict], now: float,
                   doing: dict | None = None) -> str:
     """Launched, no page yet. Says which of the three it is — waiting for a
@@ -1614,7 +1801,7 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
                 f'</form><script>{_PICKER_JS}</script>')
     launch = f'<section class="card" id="launch"><h2>new work</h2>{form}</section>'
     done = "".join(
-        f'<div class="rowline"><a class="row" href="/session/{escape(str(m["key"]))}">'
+        f'<div class="rowline"><a class="row" href="{VIEW_PATH}{escape(str(m["key"]))}">'
         f'<span class="title">{escape(str(m.get("title") or m.get("task") or m["key"]))}</span>'
         f'<span class="badge">{escape(_rel_time(m.get("opened") or 0, now))}</span>'
         f'<span class="go">open →</span></a></div>' for m in closed[:100])
@@ -1679,7 +1866,7 @@ def render_found(query: str, hits: list[dict], now: float | None = None) -> str:
         proj = f'<span class="badge">{escape(h["project"])}</span>' if h["project"] else ""
         when = (f'<span class="badge">{escape(_rel_time(h["updated"], now))}</span>'
                 if h["updated"] else "")
-        rows.append(f'<div class="rowline"><a class="row" href="{escape(h["path"])}">'
+        rows.append(f'<div class="rowline"><a class="row" href="{escape(view_href(h["path"]))}">'
                     f'<span class="title">{escape(h["title"])}</span>{chip}{proj}{when}'
                     f'<span class="go">open →</span></a>'
                     f'<a class="hist" href="/page/{escape(h["key"])}">manage</a></div>')
@@ -1733,7 +1920,7 @@ def render_page(key: str, row: dict, projects: list[str], candidates: list[dict]
                "opened": row.get("opened") or 0}] + list(row.get("earlier") or [])
     newest = '<span class="chip open">newest</span>'
     items = "".join(
-        f'<div class="rowline"><a class="row" href="/session/{escape(r["key"])}">'
+        f'<div class="rowline"><a class="row" href="{VIEW_PATH}{escape(r["key"])}">'
         f'<span class="title">{escape(str(r["title"]))}</span>'
         f'{newest if i == 0 else ""}'
         f'<span class="badge">{escape(_rel_time(r.get("opened") or 0, now))}</span>'
@@ -1967,9 +2154,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(502, "review-surface is not running")
             return
         self.send_response(resp.status)
+        upstream_path = self.path.split("?", 1)[0]
         for k, v in resp.headers.items():
             if k.lower() not in HOP_HEADERS:
-                self.send_header(k, v)
+                v = framable_header(upstream_path, k, v)
+                if v is not None:
+                    self.send_header(k, v)
         # 1xx/204/304 (and HEAD) responses MUST NOT carry a body — chunked
         # framing on them puts stray bytes on the wire and the browser reports
         # ERR_INVALID_HTTP_RESPONSE on the next request (observed).
@@ -1985,7 +2175,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             while True:
-                chunk = resp.read(8192)
+                # read1, not read: read(8192) waits for 8 KB, so a server-sent
+                # event stream (review-surface's live reload, agent replies,
+                # presence) sat in this buffer and never reached the browser.
+                chunk = resp.read1(8192)
                 if not chunk:
                     break
                 if chunked:
@@ -2024,15 +2217,18 @@ class Handler(BaseHTTPRequestHandler):
         finished = {pid: len(rows) for pid, rows in closed_pages(projs).items()}
         starting = starting_tasks(projs)
         doing = live_turns()
+        turns, owners = load_costs()
+        spent = costs_mod.per_task(turns)
         if query.get("partial"):
             self._send_html(render_fleet(snap, statuses=statuses, graph=graph,
                                          projs=projs, finished=finished,
-                                         starting=starting, doing=doing))
+                                         starting=starting, doing=doing, spent=spent))
             return
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph,
                                     projs=projs, finished=finished, starting=starting,
-                                    doing=doing))
+                                    doing=doing, spent=spent,
+                                    week_usd=costs_mod.summarize(turns, owners)["last_7d_usd"]))
 
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
@@ -2051,7 +2247,8 @@ class Handler(BaseHTTPRequestHandler):
         doing = live_turns()
         rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
                                  projs={**mine, p["id"]: {**p, "group": None, "archived": False}},
-                                 doing=doing) if rows else ""
+                                 doing=doing, spent=costs_mod.per_task(load_costs()[0])
+                                 ) if rows else ""
         closed_all = closed_pages(projs)
         closed = sorted((m for k in mine for m in closed_all.get(k, [])),
                         key=lambda m: -(m.get("opened") or 0))
@@ -2063,6 +2260,27 @@ class Handler(BaseHTTPRequestHandler):
         self._send_html(render_project(p, projs, rows_html, closed, entries,
                                        notice=(query.get("notice") or [""])[0],
                                        starting=starting, doing=doing))
+
+    def _serve_view(self, key: str):
+        key = urllib.parse.unquote(key).strip("/")
+        if not SESSION_KEY.fullmatch(key):
+            self.send_error(404, "no such surface")
+            return
+        self._send_html(render_view(key))
+
+    def _serve_costs(self, as_json: bool):
+        summary = costs_mod.summarize(*load_costs())
+        if not as_json:
+            self._send_html(render_costs(summary))
+            return
+        body = json.dumps(summary).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _serve_library(self):
         dirs = [d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()]
@@ -2356,6 +2574,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == LIBRARY_PATH and self.command in ("GET", "HEAD"):
             self._serve_library()
             return
+        if path in (COSTS_PATH, COSTS_PATH + ".json") and self.command in ("GET", "HEAD"):
+            self._serve_costs(path.endswith(".json"))
+            return
         if path == STREAM_PATH and self.command == "GET":
             self._serve_stream()
             return
@@ -2367,6 +2588,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/page/") and self.command in ("GET", "HEAD"):
             self._serve_page(urllib.parse.unquote(path.rsplit("/", 1)[-1]), query)
+            return
+        if path.startswith(VIEW_PATH) and self.command in ("GET", "HEAD"):
+            self._serve_view(path[len(VIEW_PATH):])
             return
         if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
             self._serve_home(query)

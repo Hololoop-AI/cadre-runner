@@ -529,6 +529,32 @@ def test_a_task_turn_runs_in_the_ask_s_cwd_with_no_worktree_and_a_recorded_sessi
     assert reg.data["stories"] == {}, "a task must never become a story row"
 
 
+def test_a_task_turn_cannot_push_to_github_but_still_fetches_from_it():
+    """A dialogue turn holds the driver's credentials in the driver's tree;
+    what reaches GitHub is the driver's call. The spawn env rewrites every
+    GitHub push URL, https or ssh, to one no transport serves."""
+    import subprocess
+    d, work = scratch(), scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, cwd=str(work))
+    calls = []
+    drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
+    env = {**os.environ, **calls[0]["env"]}
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(work), *args], env=env,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    git("init", "-q")
+    git("remote", "add", "origin", "https://github.com/o/r.git")
+    git("remote", "add", "ssh", "git@github.com:o/r.git")
+    assert git("remote", "get-url", "--push", "origin") == "cadre-no-push://blocked/o/r.git"
+    assert git("remote", "get-url", "--push", "ssh") == "cadre-no-push://blocked/o/r.git"
+    # fetching is untouched
+    assert git("remote", "get-url", "origin") == "https://github.com/o/r.git"
+
+
 def test_a_feedback_turn_resumes_the_recorded_session_at_round_two():
     d, work = scratch(), scratch()
     cfg, reg = FakeCfg(d), FakeReg()

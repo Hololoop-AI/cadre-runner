@@ -27,6 +27,9 @@ LOG_TAIL_BYTES = 16_384
 LOG_TAIL_LINES = 15
 HISTORY_TAIL_BYTES = 32_768
 HISTORY_SHOWN = 25
+# The daemon's codestamp.Stamp, set once at startup by `run`; every snapshot
+# then says whether the code it runs is still the code on disk.
+CODE = None
 
 
 def status_dir(cfg) -> Path:
@@ -79,6 +82,8 @@ def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) ->
             "surfaces": orphans,
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
+        if CODE is not None:
+            snap["code"] = CODE.record()
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".status-", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False)

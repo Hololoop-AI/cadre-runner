@@ -407,7 +407,7 @@ def test_registered_externals_group_under_their_project():
 
     html = statusd.render_fleet(snap, now=300.0)
     assert "hitl" in html and "design orchestrator" in html
-    assert 'href="/session/d2"' in html
+    assert 'href="/view/d2"' in html
     # the page-less orchestrator row renders without a dead link
     assert 'href=""' not in html
     assert "No stories in flight" not in html
@@ -683,7 +683,7 @@ def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
             code, body = srv.get("/stranded/20260921-1-d7.json")
             assert code == 200 and long_answer in body       # nothing truncated
             assert "Which grouping?" in body and "no PR to mirror to" in body
-            assert 'href="/session/d7"' in body
+            assert 'href="/view/d7"' in body
             for bad in ("/stranded/..%2Fsecret.json", "/stranded/nope.json",
                         "/stranded/.hidden.json", "/stranded/x.txt"):
                 try:
@@ -694,3 +694,44 @@ def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
         finally:
             srv.close()
             statusd.STRANDED_DIR = keep
+
+
+# ------------------------------------------------------------- surface view
+# A surface opens inside the fleet's frame, with the way back in the frame's
+# bar. Opening review-surface's page as the whole tab left only the browser's
+# back button.
+
+def test_session_links_point_at_the_framed_view():
+    assert statusd.view_href("/session/k1") == "/view/k1"
+    assert statusd.view_href("/page/k1") == "/page/k1"      # not a surface
+    assert statusd.view_href(None) == ""
+
+
+def test_view_frames_the_session_under_a_way_back():
+    with tempfile.TemporaryDirectory() as root:
+        srv = _Server(Path(root) / "status")
+        try:
+            code, body = srv.get("/view/ef6c7a101f9b55b3")
+            assert code == 200
+            assert '<a href="/">← fleet</a>' in body
+            assert '<iframe id="surface" src="/session/ef6c7a101f9b55b3"' in body
+            assert 'href="/session/ef6c7a101f9b55b3" target="_blank"' in body
+            for bad in ("/view/..%2Fetc", "/view/a%22b", "/view/"):
+                try:
+                    srv.get(bad)
+                    raise AssertionError(f"{bad} was served")
+                except urllib.error.HTTPError as e:
+                    assert e.code == 404
+        finally:
+            srv.close()
+
+
+def test_proxy_lets_only_the_fleet_frame_a_session():
+    deny = "frame-ancestors 'none'"
+    assert statusd.framable_header("/session/k", "X-Frame-Options", "DENY") is None
+    assert statusd.framable_header(
+        "/session/k", "Content-Security-Policy", deny) == "frame-ancestors 'self'"
+    # every other route keeps review-surface's headers untouched
+    assert statusd.framable_header("/api/k/prompts", "X-Frame-Options", "DENY") == "DENY"
+    assert statusd.framable_header("/artifact/k", "Content-Security-Policy", deny) == deny
+    assert statusd.framable_header("/session/k", "Content-Type", "text/html") == "text/html"
