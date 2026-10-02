@@ -998,6 +998,20 @@ def _surface_env(cfg, stage, slug, pr=None, page=None) -> dict:
     return {"CADRE_SURFACE_OUT": str(path)} if path else {}
 
 
+# A dialogue turn runs in the driver's own tree with the driver's own git
+# credentials, and nothing it is asked for is a push: what reaches GitHub is
+# the driver's call. Git reads these as config, so every push to GitHub, by
+# https or ssh, resolves to a URL no transport serves and fails before it
+# connects. Fetch and pull are untouched (pushInsteadOf rewrites pushes only).
+NO_PUSH_ENV = {
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "url.cadre-no-push://blocked/.pushInsteadOf",
+    "GIT_CONFIG_VALUE_0": "https://github.com/",
+    "GIT_CONFIG_KEY_1": "url.cadre-no-push://blocked/.pushInsteadOf",
+    "GIT_CONFIG_VALUE_1": "git@github.com:",
+}
+
+
 def _run_task(cfg, reg, task_id, action, skip_cap=False):
     """Spawn one turn of a dialogue (workflow #3), in the driver's own tree.
 
@@ -1060,7 +1074,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          **({"add_dirs": action["add_dirs"]} if action.get("add_dirs") else {}),
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
-                                    "CADRE_RUN_ID": rid,
+                                    "CADRE_RUN_ID": rid, **NO_PUSH_ENV,
                                     # the task's page, whichever node a handoff
                                     # handed it to
                                     **_surface_env(cfg, tasks_mod.NODE, task_id,
