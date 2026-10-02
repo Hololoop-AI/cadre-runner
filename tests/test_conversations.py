@@ -51,7 +51,7 @@ def test_a_superseded_page_and_its_round_render_as_one_row_under_the_project():
     html = statusd.render_fleet({"surfaces": _discussion()}, now=300.0,
                                 graph=(SUPERSEDES, {}, {}))
     assert html.count('class="rowline"') == 1
-    assert f'href="/session/{ROUND}"' in html and f'href="/session/{ORIG}"' not in html
+    assert f'href="/view/{ROUND}"' in html and f'href="/view/{ORIG}"' not in html
     assert f'href="/page/{ROUND}">1 earlier round<' in html
     assert '<span class="repo">tasks</span>' not in html
 
@@ -260,15 +260,15 @@ def test_home_folds_the_conversation_and_find_reaches_the_earlier_round():
         try:
             statusd.conv_mod.append_link(statusd.PANEL_LINKS, "supersedes", ROUND, ORIG)
             home = env.get("/")
-            assert home.count(f'href="/session/{ROUND}"') == 1
-            assert f'href="/session/{ORIG}"' not in home
+            assert home.count(f'href="/view/{ROUND}"') == 1
+            assert f'href="/view/{ORIG}"' not in home
             assert f'EventSource(\'{statusd.STREAM_PATH}\')' in home
             assert "setInterval(tick" not in home and "5 s" not in home
             found = env.get("/find?q=hitl-d4")
-            assert f'href="/session/{ORIG}"' in found and "replaced" in found
+            assert f'href="/view/{ORIG}"' in found and "replaced" in found
             page = env.get(f"/page/{ORIG}")                 # an earlier round's page
             assert "the conversation continues in the newest one" in page
-            assert f'href="/session/{ROUND}"' in page and f'href="/session/{ORIG}"' in page
+            assert f'href="/view/{ROUND}"' in page and f'href="/view/{ORIG}"' in page
         finally:
             env.close()
 
