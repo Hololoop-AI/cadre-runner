@@ -54,6 +54,66 @@ time is minimized. When the goals conflict, cut detail — never clarity.
 - Two or three hunks that carry the risk beat a complete listing every time. Link the PR
   for completeness; the page is the tour, not the archive.
 
+## Showing structure — diagrams are whiteboards
+
+An architecture, a flow, a state machine or a sequence goes in a Mermaid diagram,
+never in box-drawing text inside `<pre>`. The page server turns every rendered
+diagram in a `<div class="mermaid">` into an editable Excalidraw whiteboard: the
+driver clicks it, redraws the part they disagree with, and the edit comes back to
+you as a `whiteboard` feedback item with a summary. Apply it by changing the
+Mermaid source, never by writing the scene back. Text art cannot be drawn on, so
+it silently takes that answer channel away.
+
+The page must render the diagram itself; the server does not load Mermaid. Put
+this once, before `</body>`:
+
+```html
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+await mermaid.run({ querySelector: ".mermaid" });
+</script>
+```
+
+Flowchart, sequence, class, ER and state diagrams become editable shapes; other
+types become an image the driver can draw on. Keep one diagram to one idea.
+
+## Showing a UI change — use it, record it, link it
+
+When the work changes anything a person sees or clicks, the page is a demo, not a
+description. The driver should not have to imagine the feature or trust that it works:
+your team did the work, and this page is where you show it.
+
+The evidence stacks; a richer kind never replaces a plainer one. Every UI change gets
+screenshots. A flow that spans screens or moves on its own adds a video, and keeps
+the screenshots. A change whose feel is the question adds a live link the driver can
+click through, and keeps the screenshots and the video, because the live copy stops
+when the page is ruled on and the stills are what remain.
+
+1. **Use it yourself, in a real browser.** Drive the feature with Playwright, doing
+   exactly what the driver would do: open the page, click, type, send, go back. If
+   the change needs a running service you must not restart, run a scratch copy (its
+   own data directory, port and daemon) rather than skipping this step. "Tests pass"
+   is not evidence that a screen works.
+2. **Show every step with a screenshot**, in the order the driver would meet them,
+   each captioned with what it proves ("the tab updated without a reload"). Show
+   the before and after for anything that moved.
+3. **Record the full flow as a video** when it involves more than one screen, or
+   something that happens on its own (a live update, an agent reply): open a
+   Playwright context with `recordVideo`, run the flow, then close the context so
+   the file is written. Embed it with `<video controls src="…">`.
+4. **Put the media next to the page, and link to it by relative path.** Review
+   Surface serves files beside the artifact: `media/01-home.png` resolves, but
+   `/media/01-home.png` does not. Keep one folder per page, named after it.
+5. **Link the exact working page**, as an absolute URL the driver can click
+   (`http://127.0.0.1:8181/costs`), and say whether it is live now or only after a
+   restart or deploy. A link to something not yet running must say so.
+6. **Report what broke while you used it**, even when you fixed it. A bug the
+   recording surfaced belongs on the page in words, with the fix, because the
+   recording of the fixed flow does not show that it ever failed.
+7. **Clean up.** Stop the scratch services and end the scratch review sessions you
+   opened. List anything you left running, and why.
+
 ## Linking to another surface
 
 A page is read inside the platform, served at `/session/<key>` — never opened as a file
