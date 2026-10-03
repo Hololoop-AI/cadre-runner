@@ -97,7 +97,10 @@ when the page is ruled on and the stills are what remain.
    is not evidence that a screen works.
 2. **Show every step with a screenshot**, in the order the driver would meet them,
    each captioned with what it proves ("the tab updated without a reload"). Show
-   the before and after for anything that moved.
+   the before and after for anything that moved. Headless Chromium hides
+   scrollbars, so launch it with `ignoreDefaultArgs: ['--hide-scrollbars']`:
+   otherwise a white scrollbar or a page that scrolls sideways looks fine to
+   you and broken to the driver.
 3. **Record the full flow as a video** when it involves more than one screen, or
    something that happens on its own (a live update, an agent reply): open a
    Playwright context with `recordVideo`, run the flow, then close the context so

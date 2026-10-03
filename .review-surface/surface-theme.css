@@ -5,6 +5,9 @@
    through statusd. Swap or edit this file to retheme every surface at once. */
 
 :root {
+  /* Native scrollbars, the select's option list and form controls draw dark.
+     Without it Chrome paints them white across the bottom of a dark page. */
+  color-scheme: dark;
   --bg: #0f1115;
   --panel: #12161e;
   --panel-2: #171c26;
@@ -23,6 +26,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+html { scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) var(--bg); }
 body {
   background: var(--bg);
   color: var(--text);
@@ -32,10 +36,16 @@ body {
 }
 body > *, section { max-width: 880px; margin-left: auto; margin-right: auto; }
 /* A screenshot or recording keeps its own pixel size otherwise, and a 1280px
-   capture breaks out of the column and the card around it. */
-img, video { max-width: 100%; height: auto; }
-/* The verdict form's hand-to select sizes to its longest option, a sentence. */
-select { max-width: 100%; }
+   capture breaks out of the column and the card around it. Block, so its
+   edges line up with the tables, code and details around it. */
+img, video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
 
 h1 {
   font-family: var(--serif);
@@ -179,6 +189,30 @@ textarea, input[type="text"] {
   font: inherit;
 }
 textarea { min-height: 72px; }
+select {
+  max-width: 100%;
+  appearance: none;
+  background-color: var(--panel-2);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 19px) 55%, calc(100% - 14px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 36px 8px 12px;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+select:hover, select:focus-visible { border-color: var(--accent); outline: none; }
+option { background: var(--panel); color: var(--text); }
+/* The verdict form's hand-to select: its options are whole sentences, so it
+   takes its own line at the label's full width instead of running past it. */
+label.handto select { display: block; width: 100%; margin-top: 8px; }
 button, input[type="submit"] {
   margin-top: 10px;
   font: 600 13px/1 var(--sans);
