@@ -3,9 +3,9 @@
 to Review Surface.
 
 Replaces the bare `python -m http.server` in cadre-status.service, same port,
-per cadre-context decision 2026-08-26-surface-as-driver-channel: ONE exposed
-port on the tailnet; review-surface keeps its loopback default and every
-surface session is reached through this proxy.
+per the 2026-08-26 driver decision that Review Surface is the driver channel:
+ONE exposed port on the tailnet; review-surface keeps its loopback default and
+every surface session is reached through this proxy.
 
 Routing rule: `/` is the fleet home page — server-rendered here from the
 daemon's status.json snapshot (project -> story -> stage sessions, sorted so

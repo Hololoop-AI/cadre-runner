@@ -205,7 +205,7 @@
 
     {
       "name": "risk-high-to-triage",
-      "_why": "_try_automerge's risk-high branch (cadre-context 2026-08-23: risk gates merge, confidence ranks). A hold is a DECISION to make, not a PR to read, so a second independent assessor audits the grade and authors the driver's brief. gh_watch stamps the grade off the PR body; the merge block itself stays in automerge.decide.",
+      "_why": "_try_automerge's risk-high branch (driver decision 2026-08-23: risk gates merge, confidence ranks). A hold is a DECISION to make, not a PR to read, so a second independent assessor audits the grade and authors the driver's brief. gh_watch stamps the grade off the PR body; the merge block itself stays in automerge.decide.",
       "trigger": {"namespace": "cadre", "topic": "github", "kind": "signal",
                   "where": [{"op": "payload_eq", "field": "risk", "value": "high"},
                             {"op": "payload_eq", "field": "state", "value": "open"}]},

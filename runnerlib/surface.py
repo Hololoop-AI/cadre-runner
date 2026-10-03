@@ -1,5 +1,6 @@
-"""Review Surface as the driver channel (cadre-context decision
-2026-08-26-surface-as-driver-channel).
+"""Review Surface as the driver channel (driver decision 2026-08-26). GitHub
+PRs stay live alongside it, because teammates in corporate environments will
+not run Cadre's surface.
 
 The daemon authors deterministic HTML artifacts (no LLM, no tokens) at each
 driver touchpoint and opens them as Review Surface sessions. Nothing here
@@ -222,9 +223,10 @@ def author_question(cfg, msg: dict) -> Path:
 
 def author_spec_review(cfg, slug: str, pr: int, detail: dict,
                        spec_files: list[dict]) -> Path:
-    """The unified spec gate (cadre-context 2026-08-26-unified-spec): one
-    artifact carrying the plan narrative and every spec document on the
-    planning branch, each annotatable in place, with the approval verdict.
+    """The unified spec gate (driver decision 2026-08-26): one artifact
+    carrying the plan narrative and every spec document on the planning
+    branch, each annotatable in place, with the approval verdict. One human
+    gate instead of several: the driver annotates every part and approves once.
     Approve merges the planning PR; revise feeds annotations to the ordinary
     revise machinery. spec_files: [{path, text}]."""
     html_url = detail.get("html_url") or ""

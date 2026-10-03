@@ -1,5 +1,7 @@
-"""Signal logging: MLflow when available (the decided spine — see
-cadre-context decisions/2026-08-19-eval-stack-mlflow.md), JSONL always.
+"""Signal logging: MLflow when available (the decided spine, driver decision
+2026-08-19: it runs at the driver's workplace, so the stack ports there, and it
+has the least lock-in of the options with a tracking UI and an optimizer),
+JSONL always.
 The JSONL is the durable local record; MLflow is the queryable/optimizable
 view. Core stays importable without mlflow installed."""
 

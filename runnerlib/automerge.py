@@ -1,5 +1,8 @@
-"""Auto-merge policy: risk gates merge, confidence only ranks
-(cadre-context decisions/2026-08-23-risk-gates-merge-confidence-ranks.md).
+"""Auto-merge policy: risk gates merge, confidence only ranks (driver
+decision 2026-08-23). The old confidence gate stalled on minor, usually-correct
+decisions and cost more driver time than the defects it caught; risk asks how
+much damage there is if the change is wrong, judged by someone who did not
+write it.
 
 - A fresh reviewer assigns `Risk:` to the finished change: low/medium
   auto-merge (medium's concerns go to the audit queue), high holds for the
@@ -36,7 +39,7 @@ import re
 from .dispatcher import AGENT_MARKER
 
 CONFIDENCE_RE = re.compile(r"^\s*confidence:\s*(high|medium|low)\b", re.IGNORECASE | re.MULTILINE)
-# Risk gates merge; confidence only ranks (cadre-context decision 2026-08-23).
+# Risk gates merge; confidence only ranks (driver decision 2026-08-23).
 # Risk is assigned once, at the end, by a fresh reviewer — never the author.
 RISK_RE = re.compile(r"^\s*\**risk:\s*\**\s*(high|medium|low)\b", re.IGNORECASE | re.MULTILINE)
 

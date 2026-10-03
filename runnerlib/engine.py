@@ -10,26 +10,26 @@ There is no workflow file at runtime. The workflow IS the set of installed
 actions, and nodes are unaware of each other — a routine is just the set of
 actions someone installed together.
 
-Why each piece is the way it is (cadre-context/blackboard/decisions/):
+Why each piece is the way it is (driver decisions, by date):
 
-  2026-09-02-vocabulary-action-not-pipe
+  2026-09-02: vocabulary, action not pipe
       The fixed words: action · trigger · body · emitter · firing. "Action"
       never names the emitter alone.
 
-  2026-08-31-action-model-and-communication-types
+  2026-08-31: action model and communication types
       Three parts, with the body as the place for author logic (choose a
       target, run an agent or system). Emitters deliver: in-tray, a new
       event, an outbound call, or a human on HITL. Routing is per-action
       configuration, never a global rule.
 
-  2026-09-02-engine-calls-round3
+  2026-09-02: engine calls, round 3
       Trigger conditions may read the board's CURRENT STATE, not just the
       event that fired them (the "summon on a closed PR" lesson: the kind
       matched, the current state made it meaningless). Hence the
       `no_event_for_key` condition. Writes are type-checked by the board, so
       a malformed emitter fails at the write.
 
-  2026-09-02-engine-calls-round4
+  2026-09-02: engine calls, round 4
       The engine lives in the library so every consumer gets identical
       behaviour and one firing log. Loop-backs are not a special pattern:
       failure is a `signal: failed` event and triage is an ordinary action.

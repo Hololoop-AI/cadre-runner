@@ -7,20 +7,20 @@ which agent runtime a node uses. Nodes declare what they read and what they
 emit, but those declarations are informational only: the board is the
 coupling, and a node is never aware of any other node.
 
-Why each piece is the way it is (cadre-context/blackboard/decisions/):
+Why each piece is the way it is (driver decisions, by date):
 
-  2026-08-31-action-model-and-communication-types
+  2026-08-31: action model and communication types
       Third parties configure behaviour; shipped behaviours are ordinary
       configuration. A node definition is therefore config a human or an
       agent can hand to someone else, not code in this repo. Design rule in
       force: dead simple, easy to use, robust — not over-engineered.
 
-  2026-09-02-engine-calls-round4
+  2026-09-02: engine calls, round 4
       An action's body runs "a `claude -p` session, a Codex autonomous
       session, any agent or system". The body resolves a node from here and
       formats its command template; the runner executes it.
 
-  2026-08-31-v0-storage-partitioning-provenance
+  2026-08-31: v0 storage, partitioning and provenance
       Provenance matters: every prompt version records who produced it
       (`hand`, or the name of the agent/action that wrote it), and every
       spawn records the version id it actually ran, so a firing can be

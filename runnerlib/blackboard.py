@@ -7,20 +7,20 @@ connection, stdlib only. The Rust crate is the real implementation; this exists
 so the runner can exercise the semantics now and so the shape is settled before
 the engine is written against it.
 
-Why each piece is the way it is (cadre-context/blackboard/decisions/):
+Why each piece is the way it is (driver decisions, by date):
 
-  2026-08-31-v0-storage-partitioning-provenance
+  2026-08-31: v0 storage, partitioning and provenance
       SQLite as the reference store. Three partition fields — namespace (who
       owns the area) / topic (category) / key (the entity). Session id is
       provenance, not part of the key, and provenance comes from the session
       environment the daemon injects — never from a caller argument.
 
-  2026-08-31-action-model-and-communication-types
+  2026-08-31: action model and communication types
       The eight communication types (ask/answer is one pair) are the only
       kinds that may be written. `ask` carries the originating session id so
       the answer can resume that session. `command` is delivered consumed-once.
 
-  2026-09-02-engine-calls-round3
+  2026-09-02: engine calls, round 3
       Writes are type-checked at write time — header fields and each kind's
       declared payload fields — because free-form payloads surface their
       failures hours later inside an action instead of at the write. Claims
@@ -30,7 +30,7 @@ Why each piece is the way it is (cadre-context/blackboard/decisions/):
       drop or an infinite retry. The firing log is a separate table in the
       same store, so the board stays readable and one file is still one replay.
 
-  2026-09-02-engine-calls-round4
+  2026-09-02: engine calls, round 4
       Two ways to read, chosen by the reader: observed (a cursor per reader,
       nothing removed) and claimed (first reader takes it under a lease).
       Plus three header fields: key (targeted vs broadcast), visible_after
@@ -40,7 +40,7 @@ Why each piece is the way it is (cadre-context/blackboard/decisions/):
       in v0, so there is no deletion path here. Cycle safety comes from the
       firing log's causal depth cap, not a dedicated construct.
 
-  2026-09-02-vocabulary-action-not-pipe
+  2026-09-02: vocabulary, action not pipe
       Fixed words used throughout: event · header fields · payload · kind ·
       action (trigger, body, emitter) · firing, firing log · cursor · claim +
       lease · in-tray · observed read / claimed read.
