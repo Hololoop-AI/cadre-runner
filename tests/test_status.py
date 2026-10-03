@@ -726,6 +726,18 @@ def test_view_frames_the_session_under_a_way_back():
             srv.close()
 
 
+def test_view_declares_the_page_servers_icon():
+    # The frame is the tab's top document, so its icon is the tab's icon. Without one,
+    # Chrome asks for /favicon.ico and remembers the answer, a 404 included.
+    with tempfile.TemporaryDirectory() as root:
+        srv = _Server(Path(root) / "status")
+        try:
+            _, body = srv.get("/view/ef6c7a101f9b55b3")
+            assert '<link rel="icon" type="image/svg+xml" href="/favicon.ico?v=2">' in body
+        finally:
+            srv.close()
+
+
 def test_proxy_lets_only_the_fleet_frame_a_session():
     deny = "frame-ancestors 'none'"
     assert statusd.framable_header("/session/k", "X-Frame-Options", "DENY") is None

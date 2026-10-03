@@ -204,6 +204,10 @@ def render_view(key: str) -> str:
     src = SESSION_PREFIX + escape(key)
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            # The page server's ring mark. A fresh URL, because Chrome remembers an
+            # icon URL that once failed and stops asking for it: /favicon.ico 404ed
+            # here before the page server learned to serve it.
+            '<link rel="icon" type="image/svg+xml" href="/favicon.ico?v=2">'
             f'<title>Surface — Cadre</title><style>{_VIEW_CSS}</style></head><body>'
             '<nav class="bar"><a href="/">← fleet</a>'
             '<span class="title" id="title"></span>'
