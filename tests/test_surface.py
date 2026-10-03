@@ -661,7 +661,8 @@ def test_pages_the_daemon_collects_open_as_push(tmp_path, monkeypatch):
     """A page the daemon collects from the outbox is opened as push delivery,
     so the page server stops telling the driver "your agent is not
     listening" while the loop is running. An external page belongs to
-    whoever registered it, who may hold a real poll, so it stays poll."""
+    whoever registered it, who may hold a real poll, so its mode is left to
+    the session it already has."""
     from runnerlib import surface as sf
     seen = {}
     monkeypatch.setattr(sf, "_create_session_quietly",
@@ -674,7 +675,37 @@ def test_pages_the_daemon_collects_open_as_push(tmp_path, monkeypatch):
     for name, kind in (("task.html", "task"), ("ext.html", "external")):
         (tmp_path / name).write_text("<!doctype html>")
         sf.open_session(Cfg(), tmp_path / name, kind, lambda m: None)
-    assert seen == {"task.html": "push", "ext.html": "poll"}
+    assert seen == {"task.html": "push", "ext.html": None}
+
+
+def test_a_cold_start_still_opens_a_collected_page_as_push(tmp_path, monkeypatch):
+    """The CLI that starts the page server has no delivery option, so once it
+    has, the daemon re-opens the page over HTTP to make it push."""
+    from runnerlib import surface as sf
+    server = {"up": False}
+    opens = []
+
+    def quiet(p, delivery="push"):
+        if not server["up"]:
+            raise ConnectionRefusedError
+        opens.append(delivery)
+        return "/session/k1"
+
+    def cli(args, timeout=25):
+        server["up"] = True
+        return 'url: "http://127.0.0.1:4387/session/k1"'
+    monkeypatch.setattr(sf, "_create_session_quietly", quiet)
+    monkeypatch.setattr(sf, "_run_cli", cli)
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **kw: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    for name, kind in (("task.html", "task"), ("ext.html", "external")):
+        server["up"] = False
+        (tmp_path / name).write_text("<!doctype html>")
+        sf.open_session(Cfg(), tmp_path / name, kind, lambda m: None)
+    assert opens == ["push"]
+    assert sf.sessions(Cfg())[str(tmp_path / "task.html")]["path"] == "/session/k1"
 
 
 def test_the_quiet_open_asks_the_server_for_the_delivery_mode(monkeypatch):
@@ -696,3 +727,6 @@ def test_the_quiet_open_asks_the_server_for_the_delivery_mode(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert sf._create_session_quietly(Path("/tmp/x.html")) == "/session/abc"
     assert sent == {"file": "/tmp/x.html", "delivery": "push"}
+    sent.clear()
+    sf._create_session_quietly(Path("/tmp/x.html"), None)
+    assert sent == {"file": "/tmp/x.html"}
