@@ -296,17 +296,26 @@ def _run_cli(args: list[str], timeout: int = 25) -> str:
     return out
 
 
-def _create_session_quietly(path: Path) -> str:
+def _create_session_quietly(path: Path, delivery: str | None = "push") -> str:
     """POST the artifact straight to the running server and return the session
     URL path. No browser tab: the daemon works in the background, and the
     driver arrives from the fleet page when they choose — a tab stealing focus
     for every finished round was the complaint that made this the default.
     Raises when the server isn't up; the caller falls back to the CLI, which
-    spawns the server (and does open a tab — the cold-start case only)."""
+    spawns the server (and does open a tab — the cold-start case only).
+
+    `delivery="push"` tells the page server that nobody will hold a poll
+    open on this page: the daemon's tick collects sends from the outbox. The
+    page then stops telling the driver "your agent is not listening", which
+    was never true while the daemon ran. `None` leaves the mode out, so the
+    server keeps whatever the session already had."""
     import urllib.request
+    body = {"file": str(path)}
+    if delivery:
+        body["delivery"] = delivery
     req = urllib.request.Request(
         upstream() + "/api/sessions", method="POST",
-        data=json.dumps({"file": str(path)}).encode(),
+        data=json.dumps(body).encode(),
         headers={"content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
         url = json.loads(r.read()).get("url") or ""
@@ -317,11 +326,20 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
     """Open (or resume) the artifact and record the session. Never raises."""
     try:
         try:
-            url_path = _create_session_quietly(path)
+            # An external page belongs to whoever registered it, which may be
+            # an agent holding a real poll; only pages this daemon collects
+            # are push.
+            delivery = None if kind == "external" else "push"
+            url_path = _create_session_quietly(path, delivery)
         except Exception:
             out = _run_cli([str(path)])
             m = re.search(r'url: "([^"]+)"', out)
             url_path = re.sub(r"^https?://[^/]+", "", m.group(1)) if m else ""
+            if delivery:
+                try:
+                    url_path = _create_session_quietly(path, delivery) or url_path
+                except Exception:
+                    pass
         key = url_path.rsplit("/", 1)[-1] if url_path else ""
         s = sessions(cfg)
         # Where a page BELONGS outlives any one turn that opens it. Re-opening
