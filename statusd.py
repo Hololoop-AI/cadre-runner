@@ -52,6 +52,7 @@ from runnerlib import costs as costs_mod
 from runnerlib import library as library_mod
 from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
+from runnerlib import recent as recent_mod
 from runnerlib import surface as surface_mod
 from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
 
@@ -122,6 +123,7 @@ REPAIR_PATH = "/repair"
 PROJECTS_PATH = "/projects"
 LIBRARY_PATH = "/library"
 COSTS_PATH = "/costs"
+RUNS_PATH = "/runs"
 STREAM_PATH = "/fleet/events"
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
@@ -930,6 +932,8 @@ table.lib{width:100%;border-collapse:collapse;font-size:.82rem}
 table.lib td{padding:.3rem .4rem;border-top:1px solid var(--border);vertical-align:top}
 table.lib td.inv{font-family:var(--mono);white-space:nowrap;color:var(--fg)}
 table.lib td.scope{font-family:var(--mono);color:var(--label);font-size:.74rem}
+.card.recent h2{display:flex;align-items:baseline;gap:.8rem}
+.card.recent h2 .hist{margin-left:auto;text-transform:none;letter-spacing:0}
 table.lib td.desc{color:var(--muted)}
 """
 
@@ -1210,7 +1214,7 @@ def render_fleet(snap: dict, now: float | None = None,
                  projs: dict | None = None, finished: dict | None = None,
                  starting: dict | None = None, doing: dict | None = None,
                  spent: dict | None = None, histories: dict | None = None,
-                 own=None) -> str:
+                 own=None, returned: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1228,11 +1232,15 @@ def render_fleet(snap: dict, now: float | None = None,
     on its row. `histories` is how many answer batches each page's artifact
     has (artifact -> count) when the data came from a backend's API; None
     reads this machine's journal. `own` is the fleet page's code stamp for the
-    stale-code line, per code_line."""
+    stale-code line, per code_line. `returned` is recent_mod.last_returned():
+    when each task's newest turn ended, which is how new the work is — the
+    page server's own timestamp also moves when the driver merely opens the
+    page."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     doing = doing or {}
     spent = spent or {}
+    returned = returned or {}
     records, holders, pages = graph or ([], {}, {})
     snap = {**snap, "surfaces": conv_mod.collapse(snap.get("surfaces") or [],
                                                   records, holders, pages)}
@@ -1261,9 +1269,18 @@ def render_fleet(snap: dict, now: float | None = None,
         bits = strand
         if label:
             bits += f'<span class="badge {cls}">{escape(label)}</span>'
+        # Two clocks, never one: "returned" is when the agent last delivered,
+        # "touched" when anything last handled the page — opening it counts —
+        # so a page the driver just looked at no longer reads as new work.
+        back = returned.get(str(sf.get("task") or ""))
+        if back:
+            bits += (f'<span class="badge" title="when the agent\'s newest turn on this '
+                     f'task ended">returned {escape(_rel_time(back, now))}</span>')
         upd = _iso_epoch((st or {}).get("updated_at"))
         if upd:
-            bits += f'<span class="badge">upd {escape(_rel_time(upd, now))}</span>'
+            bits += (f'<span class="badge" title="when anything last touched this page — '
+                     f'you opening it, your feedback, or the agent">touched '
+                     f'{escape(_rel_time(upd, now))}</span>')
         return bits
 
     def _spent(sf) -> str:
@@ -1287,6 +1304,16 @@ def render_fleet(snap: dict, now: float | None = None,
         n = len(sf.get("earlier") or [])
         label = f"{n} earlier round{'s' if n != 1 else ''}" if n else "manage"
         return f'<a class="hist" href="/page/{escape(key)}">{label}</a>'
+
+    def _opened(sf) -> tuple[str, str]:
+        """(badge, hover) for when the page was opened. Once the row says
+        when the agent returned, a third bare time crowded the title out, so
+        it moves to the hover text."""
+        ago = escape(_rel_time(sf.get("opened") or 0, now))
+        if returned.get(str(sf.get("task") or "")):
+            return "", f' title="page opened {ago}"' if ago else ""
+        return f'<span class="badge">{ago}</span>', ""
+
     def _group_rows(ext_rows):
         """(byline, live rows, settled rows, row count) for one project's
         registered sessions."""
@@ -1308,9 +1335,10 @@ def render_fleet(snap: dict, now: float | None = None,
             if sf.get("path"):
                 # the whole row is the click target — a 12px "open surface"
                 # link under each row made every open a precision task
+                badge, hover = _opened(sf)
                 row = (f'<div class="rowline">'
-                       f'<a class="row" href="{escape(view_href(sf["path"]))}">'
-                       f'<span class="title">{title}</span>{_live(sf)}{role}{when}'
+                       f'<a class="row"{hover} href="{escape(view_href(sf["path"]))}">'
+                       f'<span class="title">{title}</span>{_live(sf)}{role}{badge}'
                        f'{_spent(sf)}<span class="go">open →</span></a>'
                        f'{_history_link(sf)}{_page_link(sf)}</div>')
             elif sf.get("cwd"):
@@ -1392,9 +1420,9 @@ def render_fleet(snap: dict, now: float | None = None,
     orphans = orphan_surfaces(snap)
 
     def _orow(sf, label):
-        when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
+        when, hover = _opened(sf)
         return (f'<div class="rowline">'
-                f'<a class="row" href="{escape(view_href(sf.get("path")))}">'
+                f'<a class="row"{hover} href="{escape(view_href(sf.get("path")))}">'
                 f'<span class="title">{escape(label)}</span>{_live(sf)}{when}{_spent(sf)}'
                 f'<span class="go">open →</span></a>'
                 f'{_history_link(sf)}{_page_link(sf)}</div>')
@@ -1476,6 +1504,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing, spent=spent) if fleet_html is None else fleet_html}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
+        f'<a href="{RUNS_PATH}">every run, newest first</a> · '
         f'<a href="{COSTS_PATH}">what each run cost</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
         f'</div><script>{_PAGE_JS}</script></body></html>')
@@ -1696,6 +1725,131 @@ def render_costs(summary: dict, now: float | None = None) -> str:
         f'{head}{card("By node", node)}{card("By project", proj)}'
         f'{card("By task · most expensive first", task)}{card("Newest turns", recent)}'
         '</div></body></html>')
+
+
+def load_runs(data_dir: Path | None = None,
+              titles: dict | None = None) -> tuple[list[dict], dict, dict]:
+    """(every finished turn, {task: project}, {task: newest page meta}) —
+    what the runs view and the fleet's "returned" badges read. Each page
+    carries the title its author gave it (review-surface's page list,
+    `titles`), which reads far better than the task id it came from."""
+    d = Path(DATA_DIR if data_dir is None else data_dir)
+    turns, owners = load_costs(d)
+    try:
+        store = json.loads((d / "surfaces" / "sessions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        store = {}
+    titles = conv_mod.load_pages() if titles is None else titles
+    pages = {t: {**m, "title": str((titles.get(m.get("key")) or {}).get("title") or "")}
+             for t, m in recent_mod.pages_by_task(store).items()}
+    return turns, owners, pages
+
+
+def _run_row(r: dict, now: float, per_task: bool = True) -> str:
+    """One run: the task, where it lives, when it returned and how it went.
+    The row opens the task's newest page; a task with no page is listed
+    but not clickable, since there is nothing to open. Turn count and time
+    ride on the hover text — on the row they crowded the title out."""
+    usd = costs_mod.usd
+    badges = (f'<span class="badge">{escape(r["project"])}</span>' if r["project"] else "")
+    # a dialogue turn is the common case; only other nodes earn a badge
+    badges += (f'<span class="badge">{escape(r["node"])}</span>'
+               if r["node"] and r["node"] != "task" else "")
+    if not r["ok"]:
+        badges += '<span class="badge needs">failed</span>'
+    if r["open"]:
+        badges += '<span class="chip open">open</span>'
+    badges += f'<span class="badge">returned {escape(_rel_time(r["ended"], now))}</span>'
+    if r["cost"] is not None:
+        badges += f'<span class="badge">{escape(usd(r["cost"]))}</span>'
+    turns = f'{r["turns"]} turns, ' if per_task and r["turns"] > 1 else ""
+    hover = escape(f'{turns}{max(1, round(r["seconds"] / 60))} min of agent time')
+    page = r.get("page") or {}
+    title = f'<span class="title">{escape(page.get("title") or _task_label(r["task"]))}</span>'
+    if not page.get("path"):
+        return (f'<div class="rowline"><span class="row" title="{hover}">'
+                f'{title}{badges}</span></div>')
+    return (f'<div class="rowline"><a class="row" title="{hover}" '
+            f'href="{escape(view_href(page["path"]))}">{title}{badges}'
+            f'<span class="go">open →</span></a>'
+            f'<a class="hist" href="/page/{escape(str(page.get("key") or ""))}">manage</a></div>')
+
+
+def render_recent(rows: list[dict], now: float | None = None, limit: int = 6) -> str:
+    """The fleet's cross-project card: the tasks whose agents came back most
+    recently, whichever project they are in, with the way into the full view."""
+    now = time.time() if now is None else now
+    if not rows:
+        return ""
+    return (f'<section class="card recent"><h2>Recently returned'
+            f'<a class="hist" href="{RUNS_PATH}">all runs, sort and filter →</a></h2>'
+            f'{"".join(_run_row(r, now) for r in rows[:limit])}</section>')
+
+
+_RUNS_JS = """
+(function(){
+ // j/k or the arrow keys walk the list, Enter opens the row under focus.
+ var rows=[].slice.call(document.querySelectorAll('#runs a.row'));
+ document.addEventListener('keydown',function(e){
+  var t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='SELECT'))return;
+  var down=e.key==='j'||e.key==='ArrowDown',up=e.key==='k'||e.key==='ArrowUp';
+  if(!down&&!up||!rows.length)return;
+  e.preventDefault();
+  var i=rows.indexOf(document.activeElement);
+  i=i<0?0:Math.max(0,Math.min(rows.length-1,i+(down?1:-1)));
+  rows[i].focus();rows[i].scrollIntoView({block:'nearest'});
+ });
+ document.querySelectorAll('#runfilter select').forEach(function(s){
+  s.addEventListener('change',function(){s.form.submit()});
+ });
+})();
+"""
+
+
+def render_runs(rows: list[dict], sel: dict, projects: list[str], nodes: list[str],
+                now: float | None = None, limit: int = 200) -> str:
+    """Every run across every project, in one of a handful of views, sorted
+    and filtered by query string so a view is a link the driver can keep."""
+    now = time.time() if now is None else now
+    view = sel.get("view") if sel.get("view") in recent_mod.VIEWS else "latest"
+
+    def href(**over) -> str:
+        q = {k: v for k, v in {**sel, **over}.items() if v}
+        return RUNS_PATH + ("?" + urllib.parse.urlencode(q) if q else "")
+    tabs = " · ".join(
+        f'<b>{escape(label)}</b>' if key == view
+        else f'<a href="{escape(href(view=key))}">{escape(label)}</a>'
+        for key, label in recent_mod.VIEWS.items())
+
+    def options(name, items, blank):
+        cur = sel.get(name) or ""
+        return (f'<select name="{name}" aria-label="{name}"><option value="">{blank}</option>'
+                + "".join(f'<option value="{escape(v)}"{" selected" if v == cur else ""}>'
+                          f'{escape(label)}</option>' for v, label in items)
+                + '</select>')
+    sorts = options("sort", [(k, v) for k, v in recent_mod.SORTS.items() if k != "newest"],
+                    recent_mod.SORTS["newest"])
+    form = (f'<form id="runfilter" class="repair" method="get" action="{RUNS_PATH}">'
+            f'<input type="hidden" name="view" value="{escape(view)}">{sorts}'
+            f'{options("project", [(p, p) for p in projects], "every project")}'
+            f'{options("node", [(n, n) for n in nodes], "every node")}'
+            f'<input type="search" name="q" value="{escape(sel.get("q") or "")}" '
+            f'placeholder="task or project contains…" aria-label="search">'
+            f'<button type="submit">apply</button></form>')
+    shown = rows[:limit]
+    count = (f'{len(rows)} run{"s" if len(rows) != 1 else ""}'
+             + (f' · showing the first {limit}' if len(rows) > limit else ""))
+    body = ("".join(_run_row(r, now, per_task=view in ("latest", "open")) for r in shown)
+            or '<p class="empty">Nothing matches this view.</p>')
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>Cadre — runs</title><style>{_CSS}</style></head>'
+        '<body><div class="wrap"><header><h1>Runs<span class="dot">.</span></h1></header>'
+        f'<p class="meta"><a href="/">← fleet</a> · {tabs}</p>{form}'
+        f'<p class="meta">{escape(count)} · j / k or the arrow keys move, Enter opens</p>'
+        f'<section id="runs" class="card">{body}</section>'
+        f'</div><script>{_RUNS_JS}</script></body></html>')
 
 
 def starting_rows(starting: list[dict], now: float,
@@ -2107,7 +2261,7 @@ def fleet_payload() -> dict:
     graph = load_graph()
     surfaces = conv_mod.collapse(snap.get("surfaces") or [], *graph)
     projs = load_projects()
-    turns, owners = load_costs()
+    turns, owners, pages = load_runs(titles=graph[2])
     arts = {str(sf.get("artifact") or "") for sf in surfaces} - {""}
     return {**fleet_version(),
             "snap": snap, "graph": list(graph),
@@ -2116,6 +2270,8 @@ def fleet_payload() -> dict:
             "finished": {pid: len(rows) for pid, rows in closed_pages(projs).items()},
             "starting": starting_tasks(projs), "doing": live_turns(),
             "spent": costs_mod.per_task(turns),
+            "returned": recent_mod.last_returned(turns),
+            "recent": recent_mod.rows(turns, owners, pages),
             "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
             "histories": {a: len(journal_batches(a)) for a in arts},
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
@@ -2163,12 +2319,13 @@ def render_backend(b: dict, data: dict | None, err: str | None,
     code = data.get("fleet_page_code") or {}
     own = SimpleNamespace(stale=lambda: bool(code.get("stale")),
                           since=code.get("since"), head=code.get("head"))
-    body = render_fleet(data.get("snap") or {}, now, statuses=data.get("statuses") or {},
+    body = render_recent(data.get("recent") or [], now) + render_fleet(
+                        data.get("snap") or {}, now, statuses=data.get("statuses") or {},
                         graph=tuple(data.get("graph") or ([], {}, {})),
                         projs=data.get("projs") or {}, finished=data.get("finished") or {},
                         starting=data.get("starting") or {}, doing=data.get("doing") or {},
                         spent=data.get("spent") or {}, histories=data.get("histories") or {},
-                        own=own)
+                        own=own, returned=data.get("returned") or {})
     return head + backends_mod.point_at(body, b, same) + '</div>'
 
 
@@ -2400,9 +2557,11 @@ class Handler(BaseHTTPRequestHandler):
         # This project's section exactly as the fleet draws it, without the
         # finished count (the page lists finished work itself).
         doing = live_turns()
+        turns = load_costs()[0]
         rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
                                  projs={**mine, p["id"]: {**p, "group": None, "archived": False}},
-                                 doing=doing, spent=costs_mod.per_task(load_costs()[0])
+                                 doing=doing, spent=costs_mod.per_task(turns),
+                                 returned=recent_mod.last_returned(turns)
                                  ) if rows else ""
         closed_all = closed_pages(projs)
         closed = sorted((m for k in mine for m in closed_all.get(k, [])),
@@ -2436,6 +2595,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _serve_runs(self, query: dict):
+        turns, owners, pages = load_runs()
+        sel = {k: (query.get(k) or [""])[0].strip()[:200]
+               for k in ("view", "sort", "project", "node", "q")}
+        rows = recent_mod.rows(turns, owners, pages, view=sel["view"], sort=sel["sort"],
+                               project=sel["project"], node=sel["node"], q=sel["q"])
+        everything = recent_mod.rows(turns, owners, pages, view="turns")
+        self._send_html(render_runs(
+            rows, sel, sorted({r["project"] for r in everything if r["project"]}),
+            sorted({r["node"] for r in everything if r["node"]})))
 
     def _serve_library(self):
         dirs = [d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()]
@@ -2720,6 +2890,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/project/") and self.command in ("GET", "HEAD"):
             self._serve_project(urllib.parse.unquote(path.split("/", 2)[2].strip("/")), query)
+            return
+        if path == RUNS_PATH and self.command in ("GET", "HEAD"):
+            self._serve_runs(query)
             return
         if path == LIBRARY_PATH and self.command in ("GET", "HEAD"):
             self._serve_library()

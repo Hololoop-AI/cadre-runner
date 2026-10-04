@@ -567,7 +567,7 @@ def test_fleet_rows_carry_live_state_and_history_links():
                    "updated_at": "1970-01-01T00:02:30+00:00"}})
         assert "agent working" in html
         assert 'href="/history/k1"' in html and "history (1)" in html
-        assert "upd " in html
+        assert "touched " in html
         # and with no statuses (surface server down) the page still renders
         assert "agent working" not in statusd.render_fleet(snap, now=200.0)
         del os.environ["REVIEW_SURFACE_STATE_DIR"]
@@ -747,3 +747,80 @@ def test_proxy_lets_only_the_fleet_frame_a_session():
     assert statusd.framable_header("/api/k/prompts", "X-Frame-Options", "DENY") == "DENY"
     assert statusd.framable_header("/artifact/k", "Content-Security-Policy", deny) == deny
     assert statusd.framable_header("/session/k", "Content-Type", "text/html") == "text/html"
+
+
+def test_fleet_rows_keep_returned_apart_from_touched():
+    """Opening a page moves the page server's updated_at, so that clock alone
+    made week-old work read as new. The row carries both, labeled."""
+    snap = {"surfaces": [{"kind": "task", "path": "/session/k1", "opened": 100.0,
+                          "task": "task-fix-it-20261001-000000-abc123",
+                          "project": "cadre", "title": "fix it", "artifact": ""}]}
+    html = statusd.render_fleet(
+        snap, now=10_000.0,
+        statuses={"k1": {"status": "open", "presence": "waiting", "pending_prompts": 0,
+                         "updated_at": "1970-01-01T02:40:00+00:00"}},
+        returned={"task-fix-it-20261001-000000-abc123": 10_000.0 - 7200})
+    assert "returned 2h ago" in html
+    assert "touched 6m ago" in html
+    assert "upd " not in html
+    # the page's opened time steps onto the hover once "returned" is shown
+    assert 'title="page opened 2h ago"' in html
+
+
+def _runs_fixture(root: Path):
+    (root / "surfaces").mkdir(parents=True)
+    (root / "history.jsonl").write_text("\n".join(json.dumps(e) for e in [
+        {"ended": 1000.0, "story": "task-old-one-20261001-000000-aaaaaa", "stage": "task",
+         "ok": True, "seconds": 60, "cost_usd": 1.0},
+        {"ended": 3000.0, "story": "task-new-one-20261002-000000-bbbbbb", "stage": "implement",
+         "ok": False, "seconds": 120, "cost_usd": 2.0},
+    ]) + "\n")
+    (root / "registry.json").write_text(json.dumps({"tasks": {
+        "task-old-one-20261001-000000-aaaaaa": {"project": "alpha"},
+        "task-new-one-20261002-000000-bbbbbb": {"project": "beta"}}}))
+    (root / "surfaces" / "sessions.json").write_text(json.dumps({
+        "/a.html": {"kind": "task", "path": "/session/aaa", "key": "aaa", "open": True,
+                    "opened": 900.0, "task": "task-old-one-20261001-000000-aaaaaa"}}))
+
+
+def test_runs_page_lists_every_project_newest_first_and_filters():
+    with tempfile.TemporaryDirectory() as root:
+        _runs_fixture(Path(root))
+        srv = _Server(Path(root) / "status")
+        try:
+            code, body = srv.get("/runs")
+            assert code == 200
+            # both projects on one list, the newest return on top
+            assert body.index("new one") < body.index("old one")
+            assert 'href="/view/aaa"' in body and "failed" in body
+            _, body = srv.get("/runs?sort=oldest")
+            assert body.index("old one") < body.index("new one")
+            _, body = srv.get("/runs?project=alpha")
+            assert "old one" in body and "new one" not in body.split("</form>")[1]
+            _, body = srv.get("/runs?view=failed")
+            assert "new one" in body.split("</form>")[1]
+            assert "old one" not in body.split("</form>")[1]
+            _, body = srv.get("/runs?view=open")
+            assert "old one" in body.split("</form>")[1]
+            assert "new one" not in body.split("</form>")[1]
+            # the home page carries the cross-project card and the way in
+            _, home = srv.get("/")
+            assert "Recently returned" in home and 'href="/runs"' in home
+            _, partial = srv.get("/?partial=1")
+            assert "Recently returned" in partial
+        finally:
+            srv.close()
+
+
+def test_run_rows_read_by_page_title_and_fall_back_to_the_task_id():
+    row = {"task": "task-fix-the-thing-20261001-000000-abc123", "project": "cadre",
+           "node": "task", "ended": 0.0, "seconds": 60.0, "cost": 1.0, "ok": True,
+           "turns": 2, "open": True,
+           "page": {"path": "/session/k", "key": "k", "title": "Fix the thing, round 2"}}
+    html = statusd._run_row(row, now=3600.0)
+    assert "Fix the thing, round 2" in html and 'href="/view/k"' in html
+    assert 'title="2 turns, 1 min of agent time"' in html
+    # a dialogue turn is the common case and gets no node badge
+    assert '<span class="badge">task</span>' not in html
+    bare = statusd._run_row({**row, "page": None}, now=3600.0)
+    assert "fix the thing" in bare and "href" not in bare
