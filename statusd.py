@@ -124,6 +124,8 @@ PROJECTS_PATH = "/projects"
 LIBRARY_PATH = "/library"
 COSTS_PATH = "/costs"
 RUNS_PATH = "/runs"
+# rows on the fleet's "Recently returned" card, and all the API ships of them
+RECENT_LIMIT = 6
 STREAM_PATH = "/fleet/events"
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
@@ -1775,7 +1777,8 @@ def _run_row(r: dict, now: float, per_task: bool = True) -> str:
             f'<a class="hist" href="/page/{escape(str(page.get("key") or ""))}">manage</a></div>')
 
 
-def render_recent(rows: list[dict], now: float | None = None, limit: int = 6) -> str:
+def render_recent(rows: list[dict], now: float | None = None,
+                  limit: int = RECENT_LIMIT) -> str:
     """The fleet's cross-project card: the tasks whose agents came back most
     recently, whichever project they are in, with the way into the full view."""
     now = time.time() if now is None else now
@@ -2271,7 +2274,7 @@ def fleet_payload() -> dict:
             "starting": starting_tasks(projs), "doing": live_turns(),
             "spent": costs_mod.per_task(turns),
             "returned": recent_mod.last_returned(turns),
-            "recent": recent_mod.rows(turns, owners, pages),
+            "recent": recent_mod.rows(turns, owners, pages)[:RECENT_LIMIT],
             "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
             "histories": {a: len(journal_batches(a)) for a in arts},
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,

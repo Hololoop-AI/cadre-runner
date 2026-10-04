@@ -80,6 +80,10 @@ def _per_task(turns: list[dict]) -> list[dict]:
     return list(by.values())
 
 
+def _words(s: str) -> str:
+    return s.lower().replace("-", " ")
+
+
 def rows(entries: list[dict], owners: dict, pages: dict, view: str = "latest",
          sort: str = "newest", project: str = "", node: str = "",
          q: str = "") -> list[dict]:
@@ -100,12 +104,14 @@ def rows(entries: list[dict], owners: dict, pages: dict, view: str = "latest",
         out = [r for r in out if r["project"] == project]
     if node:
         out = [r for r in out if r["node"] == node]
-    needle = q.strip().lower()
+    # a task id reads as words ("task fix it"), so a pasted id with its
+    # hyphens has to be read the same way to match
+    needle = _words(q.strip())
     if needle:
         out = [r for r in out
-               if needle in r["task"].replace("-", " ").lower()
-               or needle in r["project"].lower()
-               or needle in str((r["page"] or {}).get("title") or "").lower()]
+               if needle in _words(r["task"])
+               or needle in _words(r["project"])
+               or needle in _words(str((r["page"] or {}).get("title") or ""))]
     key = {"newest": lambda r: -r["ended"], "oldest": lambda r: r["ended"],
            "cost": lambda r: (-(r["cost"] or 0.0), -r["ended"]),
            "longest": lambda r: (-r["seconds"], -r["ended"])}[sort]

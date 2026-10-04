@@ -812,6 +812,28 @@ def test_runs_page_lists_every_project_newest_first_and_filters():
             srv.close()
 
 
+def test_the_fleet_api_ships_only_the_recent_rows_the_card_shows():
+    with tempfile.TemporaryDirectory() as root:
+        root = Path(root)
+        _runs_fixture(root)
+        with (root / "history.jsonl").open("a") as f:
+            for i in range(statusd.RECENT_LIMIT + 3):
+                f.write(json.dumps({"ended": 5000.0 + i, "story": f"task-extra-{i}",
+                                    "stage": "task", "ok": True, "seconds": 1,
+                                    "cost_usd": None}) + "\n")
+        srv = _Server(root / "status")
+        try:
+            _, body = srv.get("/api/fleet")
+            recent = json.loads(body)["recent"]
+            # newest first, cut to what the card draws; every task still has
+            # its returned time
+            assert len(recent) == statusd.RECENT_LIMIT
+            assert recent[0]["task"] == f"task-extra-{statusd.RECENT_LIMIT + 2}"
+            assert len(json.loads(body)["returned"]) == statusd.RECENT_LIMIT + 5
+        finally:
+            srv.close()
+
+
 def test_run_rows_read_by_page_title_and_fall_back_to_the_task_id():
     row = {"task": "task-fix-the-thing-20261001-000000-abc123", "project": "cadre",
            "node": "task", "ended": 0.0, "seconds": 60.0, "cost": 1.0, "ok": True,
