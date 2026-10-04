@@ -59,3 +59,10 @@ def test_pages_by_task_links_the_newest_page_and_open_view_uses_it():
 def test_search_matches_the_page_title_too():
     pages = {"t-b": {"task": "t-b", "path": "/session/k", "key": "k", "title": "Kitchen playbook"}}
     assert [r["task"] for r in recent.rows(TURNS, OWNERS, pages, q="kitchen")] == ["t-b"]
+
+
+def test_search_matches_a_pasted_task_id_with_its_hyphens():
+    turns = [{"ended": 1.0, "story": "task-fix-it-20261004-000000-abcdef", "stage": "task",
+              "ok": True, "seconds": 1, "cost_usd": None}]
+    rows = recent.rows(turns, {}, {}, q="task-fix-it-20261004")
+    assert [r["task"] for r in rows] == ["task-fix-it-20261004-000000-abcdef"]

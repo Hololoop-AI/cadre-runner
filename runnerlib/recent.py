@@ -100,7 +100,9 @@ def rows(entries: list[dict], owners: dict, pages: dict, view: str = "latest",
         out = [r for r in out if r["project"] == project]
     if node:
         out = [r for r in out if r["node"] == node]
-    needle = q.strip().lower()
+    # a task id reads as words ("task fix it"), so a pasted id with its
+    # hyphens has to be read the same way to match
+    needle = q.strip().lower().replace("-", " ")
     if needle:
         out = [r for r in out
                if needle in r["task"].replace("-", " ").lower()
