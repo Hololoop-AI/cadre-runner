@@ -23,8 +23,17 @@ DEFAULTS = {
         # The status/proxy service (statusd.py). 0.0.0.0 is the tailnet default
         # this was built for; a host with a network policy narrows it here
         # rather than in the source.
+        # One address or several (a TOML array): loopback plus the tailnet
+        # address makes this machine a backend other fleets can read without
+        # opening it to every network 0.0.0.0 would (runnerlib/backends.py).
         "status_bind": "0.0.0.0",
         "status_port": 8181,
+        # The names other machines reach this page by, for review-surface's
+        # Host allowlist. Empty = worked out from the bind
+        # and `tailscale status` (backends.reachable_names).
+        "allowed_hosts": [],
+        # What other fleets call this machine. Empty = its tailnet name.
+        "machine_name": "",
     },
     "claude": {
         "bin": "claude",
