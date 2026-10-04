@@ -297,6 +297,26 @@ def _supervise(children, env=None, grace=10) -> int:
     return status
 
 
+def _allowed_hosts_env(cfg, server_running: bool) -> dict:
+    """REVIEW_SURFACE_ALLOWED_HOSTS for a page server `up` starts, when the
+    fleet page is reachable from the tailnet: without it the server answers
+    every proxied page another machine opens with "forbidden host". An operator's
+    own value wins. A server that is already running keeps the list it
+    started with, so that case is said out loud instead of half-working."""
+    from runnerlib import backends as backends_mod
+    if os.environ.get("REVIEW_SURFACE_ALLOWED_HOSTS"):
+        return {}
+    names = " ".join(backends_mod.reachable_names(getattr(cfg, "runner", None) or {}))
+    if not names:
+        return {}
+    if server_running:
+        log("up: WARNING other machines will get 'forbidden host' unless the running page "
+            f"server was started with REVIEW_SURFACE_ALLOWED_HOSTS=\"{names}\"")
+    else:
+        log(f"up: page server will accept these host names: {names}")
+    return {"REVIEW_SURFACE_ALLOWED_HOSTS": names}
+
+
 def cmd_up(cfg, args):
     """Everything Cadre needs, in the foreground of one terminal: the page
     server, the fleet page and the daemon. Ctrl-C stops all three.
@@ -318,7 +338,8 @@ def cmd_up(cfg, args):
     env = {**os.environ, "REVIEW_SURFACE_NO_OPEN": "1",
            # the dialogue daemon, as the service unit runs it
            "CADRE_ENGINE": os.environ.get("CADRE_ENGINE") or "only",
-           **({"CADRE_CONFIG": args.config} if args.config else {})}
+           **({"CADRE_CONFIG": args.config} if args.config else {}),
+           **_allowed_hosts_env(cfg, server_running)}
     sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))
 
 

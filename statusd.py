@@ -36,9 +36,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -48,6 +50,7 @@ from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
 from runnerlib import costs as costs_mod
 from runnerlib import library as library_mod
+from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
@@ -95,8 +98,16 @@ SURFACE = surface_mod.upstream()
 # What this process loaded at startup, to say so on the page once an edit to
 # it is waiting for a restart (codestamp.py).
 _CODE = codestamp.Stamp()
-BIND = os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind")
+BIND = backends_mod.binds(os.environ.get("CADRE_STATUS_BIND") or _runner("status_bind"))
 PORT = int(os.environ.get("CADRE_STATUS_PORT") or _runner("status_port"))
+# This process as a backend (runnerlib/backends.py): which machine it is, and
+# an id that lets the fleet tell its own backend from a remote one.
+INSTANCE = uuid.uuid4().hex
+MACHINE = backends_mod.machine_name(_CFG.runner if _CFG else {})
+# Every backend the fleet shows, this machine's first — all reached the same
+# way, over HTTP, through the API below. This machine's URL is resolved per
+# request from the socket the request came in on (Handler._backends).
+BACKENDS = backends_mod.configured(_CFG.raw if _CFG else {})
 BLOCKED = {"/shutdown"}
 HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "host",
                "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -899,6 +910,15 @@ form.newtask input[name=cwd]:not(:placeholder-shown){border-color:var(--accent)}
 .project h2 a.repo{color:var(--fg);text-decoration:none}
 .project h2 a.repo:hover{color:var(--accent)}
 .project .member{margin:.4rem 0 0 .2rem;padding-left:.8rem;border-left:2px solid var(--border)}
+.backend{margin:0 0 1.4rem;padding-left:.9rem;border-left:3px solid var(--border)}
+.backend.remote{border-left-color:var(--accent)}
+nav.machines{display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;padding:.6rem 1.1rem}
+nav.machines a{color:var(--fg);text-decoration:none;font-size:.85rem}
+nav.machines a:hover b{text-decoration:underline}
+.machine{margin:0 0 .6rem;font:650 .72rem var(--mono);text-transform:uppercase;
+ letter-spacing:.09em;color:var(--label)}.machine b{color:var(--fg)}
+.backend.remote .machine b{color:var(--accent)}
+.machine a{color:var(--accent);text-decoration:none}.machine a:hover{text-decoration:underline}
 .project .member h3{font-size:.8rem;margin:.2rem 0;font-family:var(--mono);font-weight:600}
 .project .member h3 a{color:var(--muted);text-decoration:none}
 form.newtask select,form.newtask input[name=name],form.newtask input[name=context]{
@@ -1102,8 +1122,8 @@ _PAGE_JS = """
   if(!live)return;
   live.className='live '+(ok?(upstream?'on':'half'):'off');
   live.textContent=ok?'● live':'○ reconnecting';
-  live.title=ok?(upstream?'Updates as they happen: runner snapshot, review pages, links'
-   :'Runner snapshot and links are live; review-page events are unavailable (review-surface without /api/events)')
+  live.title=ok?(upstream?'Every machine is answering; updates within a couple of seconds'
+   :'A machine is not answering, or cannot see its own review pages change; refreshes may lag')
    :'Stream lost; refreshing every '+(FALLBACK/1000)+' s until it reconnects';
  }
  function startPoll(){if(!poll)poll=setInterval(refresh,FALLBACK);}
@@ -1189,7 +1209,8 @@ def render_fleet(snap: dict, now: float | None = None,
                  statuses: dict | None = None, graph: tuple | None = None,
                  projs: dict | None = None, finished: dict | None = None,
                  starting: dict | None = None, doing: dict | None = None,
-                 spent: dict | None = None) -> str:
+                 spent: dict | None = None, histories: dict | None = None,
+                 own=None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1204,7 +1225,10 @@ def render_fleet(snap: dict, now: float | None = None,
     live_turns(): what each in-flight turn is actually doing, which replaces a
     bare "working" badge wherever it has something to say. `spent` is
     costs_mod.per_task(): dollars each task's finished turns have cost, shown
-    on its row."""
+    on its row. `histories` is how many answer batches each page's artifact
+    has (artifact -> count) when the data came from a backend's API; None
+    reads this machine's journal. `own` is the fleet page's code stamp for the
+    stale-code line, per code_line."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     doing = doing or {}
@@ -1248,7 +1272,9 @@ def render_fleet(snap: dict, now: float | None = None,
                 f'{escape(costs_mod.usd(usd))}</span>' if usd else "")
 
     def _history_link(sf) -> str:
-        n = len(journal_batches(str(sf.get("artifact") or "")))
+        art = str(sf.get("artifact") or "")
+        n = (int(histories.get(art) or 0) if histories is not None
+             else len(journal_batches(art)))
         if not n:
             return ""
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
@@ -1386,7 +1412,7 @@ def render_fleet(snap: dict, now: float | None = None,
         rows = "".join(_story_html(s, now) for s in p["stories"])
         out.append(f'<section class="card project"><h2>'
                    f'<span class="repo">{escape(p["repo"])}</span>{flag}</h2>{rows}</section>')
-    return code_line(snap, now=now) + "".join(out)
+    return code_line(snap, own=own, now=now) + "".join(out)
 
 
 def code_line(snap: dict, own=None, now: float | None = None) -> str:
@@ -1416,9 +1442,12 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
                 statuses: dict | None = None, graph: tuple | None = None,
                 projs: dict | None = None, finished: dict | None = None,
                 starting: dict | None = None, doing: dict | None = None,
-                spent: dict | None = None, week_usd: float | None = None) -> str:
+                spent: dict | None = None, week_usd: float | None = None,
+                fleet_html: str | None = None) -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
-    fragment is re-fetched when the fleet stream reports a change."""
+    fragment is re-fetched when the fleet stream reports a change.
+    `fleet_html` is the fleet already rendered from every backend's API (the
+    live page); None renders `snap` directly (tests)."""
     now = time.time() if now is None else now
     stamp = snap.get("iso") or "—"
     banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
@@ -1444,7 +1473,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
         '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing, spent=spent)}</div>'
+        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing, spent=spent) if fleet_html is None else fleet_html}</div>'
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         f'<a href="{COSTS_PATH}">what each run cost</a> · '
@@ -2030,6 +2059,119 @@ def _relay_upstream(stop: threading.Event, poke: threading.Event, state: dict):
         stop.wait(2 if was else 30)
 
 
+# ------------------------------------------------------ this machine as a backend
+# What every fleet — this machine's own included — reads about this machine,
+# through GET /api/fleet and GET /api/fleet/version (runnerlib/backends.py).
+
+_EVENTS = {"n": 0, "upstream": False, "started": False}
+_EVENTS_LOCK = threading.Lock()
+
+
+def _review_events():
+    """Count this machine's review-page events, once per process. The one held
+    connection is from this backend to its own page server, on the same
+    machine; fleets only ever poll the version this count feeds."""
+    with _EVENTS_LOCK:
+        if _EVENTS["started"]:
+            return
+        _EVENTS["started"] = True
+    poke, state = threading.Event(), {"upstream": False}
+
+    def count():
+        while True:
+            poke.wait()
+            poke.clear()
+            _EVENTS["n"] += 1
+            _EVENTS["upstream"] = state["upstream"]
+
+    threading.Thread(target=_relay_upstream, args=(threading.Event(), poke, state),
+                     daemon=True).start()
+    threading.Thread(target=count, daemon=True).start()
+
+
+def fleet_version() -> dict:
+    """Changes whenever anything the fleet shows for this machine changed: the
+    runner's snapshot, a link store, a review page. Cheap; polled."""
+    _review_events()
+    sig = hashlib.sha1(f'{_local_signature()}:{_EVENTS["n"]}'.encode()).hexdigest()
+    return {"version": sig, "instance": INSTANCE, "machine": MACHINE,
+            "review_events": _EVENTS["upstream"]}
+
+
+def fleet_payload() -> dict:
+    """Everything render_fleet needs for this machine, as JSON. Anything the
+    renderer would otherwise read from this machine's disk (answer-history
+    counts, the fleet page's code stamp) is resolved here, so a fleet on
+    another machine renders it without touching this one's files."""
+    snap = read_snapshot()
+    graph = load_graph()
+    surfaces = conv_mod.collapse(snap.get("surfaces") or [], *graph)
+    projs = load_projects()
+    turns, owners = load_costs()
+    arts = {str(sf.get("artifact") or "") for sf in surfaces} - {""}
+    return {**fleet_version(),
+            "snap": snap, "graph": list(graph),
+            "statuses": fetch_agent_statuses(surfaces),
+            "projs": projs,
+            "finished": {pid: len(rows) for pid, rows in closed_pages(projs).items()},
+            "starting": starting_tasks(projs), "doing": live_turns(),
+            "spent": costs_mod.per_task(turns),
+            "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
+            "histories": {a: len(journal_batches(a)) for a in arts},
+            "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
+                                "head": _CODE.head}}
+
+
+def _backend_name(b: dict, data: dict | None) -> str:
+    return b.get("name") or (data or {}).get("machine") or b["url"]
+
+
+def render_machines(results: list) -> str:
+    """The bar above the sections: every machine, whether it answered, and a
+    jump to its section — the far machine is otherwise a long scroll away.
+    Drawn only once there is more than one machine to tell apart."""
+    if len(results) < 2:
+        return ""
+    bits = []
+    for i, (b, data, _) in enumerate(results):
+        state = ("this machine" if data and data.get("instance") == INSTANCE
+                 else "answering" if data else "unreachable")
+        cls = "badge needs" if data is None else "badge"
+        bits.append(f'<a href="#machine-{i}"><b>{escape(_backend_name(b, data))}</b> '
+                    f'<span class="{cls}">{state}</span></a>')
+    return f'<nav class="machines card">{"".join(bits)}</nav>'
+
+
+def render_backend(b: dict, data: dict | None, err: str | None,
+                   now: float | None = None, index: int = 0) -> str:
+    """One machine's section of the fleet, from its API payload: a heading
+    naming the machine, then its fleet exactly as render_fleet draws any
+    fleet. Nothing here knows whether the machine is this one, except where
+    the links point and the 'this machine' label."""
+    same = bool(data) and data.get("instance") == INSTANCE
+    url = escape(b["url"], quote=True)
+    name = escape(_backend_name(b, data))
+    where = ("this machine" if same else
+             f'<a target="_blank" rel="noopener" href="{url}/">{url} →</a>')
+    head = (f'<div class="backend{"" if same else " remote"}" id="machine-{index}">'
+            f'<p class="machine">machine · <b>{name}</b> · {where}</p>')
+    if data is None:
+        return head + (f'<section class="card"><p><span class="badge needs">unreachable</span> '
+                       f'Could not reach the Cadre backend at <code>{url}</code>: '
+                       f'{escape(err or "no answer")}. Its pages are still on that machine; '
+                       'this section comes back when it answers.</p></section></div>')
+    code = data.get("fleet_page_code") or {}
+    own = SimpleNamespace(stale=lambda: bool(code.get("stale")),
+                          since=code.get("since"), head=code.get("head"))
+    body = render_fleet(data.get("snap") or {}, now, statuses=data.get("statuses") or {},
+                        graph=tuple(data.get("graph") or ([], {}, {})),
+                        projs=data.get("projs") or {}, finished=data.get("finished") or {},
+                        starting=data.get("starting") or {}, doing=data.get("doing") or {},
+                        spent=data.get("spent") or {}, histories=data.get("histories") or {},
+                        own=own)
+    return head + backends_mod.point_at(body, b, same) + '</div>'
+
+
 def _known_keys() -> tuple[set, list[dict], dict]:
     snap = read_snapshot()
     surfaces = snap.get("surfaces") or []
@@ -2212,27 +2354,36 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def _serve_home(self, query: dict):
-        snap = read_snapshot()
-        graph = load_graph()
-        # statuses for the rows that will actually render — a conversation's
-        # newest round may be a page the runner's snapshot never listed
-        statuses = fetch_agent_statuses(conv_mod.collapse(snap.get("surfaces") or [], *graph))
-        projs = load_projects()
-        finished = {pid: len(rows) for pid, rows in closed_pages(projs).items()}
-        starting = starting_tasks(projs)
-        doing = live_turns()
-        turns, owners = load_costs()
-        spent = costs_mod.per_task(turns)
+        """The fleet: every backend — this machine's included — fetched through
+        the same API and rendered in its own section."""
+        now = time.time()
+        results = [(b, *backends_mod.fleet(b, now)) for b in self._backends()]
+        fleet_html = render_machines(results) + "".join(
+            render_backend(b, data, err, now, i) for i, (b, data, err) in enumerate(results))
         if query.get("partial"):
-            self._send_html(render_fleet(snap, statuses=statuses, graph=graph,
-                                         projs=projs, finished=finished,
-                                         starting=starting, doing=doing, spent=spent))
+            self._send_html(fleet_html)
             return
+        # The page chrome around the sections (snapshot time, spend, the new
+        # project form) is this machine's, from the same payload.
+        mine = next((d for _, d, _ in results if d and d.get("instance") == INSTANCE), {})
         notice = (query.get("notice") or [""])[0]
-        self._send_html(render_home(snap, notice=notice, statuses=statuses, graph=graph,
-                                    projs=projs, finished=finished, starting=starting,
-                                    doing=doing, spent=spent,
-                                    week_usd=costs_mod.summarize(turns, owners)["last_7d_usd"]))
+        self._send_html(render_home(mine.get("snap") or {}, notice=notice,
+                                    projs=mine.get("projs") or {},
+                                    week_usd=mine.get("week_usd"), fleet_html=fleet_html))
+
+    def _backends(self) -> list[dict]:
+        return backends_mod.with_self(BACKENDS, self.server.server_address)
+
+    def _serve_api_fleet(self, version_only: bool):
+        body = json.dumps(fleet_version() if version_only else fleet_payload(),
+                          default=str).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
@@ -2411,36 +2562,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_stream(self):
         """The fleet stream: one SSE connection per open panel. It says
-        `change` when the runner's snapshot, a link store or a review page
-        changed — the page then re-fetches its fleet fragment. Review-page
-        events are relayed from review-surface's GET /api/events (resuming by
-        Last-Event-ID across reconnects); the runner's snapshot and the link
-        files are watched here by content, so the panel stays live when
-        review-surface is down or predates the event log."""
+        `change` when any backend's version moved — this machine's included,
+        polled through the same API as every other — and the page then
+        re-fetches its fleet fragment. `source` reports whether every backend
+        is answering; the page shows a half-live dot while one is not."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
-        stop, poke = threading.Event(), threading.Event()
-        state = {"upstream": False}
-        threading.Thread(target=_relay_upstream, args=(stop, poke, state),
-                         daemon=True).start()
+        stop = threading.Event()
         try:
-            sig = _local_signature()
-            seen_up = state["upstream"]
+            backends = self._backends()
+            sig, seen_up = backends_mod.signature(backends)
             self._sse("hello", {"upstream": seen_up})
             last_write = time.time()
             while True:
-                poke.wait(STREAM_TICK)
-                changed = poke.is_set()
-                poke.clear()
-                now_sig = _local_signature()
-                if now_sig != sig:
-                    sig, changed = now_sig, True
-                if state["upstream"] != seen_up:
-                    seen_up = state["upstream"]
+                stop.wait(STREAM_TICK)
+                now_sig, all_up = backends_mod.signature(backends)
+                changed = now_sig != sig
+                sig = now_sig
+                if all_up != seen_up:
+                    seen_up = all_up
                     self._sse("source", {"upstream": seen_up})
                     last_write = time.time()
                 if changed:
@@ -2560,6 +2704,8 @@ class Handler(BaseHTTPRequestHandler):
     # --------------------------------------------------------------- routing
 
     def _route(self):
+        if self.command == "POST":
+            backends_mod.forget()       # the next read shows what this write did
         path, _, raw_query = self.path.partition("?")
         query = urllib.parse.parse_qs(raw_query)
         if path == TASKS_PATH and self.command == "POST":
@@ -2580,6 +2726,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in (COSTS_PATH, COSTS_PATH + ".json") and self.command in ("GET", "HEAD"):
             self._serve_costs(path.endswith(".json"))
+            return
+        if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
+                and self.command in ("GET", "HEAD"):
+            self._serve_api_fleet(path == backends_mod.VERSION_PATH)
             return
         if path == STREAM_PATH and self.command == "GET":
             self._serve_stream()
@@ -2615,10 +2765,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer((BIND, PORT), Handler)
-    print(f"statusd: serving {STATUS_DIR} on {BIND}:{PORT}, "
-          f"proxying the rest to {SURFACE}", file=sys.stderr)
-    srv.serve_forever()
+    # One server per bind address: loopback for this machine, the tailnet
+    # address for fleets on other machines. Any that fails to bind stops the whole process —
+    # half-listening would look like a problem on the other machine.
+    servers = [ThreadingHTTPServer((addr, PORT), Handler) for addr in BIND]
+    print(f"statusd: serving {STATUS_DIR} on {', '.join(BIND)} port {PORT}, "
+          f"proxying the rest to {SURFACE}"
+          + f"; machine {MACHINE}; other backends: "
+          + (", ".join(b["url"] for b in BACKENDS[1:]) or "none"),
+          file=sys.stderr)
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
 
 
 if __name__ == "__main__":

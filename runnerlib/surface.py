@@ -65,8 +65,14 @@ _TASK_DECISION_RE = re.compile(
 _ANSWER_RE = re.compile(r"CADRE_ANSWER ticket=([\w-]+) :: (.*)", re.DOTALL)
 
 def outbox_path() -> Path:
-    return Path(os.environ.get("REVIEW_SURFACE_OUTBOX",
-                               str(Path.home() / ".review-surface/outbox.jsonl")))
+    """Where the page server appends its wake signals — resolved the way the
+    server resolves it (REVIEW_SURFACE_OUTBOX, else outbox.jsonl in its state
+    dir). Ignoring REVIEW_SURFACE_STATE_DIR here meant a second Cadre on one
+    machine read the first one's outbox and never saw its own annotations."""
+    if os.environ.get("REVIEW_SURFACE_OUTBOX"):
+        return Path(os.environ["REVIEW_SURFACE_OUTBOX"])
+    state = os.environ.get("REVIEW_SURFACE_STATE_DIR") or str(Path.home() / ".review-surface")
+    return Path(state) / "outbox.jsonl"
 
 
 DEFAULT_UPSTREAM = "http://127.0.0.1:4387"

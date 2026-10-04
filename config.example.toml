@@ -11,6 +11,16 @@ summon_token = "@claude"           # the handle a driver types to summon the age
                                    # different account changes it here
 status_bind = "0.0.0.0"            # statusd.py: bind address (tailnet default) and port;
 status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
+                                   # several addresses: ["127.0.0.1", "100.x.y.z"]
+# allowed_hosts = ["box.tailnet.ts.net"]  # names other machines reach this page by;
+                                   # default: worked out from the bind + `tailscale status`
+# machine_name = "fedora-1"        # what other fleets call this machine; default: tailnet name
+
+# Other machines' Cadre backends shown on this fleet page, each read through
+# its /api/fleet (docs/DIALOGUE-SETUP.md, "More than one machine").
+# [[backends]]
+# name = "fedora-1 · shared team backend"
+# url = "http://fedora-1.tail2057e0.ts.net:8183"
 
 [claude]
 bin = "claude"

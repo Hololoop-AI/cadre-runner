@@ -200,6 +200,71 @@ CADRE_CONFIG=$PWD/config.local.toml python3 pipeline.py surface register \
     --cwd /home/you/Projects/myproject
 ```
 
+## More than one machine
+
+A *backend* is one machine's Cadre: its daemon, its page server and the agent
+harness signed in there. Every fleet page is also a small JSON API for its own
+machine (`GET /api/fleet/version`, polled; `GET /api/fleet`, the whole fleet).
+The fleet you open reads every backend through that API — its own machine
+included, over HTTP, exactly like a remote one — and shows each in a section
+named after the machine, with a bar at the top to jump between them. Opening a
+row on another machine opens that page on that machine in a new tab, so your
+annotations go to its page server and the turn they start runs there.
+
+**To show another machine on your fleet**, add it to your `config.local.toml`
+and restart the fleet page:
+
+```toml
+[[backends]]
+name = "fedora-1 · shared team backend"
+url = "http://fedora-1.tail2057e0.ts.net:8183"
+```
+
+A machine that is off shows as a red "unreachable" card, not a missing section.
+Nothing else changes: a fleet with no `[[backends]]` is just this machine.
+
+**To make a machine a backend other fleets can read**, it has to be reachable
+on the tailnet. Bind loopback *and* its tailnet address (`tailscale ip -4`):
+
+```toml
+[runner]
+status_bind = ["127.0.0.1", "100.71.181.114"]
+```
+
+Listing both keeps `http://127.0.0.1` working on that machine while the page is
+reachable only from the tailnet; `0.0.0.0` would also expose it on the LAN,
+and nothing on it asks for a password.
+
+Its page server also has to accept the names other machines use for it, or
+every page they open answers `forbidden host`. `pipeline.py up` works the names
+out from the bind and `tailscale status`, passes them on as
+`REVIEW_SURFACE_ALLOWED_HOSTS` and prints the list; `allowed_hosts` in
+`[runner]` overrides it. With systemd units instead of `up`, give the variable
+to all three units, not just the page server's: anything that runs the
+`review-surface` CLI can start a replacement page server, and the replacement
+takes that process's environment. A machine running a second Cadre beside
+another one also needs `REVIEW_SURFACE_PORT` set in all three, or the CLI
+talks to the other Cadre's page server on the default port. fedora-1's shared
+backend (units `cadre-shared-*`) is the worked example.
+
+**Looking after fedora-1's shared backend.** Its code is a clone of `main` at
+`~/Projects/cadre/cadre-runner-shared` (config in its `config.local.toml`:
+port 8183, loopback + tailnet), its page server is
+`~/Projects/review-surface-shared` on port 4389, its state is in
+`~/.local/state/cadre-shared` and `~/.review-surface-shared`, and the daemon
+signs in through `~/.config/cadre/run-shared-daemon.sh`. To update it:
+
+```bash
+git -C ~/Projects/cadre/cadre-runner-shared pull --ff-only
+systemctl --user restart cadre-shared-statusd cadre-shared-daemon
+```
+
+What it does not do yet: annotations carry no identity, so two people's notes
+on a shared backend's page look the same; the New project box at the top
+creates projects on the machine serving the page (start work on another
+machine from its section's "new work →", which opens that machine's project
+page); and backends are listed by hand in each config.
+
 ## When something looks wrong
 
 | Symptom | What it is |
@@ -225,5 +290,6 @@ Killing all three processes loses nothing.
   in Python; there is no `pipeline.py` subcommand for it yet.
 - Lifecycle state is partly convention: a page is "decided" because its title
   says so. The store that replaces this is designed, not built.
-- One driver. There is no identity or attribution on annotations, so a second
-  person's notes are indistinguishable from yours.
+- One driver per page. Several people can read and annotate one backend's
+  pages (above), but there is no identity or attribution on annotations, so a
+  second person's notes are indistinguishable from yours.
