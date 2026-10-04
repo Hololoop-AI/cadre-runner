@@ -323,3 +323,83 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+# ------------------------------------------------------------------ archive
+
+def test_every_page_row_carries_a_menu_with_archive():
+    """Retiring a page used to mean opening its manage view and pressing a
+    button labelled for stuck sessions. Each row now has a ⋮ menu whose
+    Archive posts straight from the fleet and comes back to it."""
+    html = statusd.render_fleet({"surfaces": _discussion()}, now=300.0,
+                                graph=(SUPERSEDES, {}, {}))
+    assert html.count('class="rowmenu"') == 1
+    assert '<input type="hidden" name="action" value="archive">' in html
+    assert f'<input type="hidden" name="key" value="{ROUND}">' in html
+    assert '<input type="hidden" name="back" value="home">' in html
+    assert ">⋮</summary>" in html                          # vertical: narrower than ⋯
+    assert "Manage" not in html                             # the menu is the manage control
+    assert f'href="/page/{ROUND}">1 earlier round<' in html  # rounds stay on the row
+
+
+class _Upstream:
+    """A stand-in review-surface that records which sessions were ended."""
+
+    def __init__(self):
+        from http.server import BaseHTTPRequestHandler
+        ended = self.ended = []
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                ended.append(self.path)
+                body = b'{"status":"ended"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.base = "http://127.0.0.1:%d" % self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+
+def test_archive_ends_the_session_and_lands_back_on_the_fleet():
+    with tempfile.TemporaryDirectory() as root:
+        env, up = _Env(root), _Upstream()
+        keep_cfg, statusd._CFG = statusd._CFG, None    # no runner: the page server ends it
+        statusd.SURFACE = up.base
+        try:
+            code, loc = env.post(statusd.REPAIR_PATH,
+                                 {"action": "archive", "key": ORIG, "back": "home"})
+            assert code == 303
+            assert loc.startswith("/?") and "Archived" in urllib.parse.unquote_plus(loc)
+            assert up.ended == [f"/api/{ORIG}/end"]
+            env.write_snapshot([s for s in _discussion() if s["path"].endswith(ORIG)])
+            assert f'href="/view/{ORIG}"' not in env.get("/?partial=1")  # gone at once
+        finally:
+            statusd._CFG = keep_cfg
+            statusd._ARCHIVED.clear()
+            up.close()
+            env.close()
+
+
+def test_archive_refuses_an_unknown_page_and_a_down_page_server():
+    with tempfile.TemporaryDirectory() as root:
+        env = _Env(root)
+        keep_cfg, statusd._CFG = statusd._CFG, None
+        try:
+            code, loc = env.post(statusd.REPAIR_PATH, {"action": "archive", "key": "f" * 16})
+            assert "Refused" in loc
+            code, loc = env.post(statusd.REPAIR_PATH, {"action": "archive", "key": ORIG})
+            assert loc.startswith(f"/page/{ORIG}?") and "Refused" in loc
+        finally:
+            statusd._CFG = keep_cfg
+            env.close()
