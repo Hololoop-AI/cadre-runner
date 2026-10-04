@@ -155,7 +155,12 @@ CADRE_CONFIG=$PWD/config.local.toml python3 statusd.py
 ```
 
 Open **http://127.0.0.1:8181**. That is the fleet: every live page, grouped by
-project, decided ones folded, with a filter box and a New task form.
+project, decided ones folded, with a filter box and a New task form. A row's
+*returned* badge is when the agent's newest turn on that task ended; *touched*
+is when anything last handled the page, you opening it included. The
+**Recently returned** card leads to **/runs**: every finished turn across all
+projects, with views, sorts and filters kept in the URL, and j/k or the arrow
+keys plus Enter to walk and open it.
 
 ## Use it
 
@@ -222,6 +227,8 @@ url = "http://fedora-1.tail2057e0.ts.net:8183"
 
 A machine that is off shows as a red "unreachable" card, not a missing section.
 Nothing else changes: a fleet with no `[[backends]]` is just this machine.
+The one exception is **/runs**, which lists only the runs of the machine
+serving it; each machine's Recently returned card links to its own.
 
 **To make a machine a backend other fleets can read**, it has to be reachable
 on the tailnet. Bind loopback *and* its tailnet address (`tailscale ip -4`):
