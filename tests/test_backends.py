@@ -176,6 +176,18 @@ def test_links_point_at_their_machine_and_folds_stay_per_machine():
     assert 'href="/view/k"' in backends.point_at(html, b, same_origin=True)
 
 
+def test_row_forms_post_to_their_machine():
+    # The fleet row's Archive is a form, not a link. Left root-relative on a
+    # remote section it posted to THIS machine's /repair, which archived the
+    # local copy of a moved page (same key) and left the remote one open.
+    html = ('<form method="post" action="/repair">'
+            '<input type="hidden" name="key" value="k"></form>')
+    b = {"name": "", "url": "http://fedora-1:8183"}
+    out = backends.point_at(html, b, same_origin=False)
+    assert 'action="http://fedora-1:8183/repair"' in out
+    assert 'action="/repair"' in backends.point_at(html, b, same_origin=True)
+
+
 def test_this_machine_comes_first_and_bad_entries_are_dropped():
     raw = {"backends": [{"name": "shared", "url": "http://fedora-1:8183/"},
                         {"name": "typo", "url": "fedora-1:8183"}]}

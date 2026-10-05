@@ -149,15 +149,17 @@ def signature(backends: list[dict], now: float | None = None) -> tuple[str, bool
 
 def point_at(html: str, b: dict, same_origin: bool) -> str:
     """A section rendered from a backend's data, with its links aimed at that
-    backend. Root-relative links become absolute on the backend's origin and
-    open in a new tab: its review pages only work there, because that is the
-    page server their annotations post to. Fold keys get the backend's URL so
+    backend. Root-relative links and form actions become absolute on the
+    backend's origin and open in a new tab: its review pages only work there,
+    because that is the page server their annotations post to, and a row's
+    Archive must end the page on the machine that holds it. Fold keys get the backend's URL so
     two machines with a project of the same name fold independently. The
     backend this page is served from keeps its links as they are."""
     key = escape(b["url"], quote=True)
     html = html.replace('data-fold="', f'data-fold="{key}|')
     if same_origin:
         return html
+    html = re.sub(r'action="/', f'target="_blank" action="{key}/', html)
     return re.sub(r'href="/', f'target="_blank" rel="noopener" href="{key}/', html)
 
 
