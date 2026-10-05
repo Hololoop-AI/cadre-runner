@@ -601,7 +601,8 @@ def test_decided_surfaces_fold_and_active_ones_stay_in_the_scan():
     ]}
     from statusd import render_fleet, render_home
     html = render_fleet(snap, now=0)
-    fold = html[html.index('<details class="fold"'):html.index('</details>')]
+    start = html.index('<details class="fold"')
+    fold = html[start:html.index('</section>', start)]    # rows nest their own ⋮ menu
     assert "1 decided" in fold and "DECIDED: axum" in fold
     assert "workspace organization" not in fold          # active row outside
     assert "workspace organization" in html

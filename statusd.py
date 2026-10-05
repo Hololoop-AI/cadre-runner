@@ -131,6 +131,14 @@ STREAM_PATH = "/fleet/events"
 # away. Opening review-surface's /session/<key> as the whole tab left the
 # driver with nothing to click but the browser's back button.
 VIEW_PATH = "/view/"
+# Keys archived from this server. The row leaves the snapshot at the daemon's
+# next pass; until then it is hidden here, so a click visibly does something.
+_ARCHIVED: set[str] = set()
+# Lucide "archive" glyph, stroked in the text colour so it follows the theme.
+ARCHIVE_ICON = ('<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" '
+                'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+                'stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/>'
+                '<path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>')
 SESSION_PREFIX = "/session/"
 SESSION_KEY = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MAX_TASK_BYTES = 64 * 1024
@@ -803,6 +811,18 @@ form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
 .hist{font-size:.74rem;color:var(--label);font-family:var(--mono);
  text-decoration:none;white-space:nowrap;padding:.2rem .4rem;border-radius:6px}
 .hist:hover{color:var(--accent);background:var(--soft)}
+.rowmenu{position:relative}
+.rowmenu > summary{list-style:none;cursor:pointer;font-size:1rem;line-height:1}
+.rowmenu > summary::-webkit-details-marker{display:none}
+.rowmenu .menu{position:absolute;right:0;top:100%;z-index:5;min-width:9rem;
+ background:var(--card);border:1px solid var(--border);border-radius:9px;
+ padding:.25rem;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.rowmenu .menu form{margin:0}
+.rowmenu .menu button, .rowmenu .menu a{display:flex;align-items:center;gap:.45rem;
+ width:100%;padding:.4rem .6rem;border:0;border-radius:6px;background:none;
+ color:var(--fg);font:inherit;font-size:.82rem;text-decoration:none;cursor:pointer;
+ text-align:left}
+.rowmenu .menu button:hover, .rowmenu .menu a:hover{background:var(--soft);color:var(--accent)}
 .meta{color:var(--label);font-family:var(--mono);font-size:.78rem}
 .meta a{color:var(--accent);text-decoration:none}
 .story .line{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem}
@@ -815,7 +835,7 @@ a.row{display:flex;align-items:baseline;gap:.4rem .7rem;padding:.6rem .5rem;
 a.row:hover{background:var(--soft)}
 a.row .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
-a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono)}
+a.row .go{color:var(--accent);font-size:.78rem;font-family:var(--mono);white-space:nowrap}
 @media (prefers-reduced-motion:reduce){a.row{transition:none}}
 /* A launched task with no page yet: same shape as a row so the section reads
    as one list, but not a link — there is nothing to open. */
@@ -1300,12 +1320,22 @@ def render_fleet(snap: dict, now: float | None = None,
         return f'<a class="hist" href="/history/{escape(key)}">history ({n})</a>'
 
     def _page_link(sf) -> str:
-        # Earlier rounds are reachable from the row, never listed in the scan;
-        # the same page carries the repairs (move, mark replaced, end, attach).
-        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
+        # Earlier rounds are reachable from the row, never listed in the scan.
+        # The ⋮ menu is the row's manage control: Archive (one click, back to
+        # the fleet). The rarer repairs (move, mark replaced, attach) stay on
+        # /page/<key>, reached from the earlier-rounds link and from find.
+        key = escape(str(sf.get("path") or "").rsplit("/", 1)[-1])
         n = len(sf.get("earlier") or [])
-        label = f"{n} earlier round{'s' if n != 1 else ''}" if n else "manage"
-        return f'<a class="hist" href="/page/{escape(key)}">{label}</a>'
+        rounds = (f'<a class="hist" href="/page/{key}">'
+                  f'{n} earlier round{"s" if n != 1 else ""}</a>') if n else ""
+        return (f'{rounds}<details class="rowmenu"><summary class="hist" title="More" '
+                f'aria-label="More actions">⋮</summary><div class="menu">'
+                f'<form method="post" action="{REPAIR_PATH}">'
+                f'<input type="hidden" name="key" value="{key}">'
+                '<input type="hidden" name="action" value="archive">'
+                '<input type="hidden" name="back" value="home">'
+                f'<button type="submit">{ARCHIVE_ICON}Archive</button></form>'
+                '</div></details>')
 
     def _opened(sf) -> tuple[str, str]:
         """(badge, hover) for when the page was opened. Once the row says
@@ -1330,6 +1360,8 @@ def render_fleet(snap: dict, now: float | None = None,
             f' · {escape(_rel_time(sf.get("opened") or 0, now))}</p>' for sf in orch)
         rows, decided = [], []
         for sf in rows_src:
+            if conv_mod.key_of(sf) in _ARCHIVED:
+                continue
             role = (f'<span class="badge">{escape(str(sf["role"]))}</span>'
                     if sf.get("role") else "")
             when = f'<span class="badge">{escape(_rel_time(sf.get("opened") or 0, now))}</span>'
@@ -2364,7 +2396,7 @@ def _post_upstream_link(type_: str, frm: str, to: str):
 
 
 def apply_repair(action: str, key: str, form: dict) -> str:
-    """The four repairs the manage view offers. Returns what happened, in
+    """The repairs the manage view and the fleet row menu offer. Returns what happened, in
     words for the driver; raises LinkRefused when a rule says no."""
     keys, surfaces, _ = _known_keys()
     if key not in keys:
@@ -2396,6 +2428,25 @@ def apply_repair(action: str, key: str, form: dict) -> str:
             raise conv_mod.LinkRefused("no runner config: cannot reach the runner's session store")
         surface_mod.end_session(_CFG, str(sf["artifact"]), lambda *_: None)
         return "Session ended."
+    if action == "archive":
+        # Archive is End session under a name that says what it is for: the
+        # page leaves the scan for the project's finished list, its file stays,
+        # and `review-surface <file>` reopens it. A runner-owned page ends
+        # through the runner so its own record closes too; any other page
+        # ends at the page server.
+        sf = next((s for s in surfaces if conv_mod.key_of(s) == key), None)
+        if sf is not None and sf.get("artifact") and _CFG is not None:
+            surface_mod.end_session(_CFG, str(sf["artifact"]), lambda *_: None)
+        else:
+            req = urllib.request.Request(
+                f"{SURFACE}/api/{urllib.parse.quote(key)}/end", method="POST", data=b"")
+            try:
+                with urllib.request.urlopen(req, timeout=3):
+                    pass
+            except (OSError, ValueError) as e:
+                raise conv_mod.LinkRefused(f"the page server did not end it ({e})")
+        _ARCHIVED.add(key)
+        return "Archived. It is under the project's finished list."
     if action == "attach":
         sf = next((s for s in surfaces if conv_mod.key_of(s) == key), None)
         if sf is None or not sf.get("artifact"):
@@ -2778,7 +2829,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _repair(self):
         """POST /repair: action=move (key, project) | replace (key, target —
-        the page that replaces key) | end (key) | attach (key, instruction). Every repair is checked
+        the page that replaces key) | end (key) | archive (key, back=home
+        returns to the fleet) | attach (key, instruction). Every repair is checked
         against the link rules before anything is written, and lands back on
         the conversation's page with what happened."""
         if not self._same_origin():
@@ -2796,6 +2848,9 @@ class Handler(BaseHTTPRequestHandler):
             msg = apply_repair(form.get("action", ""), key, form)
         except conv_mod.LinkRefused as e:
             msg = f"Refused: {e}"
+        if form.get("back") == "home" and not msg.startswith("Refused"):
+            self._redirect_home(msg)    # archived from the fleet: stay on it
+            return
         self.send_response(303)
         self.send_header("Location", f"/page/{urllib.parse.quote(key)}?"
                          + urllib.parse.urlencode({"notice": msg}))
