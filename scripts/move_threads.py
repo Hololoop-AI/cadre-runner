@@ -22,6 +22,10 @@ Every transcript carries the source machine's auto-memory file as an
 `instructions` attachment. That file holds personal details that do not belong
 on a shared machine, so it is replaced with a one-line note in transit.
 
+Threads outside ~/Projects (a research thread whose findings the joint work
+needs) are named in MOVE_INCLUDE, and their project record travels with them.
+The files they read are not in any repo, so copy those over alongside.
+
     move_threads.py plan                # what would move; writes nothing
     move_threads.py export BUNDLE_DIR   # stage files + records
     move_threads.py import BUNDLE_JSON  # on the target, services stopped
@@ -87,7 +91,7 @@ def project_dirname(cwd: str) -> str:
 # ------------------------------------------------------------------ select
 
 
-def select(exclude: set[str]) -> dict:
+def select(exclude: set[str], include: set[str] = frozenset()) -> dict:
     reg = json.loads((SRC_DATA / "registry.json").read_text())["tasks"]
     db = sqlite3.connect(SRC_DATA / "board.db")
     requests = {}
@@ -108,7 +112,8 @@ def select(exclude: set[str]) -> dict:
         cwd = rec.get("cwd") or (requests.get(tid) or {}).get("cwd") or ""
         if tid in exclude or rec.get("active_runs"):
             continue
-        if (cwd == PROJECTS or cwd.startswith(JOINT_ROOT)) and not cwd.startswith(NOT_JOINT):
+        if tid in include or (
+                (cwd == PROJECTS or cwd.startswith(JOINT_ROOT)) and not cwd.startswith(NOT_JOINT)):
             tasks[tid] = cwd
 
     rs_state = json.loads((SRC_RS / "state.json").read_text())["sessions"]
@@ -214,8 +219,8 @@ def copy_transcript(src: Path, dst: Path) -> int:
     return n
 
 
-def export(bundle: Path, exclude: set[str]) -> dict:
-    sel = select(exclude)
+def export(bundle: Path, exclude: set[str], include: set[str] = frozenset()) -> dict:
+    sel = select(exclude, include)
     root = bundle / "root"          # mirrors / on the target
     if bundle.exists():
         shutil.rmtree(bundle)
@@ -303,7 +308,9 @@ def export(bundle: Path, exclude: set[str]) -> dict:
         "rs_links": [l for l in jsonl(SRC_RS / "links.jsonl") if touches(l)],
         "rs_events": [rewrite_obj(l) for l in jsonl(SRC_RS / "events.jsonl") if touches(l)],
         "rs_journal": [rewrite_obj(l) for l in jsonl(SRC_RS / "feedback-journal.jsonl") if touches(l)],
-        "projects": {p: projects[p] for p in PROJECTS_TO_CARRY if p in projects},
+        "projects": {p: projects[p] for p in PROJECTS_TO_CARRY + sorted(
+            {(sel["registry"].get(t) or {}).get("project") for t in include} - {None})
+            if p in projects},
     }
     (bundle / "records.json").write_text(json.dumps(records, indent=1))
     summary = {"threads": len(tids), "open_threads": sum(
@@ -396,14 +403,15 @@ def do_import(records_path: Path) -> dict:
 def main(argv: list[str]) -> None:
     cmd = argv[1] if len(argv) > 1 else "plan"
     exclude = set(os.environ.get("MOVE_EXCLUDE", "").split())
+    include = set(os.environ.get("MOVE_INCLUDE", "").split())
     if cmd == "plan":
-        sel = select(exclude)
+        sel = select(exclude, include)
         for tid, cwd in sorted(sel["tasks"].items()):
             open_ = any(m.get("open") for m in sel["sessions"].values() if m.get("task") == tid)
             print(f"{'open  ' if open_ else 'closed'} {cwd:55} {tid}")
         print(f"{len(sel['tasks'])} threads, {len(sel['pages'])} pages")
     elif cmd == "export":
-        print(json.dumps(export(Path(argv[2]), exclude), indent=1))
+        print(json.dumps(export(Path(argv[2]), exclude, include), indent=1))
     elif cmd == "import":
         print(json.dumps(do_import(Path(argv[2])), indent=1))
     else:
