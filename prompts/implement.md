@@ -54,9 +54,9 @@ of "rounds after the first" below apply.
 3. **Commits.** Commit only what the approved page or the driver's
    instructions explicitly propose, with the messages they give. Never push,
    never merge, never rewrite history, never touch another branch — unless
-   those same words say to. If the page proposes a commit plan and the tree no
-   longer splits cleanly the way it says, stop at the last clean commit and
-   report.
+   those same words say to. Push gate this turn: **$push_gate**. If the page
+   proposes a commit plan and the tree no longer splits cleanly the way it
+   says, stop at the last clean commit and report.
 4. **Verify before you claim.** "Tests pass" means you ran them in `$cwd` this
    turn; quote the command and what it printed. "Committed" means `git log`
    shows it; quote it.

@@ -30,6 +30,7 @@ CLI, never merge, never push to main) and prepending it to a node that has no
 repo, no PR and no story would be instructions for a different world.
 """
 
+import re
 import time
 import uuid
 from html import escape
@@ -280,6 +281,39 @@ def format_feedback(notes: list[dict]) -> str:
     return "\n\n---\n\n".join(out)
 
 
+# --------------------------------------------------------------------------- the push gate
+#
+# Every turn runs with GitHub pushes rewritten to nowhere (pipeline.py
+# NO_PUSH_ENV): what reaches GitHub is the driver's call. The driver makes
+# that call in words — "looks good, push it and merge" — so a turn whose
+# driver notes ask for a push runs without the block, and only that turn: the
+# flag rides the one command that starts it and is never stored.
+#
+# Read from the driver's own text only. The anchor is the page's text, which
+# an agent wrote, and an agent's handoff note is an agent's words; neither can
+# open the gate. A sentence that negates ("don't push yet", "not merging") or
+# uses "push back" in the arguing sense does not count.
+
+_PUSH_WORD = re.compile(r"\b(push(?:ed|ing)?|merg(?:e|ed|ing))\b(?!\s+back)", re.I)
+_NEGATION = re.compile(r"\b(don'?t|do not|doesn'?t|never|not|no|without|hold off|wait)\b"
+                       r"|n't\b", re.I)
+
+
+PUSH_BLOCKED = ("blocked: pushes to GitHub fail in this turn, because the "
+                "driver's words did not ask for one")
+PUSH_OPEN = ("open for this turn only: the driver's words asked for a push or "
+             "a merge, so push exactly what they asked for and nothing else")
+
+
+def asks_to_push(notes: list[dict]) -> bool:
+    """True when a sentence the driver wrote asks for a push or a merge."""
+    for note in notes:
+        for sentence in re.split(r"(?<=[.!?;\n])\s*", note.get("text") or ""):
+            if _PUSH_WORD.search(sentence) and not _NEGATION.search(sentence):
+                return True
+    return False
+
+
 def mark_closing(reg, task_id: str) -> None:
     """Remember that the turn about to run is the last one.
 
@@ -319,6 +353,7 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
                      "cwd": cwd or rec.get("cwd") or "",
                      "iteration": str(rec["iteration"]),
                      "feedback": text, "resume": "session",
+                     **({"push": "1"} if asks_to_push(notes) else {}),
                      # The closing turn: the driver approved AND said something.
                      # The node is told so, because "act on this and record the
                      # decision" is a different instruction from "here is the
@@ -442,7 +477,9 @@ def write_handoff(cfg, reg, task_id: str, node: str, page: str, notes: list[dict
                      "from": rec.get("node") or NODE, "by": by,
                      "task": task_id, "story": task_id, "cwd": rec.get("cwd") or "",
                      "iteration": "1", "feedback": format_feedback(notes),
-                     "surface_prev": page})
+                     "surface_prev": page,
+                     # only the driver's words open the push gate
+                     **({"push": "1"} if by == "driver" and asks_to_push(notes) else {})})
 
 
 def _command(cfg, task_id: str, payload: dict) -> dict:

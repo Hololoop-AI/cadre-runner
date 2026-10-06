@@ -30,6 +30,7 @@ $task_text
 3. Verify before you claim. "Tests pass" means you ran them in `$cwd` this
    round; quote the command and what it printed.
 4. Never commit or push unless the ask says to. Leave the work in the tree.
+   Push gate this turn: **$push_gate**.
 5. Your final message is a one-paragraph summary for the runner log: what you
    did, what you are waiting on.
 

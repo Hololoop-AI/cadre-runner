@@ -474,6 +474,10 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # The project this task runs in: what else it may read, and where the
     # project's brief and recorded decisions live.
     extra["project"] = projects.prompt_block(projs, pid, cwd)
+    # The push gate (tasks.asks_to_push): set on this one command when the
+    # driver's words asked for a push, so it opens for this turn alone.
+    allow_push = payload.get("push") == "1"
+    extra["push_gate"] = tasks.PUSH_OPEN if allow_push else tasks.PUSH_BLOCKED
     action = {
         "type": "run_task",
         "stage": spec["node"],
@@ -489,6 +493,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         "firing_id": spec.get("firing_id"),
         "correlation_id": spec.get("correlation_id"),
         "extra_vars": extra,
+        "allow_push": allow_push,
         # Group crossover: sibling directories reach the session as extra
         # readable directories (`{dirs}` in the node's command).
         "add_dirs": projects.read_dirs(projs, pid, cwd) if pid else [],

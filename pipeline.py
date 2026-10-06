@@ -1070,7 +1070,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
          "task_text": "", "feedback": "", "surface_prev": "",
          "routes": tasks_mod.describe_nodes([]), "handoff_options": "",
          "nodes": tasks_mod.describe_nodes([]), "handoff": "",
-         "project": projects_mod.NO_PROJECT}
+         "project": projects_mod.NO_PROJECT, "push_gate": tasks_mod.PUSH_BLOCKED}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
     prompt = Template(action["prompt_template"]).safe_substitute(v)
@@ -1095,7 +1095,11 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          **({"add_dirs": action["add_dirs"]} if action.get("add_dirs") else {}),
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
-                                    "CADRE_RUN_ID": rid, **NO_PUSH_ENV,
+                                    "CADRE_RUN_ID": rid,
+                                    # blocked unless the driver's words for
+                                    # this turn asked for a push
+                                    **({"CADRE_PUSH": "open"} if action.get("allow_push")
+                                       else {"CADRE_PUSH": "blocked", **NO_PUSH_ENV}),
                                     # the task's page, whichever node a handoff
                                     # handed it to
                                     **_surface_env(cfg, tasks_mod.NODE, task_id,
