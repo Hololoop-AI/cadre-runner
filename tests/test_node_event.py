@@ -315,3 +315,37 @@ def test_the_form_offers_the_new_token_and_the_action_accepts_both():
     where = spec["actions"][0]["trigger"]["where"][0]
     assert set(where["values"]) == set(tasks.TARGET_HANDOFFS), \
         "the action must still fire for events written before the rename"
+
+
+# --------------------------------------------------------------------------- run cap
+
+
+def test_a_turn_that_finds_the_run_cap_full_waits_instead_of_being_dropped():
+    """A handoff that arrived while 4 runs were busy used to fail its spawn and
+    vanish. It waits on the task's record, and starts once a slot frees."""
+    import pipeline as pl
+    from tests.test_dialogue_actions import no_real_spawn
+    d, work = scratch(), scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    b, n = board(d), seeded(d)
+    for i in range(4):  # four other tasks hold every slot
+        tasks.record(reg, f"other-{i}")["active_runs"] = {"r": {}}
+    request(b, cwd=str(work))
+    calls, logged = [], []
+    with no_real_spawn(calls):
+        engine_seam.run_spawn_spec(cfg, reg, None, b, logged.append, pl._run_stage,
+                                   engine.tick(b, LIVE, n, d).spawns[0])
+        assert calls == []
+        assert len(tasks.record(reg, "task-demo")["deferred"]) == 1
+        assert any("waits" in m and "slot frees" in m for m in logged)
+
+        # still full: it stays queued, nothing fails, no second log line
+        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_stage) == 0
+        assert len(tasks.record(reg, "task-demo")["deferred"]) == 1
+        assert sum("waits" in m for m in logged) == 1
+
+        # a slot frees: the queued turn starts
+        tasks.record(reg, "other-0")["active_runs"] = {}
+        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_stage) == 1
+    assert len(calls) == 1 and calls[0]["cwd"] == str(work)
+    assert tasks.record(reg, "task-demo")["deferred"] == []
