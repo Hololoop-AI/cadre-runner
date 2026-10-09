@@ -29,8 +29,9 @@ $task_text
    on beats a large thing they have to take on faith.
 3. Verify before you claim. "Tests pass" means you ran them in `$cwd` this
    round; quote the command and what it printed.
-4. Never commit or push unless the ask says to. Leave the work in the tree.
-   Push gate this turn: **$push_gate**.
+4. Never commit or push unless the ask or the driver's words this round say
+   to. When they do, do it: push exactly what they asked for, and nothing on
+   your own initiative. Otherwise leave the work in the tree.
 5. Your final message is a one-paragraph summary for the runner log: what you
    did, what you are waiting on.
 

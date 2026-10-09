@@ -529,10 +529,11 @@ def test_a_task_turn_runs_in_the_ask_s_cwd_with_no_worktree_and_a_recorded_sessi
     assert reg.data["stories"] == {}, "a task must never become a story row"
 
 
-def test_a_task_turn_cannot_push_to_github_but_still_fetches_from_it():
-    """A dialogue turn holds the driver's credentials in the driver's tree;
-    what reaches GitHub is the driver's call. The spawn env rewrites every
-    GitHub push URL, https or ssh, to one no transport serves."""
+def test_a_task_turn_pushes_where_the_repo_says_when_the_driver_asks():
+    """Whether a turn pushes is the driver's call, made in their words and
+    read by the session (prompts/task.md rule 4). The spawn env no longer
+    rewrites GitHub push URLs to a dead address, which made a push the driver
+    asked for fail turn after turn."""
     import subprocess
     d, work = scratch(), scratch()
     cfg, reg = FakeCfg(d), FakeReg()
@@ -540,7 +541,10 @@ def test_a_task_turn_cannot_push_to_github_but_still_fetches_from_it():
     request(b, cwd=str(work))
     calls = []
     drive(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], calls)
-    env = {**os.environ, **calls[0]["env"]}
+    # the test itself may run inside a turn that still carries the old block
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+    env = {**clean, **calls[0]["env"]}
+    assert not any("pushInsteadOf" in str(v) for v in calls[0]["env"].values())
 
     def git(*args):
         return subprocess.run(["git", "-C", str(work), *args], env=env,
@@ -548,11 +552,9 @@ def test_a_task_turn_cannot_push_to_github_but_still_fetches_from_it():
 
     git("init", "-q")
     git("remote", "add", "origin", "https://github.com/o/r.git")
-    git("remote", "add", "ssh", "git@github.com:o/r.git")
-    assert git("remote", "get-url", "--push", "origin") == "cadre-no-push://blocked/o/r.git"
-    assert git("remote", "get-url", "--push", "ssh") == "cadre-no-push://blocked/o/r.git"
-    # fetching is untouched
-    assert git("remote", "get-url", "origin") == "https://github.com/o/r.git"
+    assert git("remote", "get-url", "--push", "origin") == "https://github.com/o/r.git"
+    # the session is told when it may push
+    assert "the driver's words this round say" in calls[0]["prompt"]
 
 
 def test_a_feedback_turn_resumes_the_recorded_session_at_round_two():
