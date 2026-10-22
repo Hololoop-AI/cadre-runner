@@ -957,6 +957,31 @@ table.lib td.scope{font-family:var(--mono);color:var(--label);font-size:.74rem}
 .card.recent h2{display:flex;align-items:baseline;gap:.8rem}
 .card.recent h2 .hist{margin-left:auto;text-transform:none;letter-spacing:0}
 table.lib td.desc{color:var(--muted)}
+/* Phone width. A row is one unwrapping flex line, and its title (overflow
+   hidden) is the only item allowed to shrink — so on a narrow screen the
+   title went to zero width and the nowrap badges spilled past the edge,
+   painting over the "earlier rounds" link and widening the page. Here the
+   title takes its own line (two at most), the badges wrap under it, and the
+   row's side links drop below instead of being painted over. */
+@media (max-width:640px){
+ .wrap{padding:1rem .9rem 2.5rem}
+ header{flex-wrap:wrap;gap:.2rem .8rem}
+ header h1{flex-basis:100%}
+ header .updated{margin-left:0}
+ .card{padding:.8rem .85rem}
+ .backend{padding-left:.6rem}
+ .project > h2, .card.recent h2{flex-wrap:wrap;row-gap:.3rem}
+ .rowline{flex-wrap:wrap;column-gap:.4rem}
+ .rowline > a.row{flex-basis:100%}
+ .rowline > a.row + .hist{margin-left:auto}
+ .rowline > a.row ~ .hist, .rowline > .rowmenu > summary{padding:.05rem .4rem .35rem}
+ a.row, span.row.starting{flex-wrap:wrap;align-items:center;row-gap:.35rem}
+ /* the whole row is the tap target; the "open →" label only cost a line */
+ a.row .go{display:none}
+ a.row .title, span.row.starting .title{flex:1 1 100%;white-space:normal;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+ .story .title{white-space:normal}
+}
 """
 
 # Fuzzy find over the installed library. Subsequence matching, the way a
