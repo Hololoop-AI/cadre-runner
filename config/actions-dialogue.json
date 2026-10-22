@@ -57,6 +57,22 @@
     },
 
     {
+      "name": "task-started-on-a-node",
+      "_why": "S0 of a dialogue that starts on a node other than `task` — a study session started from inside another dialogue starts on `tutor` (pipeline.py study). Same once-only guard as task-requested; `node` names who takes it, as the handoff event does.",
+      "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",
+                  "where": [{"op": "payload_eq", "field": "target", "value": "task:start"},
+                            {"op": "no_event_for_key", "namespace": "cadre",
+                             "topic": "tasks", "kind": "signal"}]},
+      "body": {"type": "spawn_node", "node": "{payload[node]}"},
+      "emitter": {"type": "write_event", "namespace": "cadre", "topic": "tasks",
+                  "kind": "signal",
+                  "payload": {"status": "started", "stage": "{payload[node]}",
+                              "story": "{payload[story]}", "task": "{payload[task]}",
+                              "cwd": "{payload[cwd]}",
+                              "note": "round 1 — the session authors the surface"}}
+    },
+
+    {
       "name": "task-feedback-resumes-the-session",
       "_why": "The driver annotated the surface, so the dialogue takes another turn. Same key, and the node that built the page — the event names it in `node`, so one action serves every node, including ones registered after this file was written. The spawn is a RESUME rather than a restart: `resume=session` in the payload is what the spawn seam reads to continue the run's session id (runs.session_args -> --resume) instead of minting a new one, so the next turn keeps the context of the last. The grammar has no resume verb; a spawn body plus a payload flag is how that is said here.",
       "trigger": {"namespace": "cadre", "topic": "tasks", "kind": "command",

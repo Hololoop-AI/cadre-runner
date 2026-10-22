@@ -298,6 +298,7 @@ def test_promote_activates_exactly_the_prompt_on_disk(capsys):
     tmp = scratch()
     (tmp / "task.md").write_text("an old task prompt")
     (tmp / "implement.md").write_text((PROMPTS / "implement.md").read_text())
+    (tmp / "tutor.md").write_text((PROMPTS / "tutor.md").read_text())
     tasks.seed(d, prompts_dir=tmp)              # the old text is live
     tasks.seed(d)                               # today's is recorded, not live
     assert Nodes(d).active("task")["prompt"] == "an old task prompt"

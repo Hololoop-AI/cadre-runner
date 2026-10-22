@@ -47,6 +47,10 @@ TARGET_REQUEST = "task"
 TARGET_FEEDBACK = "task:feedback"
 TARGET_VERDICT = "task:verdict"
 TARGET_HANDOFF = "task:handoff"
+# A task that starts on a node other than `task` — a study session started
+# from inside another dialogue starts on `tutor`. `node` in the payload names
+# it, and the one action for this target starts whichever node it names.
+TARGET_START = "task:start"
 # What the handoff event was called before it was named for what it does. Still
 # accepted on read — the action triggers on both, and pages written before the
 # rename carry `route:<node>` in their forms. Never written.
@@ -55,6 +59,7 @@ TARGET_HANDOFFS = (TARGET_HANDOFF, TARGET_ROUTE_LEGACY)
 
 NODE = "task"
 IMPLEMENT = "implement"
+TUTOR = "tutor"
 
 # What a node lists in its `reads` to say it reacts to the handoff event — and
 # so to be offered on every page's verdict form and in every node's prompt.
@@ -75,6 +80,12 @@ NODES = {
                 "about": "carries out what the page decided: makes the change, "
                          "commits only what the page proposed, and brings you "
                          "a page reporting what it did"},
+    # Not on the verdict form: a study session is a dialogue of its own,
+    # started beside the one that needed it (`pipeline.py study`), so the
+    # original thread keeps going instead of being handed away.
+    TUTOR: {"reads": ["command:task:start", "command:task:feedback"],
+            "about": "teaches the driver their own code in short rounds: due "
+                     "cards, one idea, a few questions, graded next round"},
 }
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -141,7 +152,8 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 # --------------------------------------------------------------------------- submit
 
 
-def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None) -> str:
+def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
+                node: str = NODE) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
@@ -156,7 +168,11 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None) ->
     a prefix on the session's first prompt (`library.invocation`), so it is
     checked against what is installed HERE, not discovered missing by the
     session.
+
+    `node` starts the task on another seeded node (`tutor`) instead of `task`.
     """
+    if node != NODE and node not in NODES:
+        raise ValueError(f"no dialogue node {node!r} — one of {', '.join(NODES)}")
     text = (text or "").strip()
     if not text:
         raise ValueError("a task needs text — what should the session do?")
@@ -198,7 +214,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None) ->
     board = Board(engine_seam.board_path(cfg))
     try:
         board.write(NAMESPACE, TOPIC, key_for(task_id), "command",
-                    {"target": TARGET_REQUEST, "task": task_id, "story": task_id,
+                    {"target": TARGET_REQUEST if node == NODE else TARGET_START,
+                     **({} if node == NODE else {"node": node}),
+                     "task": task_id, "story": task_id,
                      "title": title, "task_text": text, "cwd": cwd,
                      "iteration": "1",
                      **({"project": proj["id"]} if proj else {}), **picked})

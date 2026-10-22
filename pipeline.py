@@ -1056,7 +1056,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
          "task_text": "", "feedback": "", "surface_prev": "",
          "routes": tasks_mod.describe_nodes([]), "handoff_options": "",
-         "nodes": tasks_mod.describe_nodes([]), "handoff": "",
+         "nodes": tasks_mod.describe_nodes([]), "handoff": "", "pipeline": "",
          "project": projects_mod.NO_PROJECT}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
@@ -1831,6 +1831,36 @@ def cmd_task(cfg, args):
               "until it runs with CADRE_ENGINE=only")
 
 
+def cmd_study(cfg, args):
+    """Start a study session on a topic — a dialogue on the `tutor` node.
+
+    `--from` is the dialogue that needed it: the driver could not rule on a
+    page without knowing the topic, so the study starts NOW, beside that
+    dialogue, instead of waiting for it to end (driver's call 2026-10-22). The
+    session runs in that dialogue's directory and links back to its page."""
+    topic = " ".join(args.topic).strip()
+    if not topic:
+        sys.exit("study: name a topic — what do you need to understand?")
+    cwd, origin = args.cwd, ""
+    if args.from_task:
+        rec = tasks_mod.records(Registry(cfg.data_dir / "registry.json")).get(args.from_task)
+        if rec is None:
+            sys.exit(f"study: no task {args.from_task!r} — `pipeline.py status` lists them")
+        cwd = cwd or rec.get("cwd") or None
+        page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+        origin = (f"\n\nStarted from task `{args.from_task}`, whose page is "
+                  f"{page}: the driver needs to understand this topic to rule on "
+                  f"that page. Teach toward that decision, and link back to it.")
+    try:
+        task_id = tasks_mod.submit_task(cfg, f"Study session: {topic}{origin}", cwd=cwd,
+                                        title=f"Study: {topic}"[:80], node=tasks_mod.TUTOR)
+    except (ValueError, projects_mod.ProjectError) as e:
+        sys.exit(f"study refused: {e}")
+    print(task_id)
+    print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
+          f"  (written by the tutor, opened when its first round finishes)")
+
+
 def cmd_project(cfg, args):
     """Projects: durable records on the fleet, kept until archived."""
     projs = projects_mod.load(cfg.data_dir)
@@ -2016,6 +2046,13 @@ def main():
     p.add_argument("--yes", action="store_true",
                    help="send a one-word ask anyway (refused by default: it is "
                         "almost always a command typed in the wrong place)")
+    p = sub.add_parser("study", help="start a study session on a topic now — from "
+                                     "inside a dialogue with --from, or on its own")
+    p.add_argument("topic", nargs="+", help="what you need to understand")
+    p.add_argument("--from", dest="from_task", help="the task whose page needs it; the "
+                                                    "session runs in its directory")
+    p.add_argument("--cwd", help="the repo to study (default: the --from task's "
+                                 "directory, else here)")
     p = sub.add_parser("project", help="projects: durable records you launch work from")
     p.add_argument("action", choices=["create", "list", "show", "set", "archive", "restore"])
     p.add_argument("name", nargs="?", default="", help="project name (create) or id/name")
@@ -2093,7 +2130,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
-     "project": cmd_project, "cards": cmd_cards, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

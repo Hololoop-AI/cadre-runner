@@ -806,8 +806,9 @@ def test_preflight_detects_a_missing_node():
     # `tasks.seed`, so without this row engine-only mode reads as ready while
     # the first dialogue command spawns a node that does not exist.
     # ...and `implement`, the node the handoff route spawns
-    # (config/actions-handoff.json), for the same reason.
-    assert "nodes active (12)" in checks
+    # (config/actions-handoff.json), for the same reason; and `tutor`, the
+    # node a study session starts on (actions-dialogue.json's start action).
+    assert "nodes active (13)" in checks
     assert "actions actions-dialogue.json" in checks
     assert "actions actions-handoff.json" in checks
     assert checks["engine action set"].detail.endswith(
@@ -820,7 +821,7 @@ def test_preflight_detects_a_missing_node():
     nodes._save()
     again = preflight.run(d, seed=False, skip_tools=True)
     failed = [c for c in again if not c.ok]
-    assert [c.name for c in failed] == ["nodes active (12)",
+    assert [c.name for c in failed] == ["nodes active (13)",
                                         "actions actions-pipeline.json"]
     assert "missing: build" in failed[0].detail
     assert "build" in failed[1].detail          # an action spawns a node that is gone
@@ -834,7 +835,7 @@ def test_preflight_detects_a_missing_node():
     del n2.index["nodes"]["tests"]["active_version"]
     n2._save()
     rows = {c.name: c for c in preflight.run(d2, seed=False, skip_tools=True)}
-    assert "no active version: tests" in rows["nodes active (12)"].detail
+    assert "no active version: tests" in rows["nodes active (13)"].detail
 
 
 if __name__ == "__main__":

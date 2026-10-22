@@ -53,6 +53,21 @@ in it as addressed to you:
   silent refusal are both defects;
 - a point with no row on your page is a dropped point.
 
+## When the driver needs to learn something first
+
+If the driver's words ask to study or understand a topic before they can rule
+("study X", "I don't know enough about X to decide", "teach me X first"),
+start a study session now, beside this dialogue:
+
+    $pipeline study "<the topic, in their words>" --from $task
+
+It runs in this directory on the tutor node, writes its own page and links
+back here. Keep this dialogue going: give the request its row on your page
+with the study page linked through `/open?file=` (the path is in the command's
+output), and keep the decision it blocks open until they come back. When a
+driver call depends on background a paragraph cannot give, offer the study
+session yourself in one line — do not start one unasked.
+
 ## When `$closing` is set — the last turn
 
 The driver approved AND wrote something. That usually means the words ARE the
