@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 
 from . import claude_run, engine, projects, seed_nodes
+from . import runs as runs_mod
 from .blackboard import Board
 from .nodes import Nodes
 
@@ -502,13 +503,28 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         f"node version {spec['version'][:12]}, firing {spec.get('firing_id')})")
     # `story` is None on purpose: there is no story record and inventing one
     # would put a repo-less row in front of `_poll_story` every pass.
-    run_stage(cfg, reg, None, task_id, None, action)
+    try:
+        run_stage(cfg, reg, None, task_id, None, action)
+    except runs_mod.RunsBusy as e:
+        # The machine is full, not the task broken. Dropping the turn here was
+        # the silent loss of a driver's handoff; it waits at the FRONT of the
+        # task's queue instead, and `run_deferred` retries it every pass until
+        # a slot frees. Logged once, when it starts waiting.
+        if not spec.get("waiting_for_slot"):
+            log(f"engine: {spec['node']} for {task_id} waits — {e}; "
+                f"it starts when a slot frees")
+        spec["waiting_for_slot"] = True
+        rec.setdefault("deferred", []).insert(0, spec)
+        if hasattr(reg, "save"):
+            reg.save()
+        return False
 
 
 def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
-    """Start the turns `run_task_spawn` parked because their task was busy,
-    for every task whose running turn has since been reaped. One per task per
-    pass: the first one started makes the task busy again."""
+    """Start the turns `run_task_spawn` parked because their task was busy or
+    the machine was at its run cap, for every task whose running turn has since
+    been reaped. One per task per pass: the first one started makes the task
+    busy again. A turn that still finds the cap full ends the pass."""
     from . import surface, tasks
     started = 0
     for task_id, rec in list(tasks.records(reg).items()):
@@ -524,7 +540,8 @@ def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
             if (surface.sessions(cfg).get(prev) or {}).get("open"):
                 surface.end_session(cfg, prev, log)
         try:
-            run_task_spawn(cfg, reg, board, log, run_stage, spec, payload)
+            if run_task_spawn(cfg, reg, board, log, run_stage, spec, payload) is False:
+                break  # no free slot: it went back to the front; nothing else will fit
             started += 1
         except Exception as e:
             board.write(NAMESPACE, TASKS_TOPIC, spec["key"], "signal",
