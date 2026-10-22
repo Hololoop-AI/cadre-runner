@@ -45,6 +45,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import cards as cards_mod
 from runnerlib import codestamp
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
@@ -2621,6 +2622,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _serve_api_cards(self):
+        """A team backend's deck, for teammates' machines to copy in
+        (`pipeline.py cards sync`). Only a backend configured as the team's
+        answers: a personal deck is never served, whatever this binds to."""
+        if not (_CFG and _CFG.learning.get("cards") == "team"):
+            self.send_error(404, "no team cards here")
+            return
+        body = json.dumps({"cards": cards_mod.export_team(_CFG.cards_dir)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
         p = projects_mod.resolve(projs, pid)
@@ -2986,6 +3003,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
+            return
+        if path == cards_mod.API_PATH and self.command in ("GET", "HEAD"):
+            self._serve_api_cards()
             return
         if path == STREAM_PATH and self.command == "GET":
             self._serve_stream()

@@ -24,6 +24,7 @@ from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
 from runnerlib import node_cli
+from runnerlib import cards as cards_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -1871,6 +1872,59 @@ def cmd_project(cfg, args):
         sys.exit(f"project {args.action} refused: {e}")
 
 
+def cmd_cards(cfg, args):
+    """Cards: what the driver keeps from learning their code, on a spaced
+    schedule. Agents propose; the driver accepts, discards and reviews. The
+    deck is `cfg.cards_dir`: a personal directory, or a team backend's data."""
+    deck = cfg.cards_dir
+    scope = "team" if cfg.learning.get("cards") == "team" else "personal"
+    def show(c):
+        due = f"  due {c['fsrs_due'][:16]}" if c["status"] == "accepted" else ""
+        print(f"{c['id']}  [{c['status']}] {c['source']}"
+              + (f" @ {c['anchor']}" if c["anchor"] else "") + f"{due}\n    {c['front']}")
+    try:
+        if args.action == "propose":
+            text = sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
+            out = cards_mod.propose(deck, cards_mod.parse_proposal(text),
+                                    args.source, args.anchor or "", scope=scope)
+        elif args.action == "sync":
+            if scope == "team":
+                sys.exit("cards sync: this is a team backend — its deck is the "
+                         "team's; teammates' machines sync FROM it")
+            for url in cfg.learning.get("team_cards_from") or []:
+                url = str(url).rstrip("/")
+                try:
+                    got = cards_mod.fetch_team(url)
+                    print(f"{url}: {cards_mod.merge_team(deck, url, got)}")
+                except (OSError, ValueError) as e:
+                    print(f"{url}: unreachable — {e}")
+            return
+        elif args.action in ("accept", "discard"):
+            if not args.ids:
+                sys.exit(f"cards {args.action}: name at least one card id")
+            fn = cards_mod.accept if args.action == "accept" else cards_mod.discard
+            out = [fn(deck, i) for i in args.ids]
+        elif args.action == "review":
+            if len(args.ids) != 1 or args.grade is None:
+                sys.exit("cards review: one card id and --grade 1-4")
+            out = [cards_mod.review(deck, args.ids[0], args.answer or "", args.grade,
+                                    model_grade=args.model_grade,
+                                    reasoning=args.reasoning or "")]
+        elif args.action == "due":
+            out = cards_mod.due(deck, source=args.source, limit=args.limit)
+        else:
+            out = cards_mod.listing(deck, status=args.status, source=args.source)
+    except cards_mod.CardError as e:
+        sys.exit(f"cards {args.action} refused: {e}")
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    if not out:
+        print("no cards due" if args.action == "due" else "no cards")
+    for c in out:
+        show(c)
+
+
 def cmd_library(cfg, args):
     """Every agent, skill and workflow installed here, and how to launch it."""
     entries = library_mod.scan(dirs=args.dir or [str(Path.cwd())],
@@ -1971,6 +2025,27 @@ def main():
     p.add_argument("--context", help="path to the context store (brief.md + decisions/)")
     p.add_argument("--skill", action="append", help="a default skill (repeatable)")
     p.add_argument("--run", help="default launch choice, kind:name")
+    p = sub.add_parser("cards", help="cards: spaced review of what you learned about "
+                                     "your code (agents propose, you accept and review)")
+    p.add_argument("action", choices=["propose", "list", "due", "accept", "discard",
+                                      "review", "sync"])
+    p.add_argument("ids", nargs="*", help="card ids (accept, discard, review)")
+    p.add_argument("--source", help="the repo or topic a card is about (propose: "
+                                    "required; list/due: filter)")
+    p.add_argument("--anchor", help="propose: where the cards came from — a file, "
+                                    "PR, commit, page or task id")
+    p.add_argument("--file", help='propose: JSON {"cards":[{"front":...}]}; - or '
+                                  "omitted reads stdin")
+    p.add_argument("--status", choices=list(cards_mod.STATUSES), help="list: filter")
+    p.add_argument("--limit", type=int, help="due: at most this many")
+    p.add_argument("--grade", type=int, choices=[1, 2, 3, 4],
+                   help="review: the grade you settle on (1 wrong, 2 partial, "
+                        "3 correct, 4 precise)")
+    p.add_argument("--answer", help="review: what you answered")
+    p.add_argument("--model-grade", type=int, choices=[1, 2, 3, 4],
+                   help="review: the grader's grade, kept beside yours")
+    p.add_argument("--reasoning", help="review: the grader's one-line reason")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("library", help="list the agents, skills and workflows installed here")
     p.add_argument("--kind", choices=list(library_mod.KINDS))
     p.add_argument("--dir", action="append", help="also scan <dir>/.claude (default: here)")
@@ -2018,7 +2093,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
-     "project": cmd_project, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

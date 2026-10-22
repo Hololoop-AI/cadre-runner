@@ -46,6 +46,16 @@ DEFAULTS = {
         "max_rounds_per_stage": 5,
         "allowed_actors": [],
     },
+    # Cards (runnerlib/cards.py). "personal": this machine's own deck, kept
+    # OUTSIDE every backend's data so nothing personal lands in team data;
+    # "team": this backend's data holds the team's deck and serves it at
+    # /api/cards. `team_cards_from` lists team backends (their page-server
+    # URLs) whose cards join this machine's deck, each scheduled per person.
+    "learning": {
+        "cards": "personal",
+        "cards_dir": "~/.local/share/cadre",
+        "team_cards_from": [],
+    },
     "automerge": {           # NEX-150 gate policy; contracts still honors Confidence:
         "tests": True,
         "build": True,
@@ -93,10 +103,19 @@ class Config:
                                        **raw.get("intake", {}).get("phase_states", {})}
         self.commit_identity = raw.get("runner", {}).get("commit_identity", {})
         self.automerge = merged["automerge"]
+        self.learning = merged["learning"]
         if self.intake.get("provider") and not self.intake.get("repo"):
             raise SystemExit("config: [intake] needs `repo` (the repo triggered stories run against)")
         if not self.limits["allowed_actors"]:
             raise SystemExit("config: limits.allowed_actors must list at least one GitHub login")
+
+    @property
+    def cards_dir(self) -> Path:
+        """Where this machine's card deck lives: the backend's own data for a
+        team backend, a personal directory everywhere else."""
+        if self.learning.get("cards") == "team":
+            return self.data_dir
+        return Path(os.path.expanduser(self.learning["cards_dir"]))
 
     @property
     def data_dir(self) -> Path:
