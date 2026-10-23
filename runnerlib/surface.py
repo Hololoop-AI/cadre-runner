@@ -1062,6 +1062,17 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
 _STUDY_RE = re.compile(r"^\s*study\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
 
+# The page server's Study button (REVIEW_SURFACE_ANNOTATION_ACTIONS): it sends
+# `study: <note>` at once on the selected passage. `up` passes this to the server
+# it starts; deploy/systemd/cadre-surface.service carries the same JSON, and
+# tests/test_up.py holds the two equal.
+ANNOTATION_ACTIONS = json.dumps([{
+    "id": "study", "label": "Study",
+    "title": "Study this in a session beside the page; this dialogue keeps its round",
+    "prefix": "study: ", "deliver": "now", "fallback": "this passage",
+}], separators=(",", ":"))
+
+
 def _study_topic(note: dict) -> str:
     m = _STUDY_RE.match(note.get("text") or "")
     return m.group(1).strip() if m else ""

@@ -5,13 +5,15 @@ No claude, no network, no real review-surface.
 """
 
 import argparse
+import shlex
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 import pipeline
-from runnerlib import preflight
+from runnerlib import preflight, surface
 from runnerlib.preflight import Check
 
 
@@ -74,3 +76,14 @@ def test_up_starts_the_server_itself_and_tolerates_a_missing_gh_login(monkeypatc
 def test_up_uses_a_page_server_that_is_already_running(monkeypatch):
     ran, _ = _up(monkeypatch, _checks(), server_running=True)
     assert [n for n, _ in ran["children"]] == ["statusd", "daemon"]
+
+
+def test_up_gives_the_page_server_the_study_button_the_service_unit_does(monkeypatch):
+    monkeypatch.delenv("REVIEW_SURFACE_ANNOTATION_ACTIONS", raising=False)
+    ran, _ = _up(monkeypatch, _checks(**{"review-surface server": "nothing answering"}))
+    assert ran["env"]["REVIEW_SURFACE_ANNOTATION_ACTIONS"] == surface.ANNOTATION_ACTIONS
+    unit = Path(__file__).resolve().parents[1] / "deploy/systemd/cadre-surface.service"
+    line = next(ln for ln in unit.read_text().splitlines()
+                if "REVIEW_SURFACE_ANNOTATION_ACTIONS=" in ln)
+    (assignment,) = shlex.split(line.split("=", 1)[1])
+    assert assignment == "REVIEW_SURFACE_ANNOTATION_ACTIONS=" + surface.ANNOTATION_ACTIONS

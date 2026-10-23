@@ -339,6 +339,9 @@ def cmd_up(cfg, args):
     env = {**os.environ, "REVIEW_SURFACE_NO_OPEN": "1",
            # the dialogue daemon, as the service unit runs it
            "CADRE_ENGINE": os.environ.get("CADRE_ENGINE") or "only",
+           # the Study button on the annotation popup; an operator's own value wins
+           "REVIEW_SURFACE_ANNOTATION_ACTIONS": (os.environ.get("REVIEW_SURFACE_ANNOTATION_ACTIONS")
+                                                 or surface_mod.ANNOTATION_ACTIONS),
            **({"CADRE_CONFIG": args.config} if args.config else {}),
            **_allowed_hosts_env(cfg, server_running)}
     sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))

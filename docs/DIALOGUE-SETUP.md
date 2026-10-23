@@ -142,8 +142,11 @@ prefixes each line of their output with its name. To run them separately
 instead, one terminal each:
 
 ```bash
-# 1. page server
-REVIEW_SURFACE_NO_OPEN=1 review-surface server --port 4387
+# 1. page server, with the Study button on the annotation popup
+cd ~/Projects/cadre/cadre-runner
+REVIEW_SURFACE_NO_OPEN=1 \
+REVIEW_SURFACE_ANNOTATION_ACTIONS="$(python3 -c 'from runnerlib.surface import ANNOTATION_ACTIONS; print(ANNOTATION_ACTIONS)')" \
+review-surface server --port 4387
 
 # 2. the daemon (engine-only: it runs dialogue tasks, no PR polling)
 cd ~/Projects/cadre/cadre-runner
