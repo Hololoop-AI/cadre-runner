@@ -46,6 +46,7 @@ DEFAULT_MODEL = "sonnet"
 IDLE_LIMIT_S = 2 * 3600
 POLL_CHUNK_MS = 10 * 60 * 1000     # one long poll; re-armed until the idle limit
 ENDED = re.compile(r"session (has )?ended|session is over|was ended", re.IGNORECASE)
+RETRY_LATER = "That answer failed. Please send your message again."
 # `/model opus` typed in the thread switches who answers from then on; the
 # engine handles it, the agent never sees it. An alias or a full model id.
 MODEL_CMD = re.compile(r"\s*/model\s+([A-Za-z0-9][A-Za-z0-9.\-\[\]]{1,60})\s*")
@@ -228,6 +229,9 @@ class Agent:
             if ev.get("session_id"):
                 self.session_id = ev["session_id"]
             if ev.get("type") == "result":
+                if ev.get("is_error"):
+                    raise RuntimeError("the agent answered with an error: "
+                                       + str(ev.get("result") or ev.get("subtype") or "")[:200])
                 return str(ev.get("result") or "").strip() or "(no answer)"
         raise RuntimeError("the agent process exited mid-answer")
 
@@ -279,7 +283,6 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
     factory = agent_factory or (lambda argv, cwd: Agent(argv, cwd))
     claude_bin = (getattr(cfg, "claude", {}) or {}).get("bin") or "claude"
     agent = factory(claude_argv(cfg, rec, claude_bin), rec["cwd"])
-    fallback = ""        # the model before an untried `/model` switch
 
     def restart():
         nonlocal agent
@@ -290,20 +293,35 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
         agent = factory(claude_argv(cfg, rec, claude_bin), rec["cwd"])
 
     def answer(text):
-        # A model name the CLI refuses only shows when the new process is
-        # asked something; fall back to the model that worked.
-        nonlocal fallback
-        try:
-            out = agent.ask(text)
-        except RuntimeError:
-            if not fallback:
-                raise
-            bad, rec["model"], fallback = rec["model"], fallback, ""
-            restart()
-            log(f"study thread {thread_id}: {bad} failed, back on {rec['model']}")
-            return f"{bad} would not start, so this is {rec['model']} again.\n\n" + agent.ask(text)
-        fallback = ""
-        return out
+        # The poll has consumed the message, so it always gets a reply. A model
+        # name the CLI refuses only shows when the new process is asked
+        # something; fall back to the model that last answered (kept on the
+        # record, so a later engine run can fall back too). Any other failure
+        # gets one restart on the thread's own session.
+        note = ""
+        for retry in (True, False):
+            try:
+                out = agent.ask(text)
+            except (RuntimeError, OSError) as e:
+                log(f"study thread {thread_id}: answer failed on {rec['model']}: {e}")
+                good = rec.get("good_model") or ""
+                if good and good != rec["model"]:
+                    bad, rec["model"] = rec["model"], good
+                    note = f"{bad} would not start, so this is {good} again.\n\n"
+                    log(f"study thread {thread_id}: {bad} failed, back on {good}")
+                elif not retry:
+                    break
+                try:
+                    restart()
+                except OSError as e:
+                    log(f"study thread {thread_id}: restart failed: {e}")
+                    break
+                continue
+            rec["good_model"] = rec["model"]
+            save(cfg, rec)
+            return note + out
+        save(cfg, rec)
+        return note + RETRY_LATER
 
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
     reply = ""
@@ -313,10 +331,11 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
             # resumed (forked) session keeps the system prompt it was born with,
             # so an appended one never reached it (seen 2026-10-23: the fork
             # guessed a page path from the docs and its write was refused).
-            reply = agent.ask(system_prompt(cfg, rec) + "\n\n---\n\nTheir first message:\n\n"
-                              + message_text([{"prompt": rec["topic"],
-                                               "text": rec.get("passage") or ""}]))
-            rec["session_id"] = agent.session_id
+            reply = answer(system_prompt(cfg, rec) + "\n\n---\n\nTheir first message:\n\n"
+                           + message_text([{"prompt": rec["topic"],
+                                            "text": rec.get("passage") or ""}]))
+            if agent.session_id:
+                rec["session_id"] = agent.session_id
             save(cfg, rec)
         idle_since = clock()
         while True:
@@ -327,11 +346,12 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
             reply = ""
             payload = _payload(raw)
             model, prompts = model_switch(payload.get("prompts") or [])
-            ended = payload.get("status") == "ended" or bool(ENDED.search(raw))
+            ended = payload.get("status") == "ended" or _says_ended(raw)
             if model and not ended:
                 # A process keeps the model it started with, so switching is
                 # a restart that resumes this thread's own session.
-                fallback = fallback or rec["model"]
+                if not rec.get("good_model") and rec.get("session_id"):
+                    rec["good_model"] = rec["model"]
                 rec["model"] = model
                 restart()
                 reply = f"Now answering with {model}. The thread keeps its history."
@@ -342,7 +362,11 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
                 reply = answer(text)
                 idle_since = clock()
             if ended:
-                last = agent.ask("THREAD ENDED" + (f"\n\nTheir last words:\n{text}" if text else ""))
+                try:
+                    last = agent.ask("THREAD ENDED"
+                                     + (f"\n\nTheir last words:\n{text}" if text else ""))
+                except (RuntimeError, OSError) as e:
+                    last = f"closing pass failed: {e}"
                 # The page is closed, so the closing line (which cards it
                 # proposed) has nowhere to go but the engine log.
                 log(f"study thread {thread_id}: {last.strip()[:300]}")
@@ -361,6 +385,14 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
             rec["session_id"] = agent.session_id
         save(cfg, rec)
         log(f"study thread {thread_id}: engine stopped ({rec['status']})")
+
+
+def _says_ended(raw: str) -> bool:
+    """The CLI's own session-over lines, never the JSON payload: that carries
+    the driver's words, which may well talk about a session that ended."""
+    from . import surface
+    return any(ENDED.search(l) or re.search(surface.SESSION_OVER, l, re.IGNORECASE)
+               for l in (raw or "").splitlines() if not l.lstrip().startswith("{"))
 
 
 def _payload(raw: str) -> dict:

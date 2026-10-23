@@ -259,3 +259,87 @@ def test_the_daemon_never_consumes_a_thread_page(quiet, monkeypatch):
     except Exception:
         pass                                # later tick stages need more world than this
     assert consumed == ["/pages/task-other.html"]
+
+
+def test_the_driver_talking_about_an_ended_session_does_not_end_the_thread(quiet):
+    cfg, t = make_thread(quiet)
+    agent = FakeAgent(["first", "it stops polling", "bye"])
+    cli = scripted_cli([
+        {"status": "feedback", "prompts": [{"prompt": "what happens after the session has ended?",
+                                            "tag": "message"}]},
+        {"status": "ended", "prompts": []},
+    ], [])
+    study_thread.run(cfg, t["id"], cli=cli, agent_factory=lambda a, c: agent, log=lambda *a: None)
+    assert agent.asked[1] == "what happens after the session has ended?"
+    assert agent.asked[2].startswith("THREAD ENDED")
+
+    # the CLI's own session-over line, outside the JSON, still ends it
+    agent = FakeAgent(["first", "bye"])
+    cfg, t = make_thread(quiet)
+    assert study_thread.run(cfg, t["id"], cli=lambda args, timeout=25: "The driver ended the session.",
+                            agent_factory=lambda a, c: agent, log=lambda *a: None) == "ended"
+
+
+class Broken(FakeAgent):
+    def ask(self, text):
+        self.asked.append(text)
+        raise BrokenPipeError("the agent process is gone")
+
+
+def test_a_bad_model_left_by_an_earlier_engine_still_falls_back(quiet):
+    cfg, t = make_thread(quiet)
+    rec = study_thread.load(cfg, t["id"])
+    rec.update(model="opsu", good_model="sonnet", session_id="sess-thread")
+    study_thread.save(cfg, rec)
+    started, calls = [], []
+
+    def factory(argv, cwd):
+        started.append(argv[argv.index("--model") + 1])
+        return agents.pop(0)
+    agents = [Broken([]), FakeAgent(["the answer", "bye"])]
+    cli = scripted_cli([
+        {"status": "feedback", "prompts": [{"prompt": "go on", "tag": "message"}]},
+        {"status": "ended", "prompts": []},
+    ], calls)
+    study_thread.run(cfg, t["id"], cli=cli, agent_factory=factory, log=lambda *a: None)
+
+    assert started == ["opsu", "sonnet"]
+    told = calls[1][calls[1].index("--agent-reply") + 1]
+    assert told == "opsu would not start, so this is sonnet again.\n\nthe answer"
+    assert study_thread.load(cfg, t["id"])["model"] == "sonnet"
+
+
+class DiesSecond(FakeAgent):
+    """Answers the first question, then its process dies."""
+    def ask(self, text):
+        if self.asked:
+            self.asked.append(text)
+            raise RuntimeError("the agent process exited mid-answer")
+        return super().ask(text)
+
+
+def test_an_agent_that_dies_mid_answer_is_restarted_once_then_the_driver_is_told(quiet):
+    for after_restart, told in ((FakeAgent(["recovered", "bye"]), "recovered"),
+                                (Broken([]), study_thread.RETRY_LATER)):
+        cfg, t = make_thread(quiet)
+        agents = [DiesSecond(["first"]), after_restart, FakeAgent(["bye"])]
+        calls = []
+        cli = scripted_cli([
+            {"status": "feedback", "prompts": [{"prompt": "why?", "tag": "message"}]},
+            {"status": "ended", "prompts": []},
+        ], calls)
+        assert study_thread.run(cfg, t["id"], cli=cli, agent_factory=lambda a, c: agents.pop(0),
+                                log=lambda *a: None) == "ended"
+        assert calls[1][calls[1].index("--agent-reply") + 1] == told
+
+
+def test_an_error_result_from_the_cli_is_a_failure_not_an_answer():
+    import sys
+    script = ("import sys, json; sys.stdin.readline(); print(json.dumps({'type': 'result', "
+              "'is_error': True, 'result': 'model not found', 'session_id': 's1'}), flush=True)")
+    agent = study_thread.Agent([sys.executable, "-c", script], cwd=str(scratch()))
+    try:
+        with pytest.raises(RuntimeError, match="model not found"):
+            agent.ask("hello")
+    finally:
+        agent.close()
