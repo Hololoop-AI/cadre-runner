@@ -7,6 +7,11 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/Projects/review-surface
 Environment=REVIEW_SURFACE_NO_OPEN=1
+# A "Study" button on every annotation popup: it sends `study: <note>` at once, on
+# the selected passage, and Cadre starts a study session beside the page without
+# spending a round of the dialogue. Keep it equal to runnerlib/surface.py
+# ANNOTATION_ACTIONS, which `pipeline.py up` passes (tests/test_up.py checks).
+Environment='REVIEW_SURFACE_ANNOTATION_ACTIONS=[{"id":"study","label":"Study","title":"Study this in a session beside the page; this dialogue keeps its round","prefix":"study: ","deliver":"now","fallback":"this passage"}]'
 ExecStart=/usr/bin/node %h/Projects/review-surface/dist/cli.mjs server --port 4387
 Restart=on-failure
 RestartSec=3

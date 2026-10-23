@@ -90,8 +90,8 @@ def test_actions_dialogue_loads_and_validates():
     assert len(names) == len(set(names)), "action names must be unique"
     for a in loaded:
         assert engine.validate_action(a) is a
-    assert set(names) == {"task-requested", "task-feedback-resumes-the-session",
-                          "task-approved-done"}
+    assert set(names) == {"task-requested", "task-started-on-a-node",
+                          "task-feedback-resumes-the-session", "task-approved-done"}
 
     # the ask always starts the node the seed installs; feedback starts the
     # node the EVENT names (whoever built the page), so no node name is
@@ -99,6 +99,7 @@ def test_actions_dialogue_loads_and_validates():
     spawned = {a["name"]: a["body"]["node"] for a in loaded
                if (a.get("body") or {}).get("type") == "spawn_node"}
     assert spawned == {"task-requested": tasks.NODE,
+                       "task-started-on-a-node": "{payload[node]}",
                        "task-feedback-resumes-the-session": "{payload[node]}"}
 
 
@@ -288,8 +289,10 @@ def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
     never push to main). A dialogue node has no repo and no PR — prepending it
     would be instructions for a different world."""
     d = scratch()
-    assert tasks.seed(d) == {"task": "registered", "implement": "registered"}
-    assert tasks.seed(d) == {"task": "unchanged", "implement": "unchanged"}
+    assert tasks.seed(d) == {"task": "registered", "implement": "registered",
+                             "tutor": "registered"}
+    assert tasks.seed(d) == {"task": "unchanged", "implement": "unchanged",
+                             "tutor": "unchanged"}
 
     prompt = Nodes(d).active("task")["prompt"]
     assert (PROMPTS / "_common.md").read_text() not in prompt
@@ -301,8 +304,10 @@ def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
     tmp = scratch()
     (tmp / "task.md").write_text("a different task prompt")
     (tmp / "implement.md").write_text((PROMPTS / "implement.md").read_text())
+    (tmp / "tutor.md").write_text((PROMPTS / "tutor.md").read_text())
     assert tasks.seed(d, prompts_dir=tmp) == {"task": "version-recorded",
-                                              "implement": "unchanged"}
+                                              "implement": "unchanged",
+                                              "tutor": "unchanged"}
     assert Nodes(d).active("task")["prompt"] == prompt
 
 
