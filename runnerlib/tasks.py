@@ -225,6 +225,33 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     return task_id
 
 
+def submit_study(cfg, topic: str, from_task=None, cwd=None, page=None,
+                 project=None, passage: str = "") -> str:
+    """Start a study session on `topic` — a task on the `tutor` node.
+
+    `from_task` is the dialogue that needed it: the driver could not rule on
+    its page without the topic, so the study starts now, beside it, in its
+    directory (`cwd`), and is told where that page is (`page`) to link back.
+    The CLI looks those up in the registry; the page server reads them off
+    the status snapshot, because it never loads the registry itself."""
+    topic = (topic or "").strip()
+    if not topic:
+        raise ValueError("name a topic — what do you need to understand?")
+    origin = ""
+    if from_task:
+        origin = (f"\n\nStarted from task `{from_task}`"
+                  + (f", whose page is {page}" if page else "")
+                  + ": the driver needs to understand this topic to rule on "
+                    "that page. Teach toward that decision, and link back to it.")
+    if passage.strip():
+        # The driver selected this on the page and wrote `study:` against it —
+        # the exact thing they mean, which the topic alone only gestures at.
+        origin += ("\n\nThe driver selected this passage on that page:\n\n> "
+                   + passage.strip()[:1000].replace("\n", "\n> "))
+    return submit_task(cfg, f"Study session: {topic}{origin}", cwd=cwd,
+                       title=f"Study: {topic}"[:80], project=project, node=TUTOR)
+
+
 # --------------------------------------------------------------------------- records
 #
 # Where a dialogue's operational state lives: `registry.json`, beside the

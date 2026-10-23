@@ -222,6 +222,7 @@ def test_a_team_backend_serves_its_deck_and_a_personal_one_never_does(monkeypatc
         assert [x["front"] for x in cards.due(mine.cards_dir)] == [c["front"]]
     finally:
         srv.shutdown()
+        srv.server_close()
 
     personal = cfg_for(tmp, cards_dir=str(tmp / "mine"))
     cards.propose(personal.cards_dir, [{"front": "something personal"}], "notes")
@@ -232,3 +233,4 @@ def test_a_team_backend_serves_its_deck_and_a_personal_one_never_does(monkeypatc
         assert e.value.code == 404
     finally:
         srv.shutdown()
+        srv.server_close()

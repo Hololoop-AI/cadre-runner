@@ -53,11 +53,31 @@ in it as addressed to you:
   silent refusal are both defects;
 - a point with no row on your page is a dropped point.
 
-## When the driver needs to learn something first
+## Keeping the driver able to discuss their own code
 
-If the driver's words ask to study or understand a topic before they can rule
-("study X", "I don't know enough about X to decide", "teach me X first"),
-start a study session now, beside this dialogue:
+The driver builds with agents and has to be able to explain the code to their
+team. Your page is where that happens — not in the code, and not in a later
+course. Two places on the page:
+
+- **After you change code — every round that did.** A section headed
+  **Understand what changed**, at most one screen: what the change does in
+  plain words, one or two short excerpts with `file:line`, then two or three
+  open questions about THIS change (predict "what happens when…", explain "why
+  this shape rather than…", locate "where would a change to… go"), each with
+  your answer folded in a `<details>` under it so they try before they look.
+  Then propose one to three cards on it:
+
+      echo '{"cards":[{"front":"In <repo>, …"}]}' | $pipeline cards propose --source <repo> --anchor <file or commit>
+
+  and list them, saying they wait on the Cards page (`/cards` on the fleet) to
+  be kept or dropped. A round that changed no code skips the section.
+- **Before you change code — only when a call needs it.** When a driver call
+  turns on code they may not know, put **Before you decide** directly above
+  that call: what that code does today, at most 150 words with `file:line`.
+
+When the driver asks to study a topic before they can rule ("study X", "I
+don't know enough about X to decide"), start a study session now, beside this
+dialogue:
 
     $pipeline study "<the topic, in their words>" --from $task
 
@@ -65,8 +85,9 @@ It runs in this directory on the tutor node, writes its own page and links
 back here. Keep this dialogue going: give the request its row on your page
 with the study page linked through `/open?file=` (the path is in the command's
 output), and keep the decision it blocks open until they come back. When a
-driver call depends on background a paragraph cannot give, offer the study
-session yourself in one line — do not start one unasked.
+primer is not enough, offer the study session in one line — do not start one
+unasked. (An annotation that opens with `study:` never reaches you: Cadre
+starts that session itself.)
 
 ## When `$closing` is set — the last turn
 

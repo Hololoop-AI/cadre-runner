@@ -51,10 +51,13 @@ DEFAULTS = {
     # "team": this backend's data holds the team's deck and serves it at
     # /api/cards. `team_cards_from` lists team backends (their page-server
     # URLs) whose cards join this machine's deck, each scheduled per person.
+    # `thread_model` answers study threads (runnerlib/study_thread.py): fast by
+    # default, since a thread is a chat; `/model opus` in a thread switches it.
     "learning": {
         "cards": "personal",
         "cards_dir": "~/.local/share/cadre",
         "team_cards_from": [],
+        "thread_model": "sonnet",
     },
     "automerge": {           # NEX-150 gate policy; contracts still honors Confidence:
         "tests": True,

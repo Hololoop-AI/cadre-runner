@@ -1831,6 +1831,38 @@ def cmd_task(cfg, args):
               "until it runs with CADRE_ENGINE=only")
 
 
+def cmd_study_thread(cfg, args):
+    """Study threads: side chats beside a page, with an agent kept awake.
+    `start` opens one from a task (what the Study button does); `run` is the
+    engine itself, which `start` launches detached; `list` shows them."""
+    from runnerlib import study_thread
+    if args.action == "run":
+        if not args.rest:
+            sys.exit("study-thread run: give the thread id")
+        print(study_thread.run(cfg, args.rest[0]))
+        return
+    if args.action == "list":
+        for t in study_thread.listing(cfg):
+            state = "awake" if study_thread.alive(t.get("pid") or 0) else t.get("status")
+            print(f"{t['id']}  [{state}]  {t['topic'][:60]}  ← {t.get('task')}")
+        return
+    # start
+    if not args.from_task or not args.rest:
+        sys.exit('study-thread start: --from <task> "what you want to understand"')
+    reg = Registry(cfg.data_dir / "registry.json")
+    rec = tasks_mod.records(reg).get(args.from_task)
+    if rec is None:
+        sys.exit(f"no task {args.from_task!r}")
+    page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+    try:
+        t = study_thread.start(cfg, reg, " ".join(args.rest), args.from_task, str(page or ""),
+                               model=args.model)
+    except ValueError as e:
+        sys.exit(f"refused: {e}")
+    print(t["id"])
+    print(t["page"])
+
+
 def cmd_study(cfg, args):
     """Start a study session on a topic — a dialogue on the `tutor` node.
 
@@ -1838,22 +1870,16 @@ def cmd_study(cfg, args):
     page without knowing the topic, so the study starts NOW, beside that
     dialogue, instead of waiting for it to end (driver's call 2026-10-22). The
     session runs in that dialogue's directory and links back to its page."""
-    topic = " ".join(args.topic).strip()
-    if not topic:
-        sys.exit("study: name a topic — what do you need to understand?")
-    cwd, origin = args.cwd, ""
+    cwd, page = args.cwd, None
     if args.from_task:
         rec = tasks_mod.records(Registry(cfg.data_dir / "registry.json")).get(args.from_task)
         if rec is None:
             sys.exit(f"study: no task {args.from_task!r} — `pipeline.py status` lists them")
         cwd = cwd or rec.get("cwd") or None
         page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
-        origin = (f"\n\nStarted from task `{args.from_task}`, whose page is "
-                  f"{page}: the driver needs to understand this topic to rule on "
-                  f"that page. Teach toward that decision, and link back to it.")
     try:
-        task_id = tasks_mod.submit_task(cfg, f"Study session: {topic}{origin}", cwd=cwd,
-                                        title=f"Study: {topic}"[:80], node=tasks_mod.TUTOR)
+        task_id = tasks_mod.submit_study(cfg, " ".join(args.topic), from_task=args.from_task,
+                                         cwd=cwd, page=page)
     except (ValueError, projects_mod.ProjectError) as e:
         sys.exit(f"study refused: {e}")
     print(task_id)
@@ -2053,6 +2079,13 @@ def main():
                                                     "session runs in its directory")
     p.add_argument("--cwd", help="the repo to study (default: the --from task's "
                                  "directory, else here)")
+    p = sub.add_parser("study-thread", help="study threads: a side chat beside a page "
+                                            "whose agent stays awake (start, list, run)")
+    p.add_argument("action", choices=["start", "list", "run"])
+    p.add_argument("rest", nargs="*", help="start: what to understand · run: the thread id")
+    p.add_argument("--from", dest="from_task", help="start: the task whose page it sits beside")
+    p.add_argument("--model", default="", help="start: who answers (default: [learning] "
+                                               "thread_model); `/model <name>` in the chat switches it later")
     p = sub.add_parser("project", help="projects: durable records you launch work from")
     p.add_argument("action", choices=["create", "list", "show", "set", "archive", "restore"])
     p.add_argument("name", nargs="?", default="", help="project name (create) or id/name")
@@ -2130,7 +2163,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
-     "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 
