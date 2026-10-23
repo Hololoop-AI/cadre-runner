@@ -192,6 +192,15 @@ event: `python3 pipeline.py handoff <task-id> --node <node>`, which is also how
 you hand off a page whose form has no such line — any notes kept from an
 earlier plain approve ride along.
 
+**Study** a passage you do not understand by starting its note with `study:`
+(the **Study** button on the annotation popup does this for you) and sending.
+It costs the dialogue no round: a study thread opens beside the page, filed
+under it on the fleet, a chat whose agent stays awake and answers there. It
+answers with `[learning] thread_model` (default `sonnet`); `/model opus` typed
+in the thread switches it. What you learn becomes cards, reviewed at **/cards**
+on the fleet page or with `python3 pipeline.py cards`; your deck lives outside
+every backend's data, in `[learning] cards_dir`.
+
 **Add a specialist** by registering it with `command:task:handoff` in its
 `reads` and a one-line `about`; it appears on every page and in every node's
 prompt from the next turn, with no action to write and no restart.
