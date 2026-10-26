@@ -24,6 +24,7 @@ from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
 from runnerlib import node_cli
+from runnerlib import cards as cards_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -338,6 +339,9 @@ def cmd_up(cfg, args):
     env = {**os.environ, "REVIEW_SURFACE_NO_OPEN": "1",
            # the dialogue daemon, as the service unit runs it
            "CADRE_ENGINE": os.environ.get("CADRE_ENGINE") or "only",
+           # the Study button on the annotation popup; an operator's own value wins
+           "REVIEW_SURFACE_ANNOTATION_ACTIONS": (os.environ.get("REVIEW_SURFACE_ANNOTATION_ACTIONS")
+                                                 or surface_mod.ANNOTATION_ACTIONS),
            **({"CADRE_CONFIG": args.config} if args.config else {}),
            **_allowed_hosts_env(cfg, server_running)}
     sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))
@@ -1055,7 +1059,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
          "iteration": "1", "max_rounds": cfg.limits["max_rounds_per_stage"],
          "task_text": "", "feedback": "", "surface_prev": "",
          "routes": tasks_mod.describe_nodes([]), "handoff_options": "",
-         "nodes": tasks_mod.describe_nodes([]), "handoff": "",
+         "nodes": tasks_mod.describe_nodes([]), "handoff": "", "pipeline": "",
          "project": projects_mod.NO_PROJECT}
     v |= action.get("extra_vars", {})
     rec["iteration"] = int(str(v["iteration"]) or 1)
@@ -1830,6 +1834,62 @@ def cmd_task(cfg, args):
               "until it runs with CADRE_ENGINE=only")
 
 
+def cmd_study_thread(cfg, args):
+    """Study threads: side chats beside a page, with an agent kept awake.
+    `start` opens one from a task (what the Study button does); `run` is the
+    engine itself, which `start` launches detached; `list` shows them."""
+    from runnerlib import study_thread
+    if args.action == "run":
+        if not args.rest:
+            sys.exit("study-thread run: give the thread id")
+        print(study_thread.run(cfg, args.rest[0]))
+        return
+    if args.action == "list":
+        for t in study_thread.listing(cfg):
+            state = "awake" if study_thread.alive(t.get("pid") or 0) else t.get("status")
+            print(f"{t['id']}  [{state}]  {t['topic'][:60]}  ← {t.get('task')}")
+        return
+    # start
+    if not args.from_task or not args.rest:
+        sys.exit('study-thread start: --from <task> "what you want to understand"')
+    reg = Registry(cfg.data_dir / "registry.json")
+    rec = tasks_mod.records(reg).get(args.from_task)
+    if rec is None:
+        sys.exit(f"no task {args.from_task!r}")
+    page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+    try:
+        t = study_thread.start(cfg, reg, " ".join(args.rest), args.from_task, str(page or ""),
+                               model=args.model)
+    except ValueError as e:
+        sys.exit(f"refused: {e}")
+    print(t["id"])
+    print(t["page"])
+
+
+def cmd_study(cfg, args):
+    """Start a study session on a topic — a dialogue on the `tutor` node.
+
+    `--from` is the dialogue that needed it: the driver could not rule on a
+    page without knowing the topic, so the study starts NOW, beside that
+    dialogue, instead of waiting for it to end (driver's call 2026-10-22). The
+    session runs in that dialogue's directory and links back to its page."""
+    cwd, page = args.cwd, None
+    if args.from_task:
+        rec = tasks_mod.records(Registry(cfg.data_dir / "registry.json")).get(args.from_task)
+        if rec is None:
+            sys.exit(f"study: no task {args.from_task!r} — `pipeline.py status` lists them")
+        cwd = cwd or rec.get("cwd") or None
+        page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+    try:
+        task_id = tasks_mod.submit_study(cfg, " ".join(args.topic), from_task=args.from_task,
+                                         cwd=cwd, page=page)
+    except (ValueError, projects_mod.ProjectError) as e:
+        sys.exit(f"study refused: {e}")
+    print(task_id)
+    print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
+          f"  (written by the tutor, opened when its first round finishes)")
+
+
 def cmd_project(cfg, args):
     """Projects: durable records on the fleet, kept until archived."""
     projs = projects_mod.load(cfg.data_dir)
@@ -1869,6 +1929,59 @@ def cmd_project(cfg, args):
         print(projects_mod.prompt_block(projects_mod.load(cfg.data_dir), rec["id"]))
     except (projects_mod.ProjectError, ValueError) as e:
         sys.exit(f"project {args.action} refused: {e}")
+
+
+def cmd_cards(cfg, args):
+    """Cards: what the driver keeps from learning their code, on a spaced
+    schedule. Agents propose; the driver accepts, discards and reviews. The
+    deck is `cfg.cards_dir`: a personal directory, or a team backend's data."""
+    deck = cfg.cards_dir
+    scope = "team" if cfg.learning.get("cards") == "team" else "personal"
+    def show(c):
+        due = f"  due {c['fsrs_due'][:16]}" if c["status"] == "accepted" else ""
+        print(f"{c['id']}  [{c['status']}] {c['source']}"
+              + (f" @ {c['anchor']}" if c["anchor"] else "") + f"{due}\n    {c['front']}")
+    try:
+        if args.action == "propose":
+            text = sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
+            out = cards_mod.propose(deck, cards_mod.parse_proposal(text),
+                                    args.source, args.anchor or "", scope=scope)
+        elif args.action == "sync":
+            if scope == "team":
+                sys.exit("cards sync: this is a team backend — its deck is the "
+                         "team's; teammates' machines sync FROM it")
+            for url in cfg.learning.get("team_cards_from") or []:
+                url = str(url).rstrip("/")
+                try:
+                    got = cards_mod.fetch_team(url)
+                    print(f"{url}: {cards_mod.merge_team(deck, url, got)}")
+                except (OSError, ValueError) as e:
+                    print(f"{url}: unreachable — {e}")
+            return
+        elif args.action in ("accept", "discard"):
+            if not args.ids:
+                sys.exit(f"cards {args.action}: name at least one card id")
+            fn = cards_mod.accept if args.action == "accept" else cards_mod.discard
+            out = [fn(deck, i) for i in args.ids]
+        elif args.action == "review":
+            if len(args.ids) != 1 or args.grade is None:
+                sys.exit("cards review: one card id and --grade 1-4")
+            out = [cards_mod.review(deck, args.ids[0], args.answer or "", args.grade,
+                                    model_grade=args.model_grade,
+                                    reasoning=args.reasoning or "")]
+        elif args.action == "due":
+            out = cards_mod.due(deck, source=args.source, limit=args.limit)
+        else:
+            out = cards_mod.listing(deck, status=args.status, source=args.source)
+    except cards_mod.CardError as e:
+        sys.exit(f"cards {args.action} refused: {e}")
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    if not out:
+        print("no cards due" if args.action == "due" else "no cards")
+    for c in out:
+        show(c)
 
 
 def cmd_library(cfg, args):
@@ -1962,6 +2075,20 @@ def main():
     p.add_argument("--yes", action="store_true",
                    help="send a one-word ask anyway (refused by default: it is "
                         "almost always a command typed in the wrong place)")
+    p = sub.add_parser("study", help="start a study session on a topic now — from "
+                                     "inside a dialogue with --from, or on its own")
+    p.add_argument("topic", nargs="+", help="what you need to understand")
+    p.add_argument("--from", dest="from_task", help="the task whose page needs it; the "
+                                                    "session runs in its directory")
+    p.add_argument("--cwd", help="the repo to study (default: the --from task's "
+                                 "directory, else here)")
+    p = sub.add_parser("study-thread", help="study threads: a side chat beside a page "
+                                            "whose agent stays awake (start, list, run)")
+    p.add_argument("action", choices=["start", "list", "run"])
+    p.add_argument("rest", nargs="*", help="start: what to understand · run: the thread id")
+    p.add_argument("--from", dest="from_task", help="start: the task whose page it sits beside")
+    p.add_argument("--model", default="", help="start: who answers (default: [learning] "
+                                               "thread_model); `/model <name>` in the chat switches it later")
     p = sub.add_parser("project", help="projects: durable records you launch work from")
     p.add_argument("action", choices=["create", "list", "show", "set", "archive", "restore"])
     p.add_argument("name", nargs="?", default="", help="project name (create) or id/name")
@@ -1971,6 +2098,27 @@ def main():
     p.add_argument("--context", help="path to the context store (brief.md + decisions/)")
     p.add_argument("--skill", action="append", help="a default skill (repeatable)")
     p.add_argument("--run", help="default launch choice, kind:name")
+    p = sub.add_parser("cards", help="cards: spaced review of what you learned about "
+                                     "your code (agents propose, you accept and review)")
+    p.add_argument("action", choices=["propose", "list", "due", "accept", "discard",
+                                      "review", "sync"])
+    p.add_argument("ids", nargs="*", help="card ids (accept, discard, review)")
+    p.add_argument("--source", help="the repo or topic a card is about (propose: "
+                                    "required; list/due: filter)")
+    p.add_argument("--anchor", help="propose: where the cards came from — a file, "
+                                    "PR, commit, page or task id")
+    p.add_argument("--file", help='propose: JSON {"cards":[{"front":...}]}; - or '
+                                  "omitted reads stdin")
+    p.add_argument("--status", choices=list(cards_mod.STATUSES), help="list: filter")
+    p.add_argument("--limit", type=int, help="due: at most this many")
+    p.add_argument("--grade", type=int, choices=[1, 2, 3, 4],
+                   help="review: the grade you settle on (1 wrong, 2 partial, "
+                        "3 correct, 4 precise)")
+    p.add_argument("--answer", help="review: what you answered")
+    p.add_argument("--model-grade", type=int, choices=[1, 2, 3, 4],
+                   help="review: the grader's grade, kept beside yours")
+    p.add_argument("--reasoning", help="review: the grader's one-line reason")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("library", help="list the agents, skills and workflows installed here")
     p.add_argument("--kind", choices=list(library_mod.KINDS))
     p.add_argument("--dir", action="append", help="also scan <dir>/.claude (default: here)")
@@ -2018,7 +2166,7 @@ def main():
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
      "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
-     "project": cmd_project, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 

@@ -423,7 +423,11 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
         # daemon happens to be — refuse it here rather than find out from the
         # session's transcript.
         raise RuntimeError(f"task {task_id}: cwd {cwd!r} is not an absolute path")
-    first = payload.get("target") == tasks.TARGET_REQUEST
+    first = payload.get("target") in (tasks.TARGET_REQUEST, tasks.TARGET_START)
+    if payload.get("target") == tasks.TARGET_START:
+        # Started on a node of its own (a study session): `continue` on its
+        # page comes back through that node, not through `task`.
+        rec["node"] = spec["node"]
     if first:
         # The project and the launch choice ride only the ask; every later
         # turn (feedback, a route) reads them back from the record.
@@ -472,6 +476,9 @@ def run_task_spawn(cfg, reg, board: Board, log, run_stage, spec: dict, payload: 
     # ...and the command that writes the same event the form does, for a
     # node that hands on by itself.
     extra["handoff"] = handoff_command(cfg, task_id)
+    # ...and the bare command line, for a node that drives other subcommands
+    # (the tutor's `cards`, a turn starting a `study` session).
+    extra["pipeline"] = pipeline_command(cfg)
     # The project this task runs in: what else it may read, and where the
     # project's brief and recorded decisions live.
     extra["project"] = projects.prompt_block(projs, pid, cwd)
@@ -552,17 +559,22 @@ def run_deferred(cfg, reg, board: Board, log, run_stage) -> int:
     return started
 
 
-def handoff_command(cfg, task_id: str) -> str:
-    """The shell line a session runs to hand its task to another node: the
-    same `task:handoff` event the verdict form writes, through the same
-    `tasks.write_handoff`. `<node>` is the one placeholder the agent fills."""
+def pipeline_command(cfg) -> str:
+    """The shell prefix that runs this runner's CLI against this config — what
+    a session puts in front of a subcommand (`handoff`, `cards`, `study`)."""
     conf = getattr(cfg, "path", None)
     parts = [sys.executable, str(PIPELINE)]
     if conf:
         parts += ["--config", str(conf)]
-    parts += ["handoff", task_id, "--node"]
-    return " ".join(shlex.quote(p) for p in parts) + \
-        ' <node> --note "what the next node should do with this"'
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def handoff_command(cfg, task_id: str) -> str:
+    """The shell line a session runs to hand its task to another node: the
+    same `task:handoff` event the verdict form writes, through the same
+    `tasks.write_handoff`. `<node>` is the one placeholder the agent fills."""
+    return (f"{pipeline_command(cfg)} handoff {shlex.quote(task_id)} --node"
+            ' <node> --note "what the next node should do with this"')
 
 
 # --------------------------------------------------------------------------- round caps

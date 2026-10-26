@@ -335,7 +335,8 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
             # An external page belongs to whoever registered it, which may be
             # an agent holding a real poll; only pages this daemon collects
             # are push.
-            delivery = None if kind == "external" else "push"
+            # So may a study thread's, whose engine holds a real poll.
+            delivery = None if kind in ("external", "study") else "push"
             url_path = _create_session_quietly(path, delivery)
         except Exception:
             out = _run_cli([str(path)])
@@ -990,7 +991,10 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
     if not task_id:
         log(f"surface: task feedback on {Path(path).name} with no task id — not routed (dead-lettered)")
         return
-    notes = list(free)
+    notes = [n for n in free if not _study_topic(n)]
+    for n in free:
+        if _study_topic(n):
+            _start_study(cfg, reg, log, path, meta, task_id, n)
     approve = asked_to_continue = False
     handoff = None
     for item in structured:
@@ -1050,6 +1054,51 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         return
     log(f"surface: {task_id} round {ev['payload']['iteration']} requested — "
         f"{len(notes)} annotation(s) back to the session")
+
+
+# An annotation that opens with `study:` asks to learn, not to change the page:
+# select the passage, write `study: <what you don't get>`, send. It starts a
+# study session beside the dialogue and costs the dialogue no round.
+_STUDY_RE = re.compile(r"^\s*study\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
+
+
+# The page server's Study button (REVIEW_SURFACE_ANNOTATION_ACTIONS): it sends
+# `study: <note>` at once on the selected passage. `up` passes this to the server
+# it starts; deploy/systemd/cadre-surface.service carries the same JSON, and
+# tests/test_up.py holds the two equal.
+ANNOTATION_ACTIONS = json.dumps([{
+    "id": "study", "label": "Study",
+    "title": "Study this in a session beside the page; this dialogue keeps its round",
+    "prefix": "study: ", "deliver": "now", "fallback": "this passage",
+}], separators=(",", ":"))
+
+
+def _study_topic(note: dict) -> str:
+    m = _STUDY_RE.match(note.get("text") or "")
+    return m.group(1).strip() if m else ""
+
+
+def _start_study(cfg, reg, log, path: str, meta: dict, task_id: str,
+                 note: dict) -> None:
+    """Open the study thread one `study:` annotation asked for, on the passage
+    it was attached to, and say so in the page's conversation panel — the only
+    place the driver is looking when they press Study. The thread is a side
+    chat with an agent that stays awake (`study_thread`); this dialogue keeps
+    its round."""
+    from . import study_thread
+    topic = _study_topic(note)
+    try:
+        rec = study_thread.start(cfg, reg, topic, task_id, path,
+                                 passage=note.get("anchor") or "",
+                                 cwd=meta.get("cwd") or "", log=log)
+    except Exception as e:
+        log(f"surface: study thread from {task_id} not started: {e}")
+        agent_reply(cfg, reg, None, log, Path(path), f"Study not started: {e}")
+        return
+    log(f"surface: {task_id} asked to study {topic[:80]!r} — thread {rec['id']}")
+    agent_reply(cfg, reg, None, log, Path(path),
+                f"Study thread open on “{topic[:120]}” — it answers in its own page, "
+                "filed under this one on the fleet. This dialogue keeps its round.")
 
 
 def _handoff(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
@@ -1159,14 +1208,22 @@ def _tick(cfg, reg, ghc, log) -> None:
         # registered them (an orchestrator terminal session, a design round),
         # and poll delivery CONSUMES — polling one here would steal the
         # driver's feedback from the loop that is actually waiting on it.
+        # A study thread's page is the same: its engine is the loop waiting.
         by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
                   for p, m in sess.items()
-                  if m.get("open") and m.get("kind") != "external"}
+                  if m.get("open") and m.get("kind") not in ("external", "study")}
         for key in signalled:
             hit = by_key.get(key)
             if hit:
                 _consume(cfg, reg, ghc, log, hit[0], hit[1])
         sess = sessions(cfg)  # consuming may close sessions
+
+    # 1a) a study thread whose engine has gone, with a message waiting, wakes
+    try:
+        from . import study_thread
+        study_thread.wake(cfg, log, sess)
+    except Exception as e:
+        log(f"surface: waking study threads failed: {e}")
 
     # 1b) feedback queued on a page with no owner gets one
     _adopt_unowned(cfg, reg, log, sess)

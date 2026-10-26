@@ -99,11 +99,20 @@ What the page carries, in order:
    and message), what was verified, and anything from the spec you did NOT do
    and why. Then one row per instruction in the driver's last words above:
    their words quoted, what you did with them.
-3. **Evidence** — the commands you ran and what they printed, verbatim, inside
+3. **Understand what changed** — the driver has to be able to explain this
+   change to their team, so teach it, in at most one screen: what it does in
+   plain words, one or two short excerpts with `file:line`, then two or three
+   open questions about it (predict, explain, locate), each with your answer
+   folded in a `<details>` under it so they try before they look. Propose one
+   to three cards on it —
+   `echo '{"cards":[{"front":"In <repo>, …"}]}' | $pipeline cards propose --source <repo> --anchor <commit>` —
+   and list them, saying they wait on the Cards page (`/cards` on the fleet)
+   to be kept or dropped.
+4. **Evidence** — the commands you ran and what they printed, verbatim, inside
    `<details>` when long.
-4. **What still needs a human** — pushing, a decision the spec left open,
+5. **What still needs a human** — pushing, a decision the spec left open,
    anything you stopped short of.
-5. **Check it yourself** — one command, in `$cwd`.
+6. **Check it yourself** — one command, in `$cwd`.
 
 End the page with EXACTLY this verdict form, with `<TASK>` replaced by `$task`
 (three times) and the JavaScript unaltered. No double quotes inside attribute

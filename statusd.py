@@ -45,6 +45,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import cards as cards_mod
 from runnerlib import codestamp
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
@@ -131,6 +132,10 @@ STREAM_PATH = "/fleet/events"
 # away. Opening review-surface's /session/<key> as the whole tab left the
 # driver with nothing to click but the browser's back button.
 VIEW_PATH = "/view/"
+# Your deck (personal plus the team cards synced into it), and where a study
+# session is started from a page or from the deck.
+CARDS_PATH = "/cards"
+STUDY_PATH = "/study"
 # Keys archived from this server. The row leaves the snapshot at the daemon's
 # next pass; until then it is hidden here, so a click visibly does something.
 _ARCHIVED: set[str] = set()
@@ -204,6 +209,12 @@ body{display:flex;flex-direction:column}
 .bar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:#9aa4b2}
 iframe{flex:1;border:0;width:100%;background:#fff}
+.bar .study{display:flex;gap:.35rem}
+.bar .study input{background:#161a21;color:#e8e6e1;border:1px solid #2a2e36;
+  border-radius:4px;padding:.2rem .45rem;width:16rem;font:inherit}
+.bar .study button{background:#1f2630;color:#8fc7ff;border:1px solid #2a2e36;
+  border-radius:4px;padding:.2rem .6rem;font:inherit;cursor:pointer}
+.bar .notice{color:#b8e0a0}
 """
 
 # The frame is same-origin with this page (both come through this server), so
@@ -221,10 +232,29 @@ f.addEventListener('load',()=>{try{const d=f.contentDocument;
 """
 
 
-def render_view(key: str) -> str:
+def task_for_view(key: str, snap: dict | None = None) -> dict | None:
+    """The snapshot's row for the page this key opens, when it is a dialogue's
+    page: its task id, directory and file. The bar's study box needs them, and
+    the snapshot is what this server reads instead of the registry."""
+    snap = read_snapshot() if snap is None else snap
+    for r in snap.get("surfaces") or []:
+        if r.get("path") == SESSION_PREFIX + key and r.get("task"):
+            return r
+    return None
+
+
+def render_view(key: str, row: dict | None = None, notice: str = "") -> str:
     """The fleet's frame around one surface: a bar with the way back, and the
-    surface itself filling the rest of the window."""
+    surface itself filling the rest of the window. On a dialogue's page the
+    bar also starts a study session on a topic, now, beside that dialogue."""
     src = SESSION_PREFIX + escape(key)
+    study = (f'<form class="study" method="post" action="{STUDY_PATH}">'
+             '<input name="topic" required maxlength="300" '
+             'placeholder="study a topic before you rule…">'
+             f'<input type="hidden" name="from" value="{escape(str(row["task"]))}">'
+             f'<input type="hidden" name="back" value="{VIEW_PATH}{escape(key)}">'
+             '<button type="submit">study</button></form>') if row else ""
+    note = f'<span class="notice">{escape(notice)}</span>' if notice else ""
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             # The page server's ring mark. A fresh URL, because Chrome remembers an
@@ -234,6 +264,7 @@ def render_view(key: str) -> str:
             f'<title>Surface — Cadre</title><style>{_VIEW_CSS}</style></head><body>'
             '<nav class="bar"><a href="/">← fleet</a>'
             '<span class="title" id="title"></span>'
+            f'{note}{study}'
             f'<a id="alone" href="{src}" target="_blank" rel="noopener">open alone ↗</a></nav>'
             f'<iframe id="surface" src="{src}" title="surface"></iframe>'
             f'<script>{_VIEW_JS}</script></body></html>')
@@ -1550,6 +1581,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<span class="updated">snapshot {escape(str(stamp))}</span>'
         + (f'<a class="costs" href="{COSTS_PATH}">{escape(costs_mod.usd(week_usd))} '
            'in 7 days</a>' if week_usd is not None else "") +
+        f'<a class="costs" href="{CARDS_PATH}">cards</a>'
         '<span id="live" class="live">connecting…</span></header>'
         f'{banner}'
         # No fleet-wide task box: work belongs to a project, and the box asked
@@ -1742,6 +1774,68 @@ def _cost_rows(buckets: list[dict], label, limit: int | None = None) -> str:
                     f'<td class="scope">{b["runs"]} turn{"s" if b["runs"] != 1 else ""}'
                     f'{unpriced} · {usd(avg)} avg</td></tr>')
     return "".join(rows)
+
+
+def render_cards(deck: list[dict], due: int, dirs: list[str], notice: str = "",
+                 now: float | None = None) -> str:
+    """Your deck, on this machine: your own cards and the team cards synced
+    into it, what is due, and a box to start a study session. The deck is
+    never another backend's to read — /api/cards serves only a team's."""
+    banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
+    opts = "".join(f'<option value="{escape(d)}">{escape(d)}</option>'
+                   for d in dict.fromkeys(dirs))
+    study = (f'<section class="card"><h2>Study a topic</h2>'
+             f'<form class="newtask" method="post" action="{STUDY_PATH}">'
+             '<textarea name="topic" required placeholder="What do you need to understand?">'
+             '</textarea><div class="row">'
+             + (f'<select name="cwd">{opts}</select>' if opts else "")
+             + '<button type="submit">Study it</button></div>'
+             '<p class="meta">A tutor session: due cards first, one short idea, a few '
+             'questions, graded next round. It reads the code; it never changes it.</p>'
+             '</form></section>')
+
+    def row(c):
+        team = " · team card" if c.get("scope") == "team" else ""
+        when = (escape(str(c.get("fsrs_due") or ""))[:16].replace("T", " ")
+                if c["status"] == "accepted" else "")
+        return (f'<tr><td class="desc">{escape(c["front"])}</td>'
+                f'<td class="scope">{escape(c["source"])}'
+                f'{" · " + escape(c["anchor"]) if c.get("anchor") else ""}{team}</td>'
+                f'<td class="inv">{when or keep(c)}</td></tr>')
+
+    def keep(c):
+        # A proposed card waits on the driver: keep it into review or drop it.
+        if c["status"] != "proposed":
+            return ""
+        return (f'<form class="repair" method="post" action="{CARDS_PATH}">'
+                f'<input type="hidden" name="id" value="{escape(c["id"])}">'
+                '<button name="do" value="keep">keep</button>'
+                '<button name="do" value="drop" class="danger">drop</button></form>')
+
+    def table(title, rows):
+        return (f'<section class="card"><h2>{title}</h2><table class="lib">'
+                + "".join(row(c) for c in rows) + '</table></section>') if rows else ""
+
+    live = [c for c in deck if c["status"] == "accepted"]
+    proposed = [c for c in deck if c["status"] == "proposed"]
+    gone = sum(1 for c in deck if c["status"] == "discarded")
+    head = (f'<section class="card"><h2>Deck</h2><p><b>{due}</b> due now · '
+            f'<b>{len(live)}</b> in review · <b>{len(proposed)}</b> waiting for you to '
+            f'keep or discard · {gone} discarded.</p>'
+            '<p class="empty">Cards come due inside study sessions; start one below. '
+            'Pages that change code propose cards about the change; they wait under '
+            'Proposed until you keep or drop them. Team cards arrive with each '
+            'session\'s sync and are scheduled for you alone.</p></section>')
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>Cadre — cards</title><style>{_CSS}</style></head>'
+        '<body><div class="wrap"><header><h1>Cards<span class="dot">.</span></h1></header>'
+        f'<p class="meta"><a href="/">← fleet</a></p>'
+        f'{banner}{head}{study}'
+        f'{table("In review · soonest due first", sorted(live, key=lambda c: c.get("fsrs_due") or ""))}'
+        f'{table("Proposed", proposed)}'
+        '</div></body></html>')
 
 
 def render_costs(summary: dict, now: float | None = None) -> str:
@@ -2042,7 +2136,10 @@ def render_project(p: dict, projs: dict, rows_html: str, closed: list[dict],
                 '<textarea name="text" required placeholder="What should run in this project?">'
                 '</textarea><div class="row">'
                 f'<select name="cwd">{dir_opts}</select>'
-                '<button type="submit">Launch</button></div>'
+                '<button type="submit">Launch</button>'
+                # The same box, read as a topic: a tutor session on it, in the
+                # chosen directory, instead of a task.
+                '<button type="submit" name="node" value="tutor">Study it</button></div>'
                 f'{_run_picker(entries, p.get("launch") or "")}'
                 f'<p class="meta">everything installed: <a href="{LIBRARY_PATH}">library</a></p>'
                 f'</form><script>{_PICKER_JS}</script>')
@@ -2621,6 +2718,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _serve_api_cards(self):
+        """A team backend's deck, for teammates' machines to copy in
+        (`pipeline.py cards sync`). Only a backend configured as the team's
+        answers: a personal deck is never served, whatever this binds to."""
+        if not (_CFG and _CFG.learning.get("cards") == "team"):
+            self.send_error(404, "no team cards here")
+            return
+        body = json.dumps({"cards": cards_mod.export_team(_CFG.cards_dir)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
         p = projects_mod.resolve(projs, pid)
@@ -2654,12 +2767,83 @@ class Handler(BaseHTTPRequestHandler):
                                        notice=(query.get("notice") or [""])[0],
                                        starting=starting, doing=doing))
 
-    def _serve_view(self, key: str):
+    def _serve_view(self, key: str, query: dict | None = None):
         key = urllib.parse.unquote(key).strip("/")
         if not SESSION_KEY.fullmatch(key):
             self.send_error(404, "no such surface")
             return
-        self._send_html(render_view(key))
+        notice = ((query or {}).get("notice") or [""])[0][:300]
+        self._send_html(render_view(key, task_for_view(key), notice))
+
+    def _serve_cards(self, query: dict):
+        notice = (query.get("notice") or [""])[0][:300]
+        if not _CFG:
+            self._send_html(render_cards([], 0, [], "No runner config: no deck here."))
+            return
+        try:
+            deck = cards_mod.listing(_CFG.cards_dir)
+            due = len(cards_mod.due(_CFG.cards_dir))
+        except Exception as e:                      # a broken deck must not 500 the page
+            deck, due, notice = [], 0, f"The deck could not be read: {e}"
+        projs = load_projects()
+        dirs = [d for p in projs.values() if not p.get("archived") for d in p.get("dirs") or ()]
+        self._send_html(render_cards(deck, due, dirs, notice))
+
+    def _cards_post(self):
+        """POST /cards: keep (accept) or drop (discard) one proposed card."""
+        form = self._form()
+        if form is None:
+            return
+        if not _CFG:
+            self._redirect(CARDS_PATH, "No runner config: no deck here.")
+            return
+        cid, do = form.get("id", ""), form.get("do", "")
+        try:
+            if do == "keep":
+                cards_mod.accept(_CFG.cards_dir, cid)
+                notice = "Kept — it comes due in your next study session."
+            elif do == "drop":
+                cards_mod.discard(_CFG.cards_dir, cid)
+                notice = "Dropped."
+            else:
+                notice = "Nothing done: keep or drop?"
+        except Exception as e:                      # a bad id must not 500 the page
+            notice = f"Nothing done: {e}"
+        self._redirect(CARDS_PATH, notice)
+
+    def _study(self):
+        """POST /study: topic, and either `from` (the dialogue whose page needs
+        it — from the bar above a page) or `cwd` (from the deck). `back` is
+        where to land with the outcome."""
+        form = self._form()
+        if form is None:
+            return
+        back = form.get("back") or CARDS_PATH
+        if not (back.startswith(VIEW_PATH) or back == CARDS_PATH):
+            back = CARDS_PATH
+        if not _CFG:
+            self._redirect(back, "No runner config: a study session cannot start here.")
+            return
+        row = None
+        if form.get("from"):
+            row = next((r for r in read_snapshot().get("surfaces") or []
+                        if r.get("task") == form["from"]), None)
+        cwd = (row or {}).get("cwd") or form.get("cwd") or ""
+        if not cwd:
+            # Never this server's own directory: a study runs where the code is.
+            self._redirect(back, "Study not started: no directory to study in — "
+                                 "the page is not on the fleet yet, or none was picked.")
+            return
+        try:
+            from runnerlib import tasks as tasks_mod
+            result = tasks_mod.submit_study(
+                _CFG, form.get("topic", ""), from_task=form.get("from") or None,
+                cwd=cwd, page=(row or {}).get("artifact"))
+        except Exception as e:                      # a bad ask must not 500 the page
+            self._redirect(back, f"Study not started: {e}")
+            return
+        self._redirect(back, "Study started — it joins the fleet when its first "
+                             "round is ready.")
 
     def _serve_costs(self, as_json: bool):
         summary = costs_mod.summarize(*load_costs())
@@ -2751,8 +2935,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             from runnerlib import tasks as tasks_mod
-            result = tasks_mod.submit_task(_CFG, form["text"], form.get("cwd") or None,
-                                           project=pid, run=form.get("run") or None)
+            if form.get("node") == tasks_mod.TUTOR:
+                result = tasks_mod.submit_study(_CFG, form["text"], cwd=form.get("cwd") or None,
+                                                project=pid)
+            else:
+                result = tasks_mod.submit_task(_CFG, form["text"], form.get("cwd") or None,
+                                               project=pid, run=form.get("run") or None)
         except Exception as e:                      # a bad launch must not 500 the page
             self._redirect(back, f"Not launched: {e}")
             return
@@ -2987,6 +3175,18 @@ class Handler(BaseHTTPRequestHandler):
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
             return
+        if path == CARDS_PATH and self.command in ("GET", "HEAD"):
+            self._serve_cards(query)
+            return
+        if path == CARDS_PATH and self.command == "POST":
+            self._cards_post()
+            return
+        if path == STUDY_PATH and self.command == "POST":
+            self._study()
+            return
+        if path == cards_mod.API_PATH and self.command in ("GET", "HEAD"):
+            self._serve_api_cards()
+            return
         if path == STREAM_PATH and self.command == "GET":
             self._serve_stream()
             return
@@ -3000,7 +3200,7 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_page(urllib.parse.unquote(path.rsplit("/", 1)[-1]), query)
             return
         if path.startswith(VIEW_PATH) and self.command in ("GET", "HEAD"):
-            self._serve_view(path[len(VIEW_PATH):])
+            self._serve_view(path[len(VIEW_PATH):], query)
             return
         if path in ("", HOME_PATH) and self.command in ("GET", "HEAD"):
             self._serve_home(query)
