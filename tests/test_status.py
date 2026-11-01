@@ -550,6 +550,45 @@ def test_history_renders_journal_batches_newest_first():
         assert "session ended" in html
 
 
+def test_journal_is_parsed_once_per_change_and_per_concurrent_burst():
+    with tempfile.TemporaryDirectory() as d:
+        journal = Path(d) / "feedback-journal.jsonl"
+        journal.write_text(json.dumps({"file": "a.html", "at": "1"}) + "\n"
+                           + json.dumps({"file": "b.html", "at": "2"}) + "\n")
+        real_read, reads = Path.read_text, []
+
+        def counting_read(self, *a, **k):
+            if self == journal:
+                reads.append(1)
+                time.sleep(0.05)        # long enough for the burst to overlap
+            return real_read(self, *a, **k)
+
+        Path.read_text = counting_read
+        try:
+            threads = [threading.Thread(target=statusd.journal_batches,
+                                        args=("a.html", Path(d))) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            assert [b["at"] for b in statusd.journal_batches("b.html", Path(d))] == ["2"]
+            assert len(reads) == 1
+
+            # an accepted batch shows up on the next read
+            with journal.open("a") as f:
+                f.write(json.dumps({"file": "a.html", "at": "3"}) + "\n")
+            assert [b["at"] for b in statusd.journal_batches("a.html", Path(d))] == ["1", "3"]
+            assert len(reads) == 2
+
+            # a caller's list is its own, and a vanished journal reads as empty
+            statusd.journal_batches("a.html", Path(d)).clear()
+            assert len(statusd.journal_batches("a.html", Path(d))) == 2
+            journal.unlink()
+            assert statusd.journal_batches("a.html", Path(d)) == []
+        finally:
+            Path.read_text = real_read
+
+
 def test_fleet_rows_carry_live_state_and_history_links():
     with tempfile.TemporaryDirectory() as d:
         artifact = str(Path(d) / "art.html")

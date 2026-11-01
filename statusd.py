@@ -535,6 +535,35 @@ def render_dead_letter(name: str, rec: dict) -> str:
             f'</div></body></html>')
 
 
+# Journal path -> (size, mtime_ns, {artifact: batches}). The fleet asks once per
+# surface on every payload, so the file is parsed once per change, not per ask.
+_JOURNALS: dict[Path, tuple[int, int, dict[str, list[dict]]]] = {}
+_JOURNALS_LOCK = threading.Lock()
+
+
+def _journal_index(journal: Path) -> dict[str, list[dict]]:
+    """Every batch in the journal, by artifact. The lock is held across the
+    parse so concurrent requests wait for one read instead of each doing it."""
+    with _JOURNALS_LOCK:
+        try:
+            st = journal.stat()
+            hit = _JOURNALS.get(journal)
+            if hit and hit[:2] == (st.st_size, st.st_mtime_ns):
+                return hit[2]
+            index: dict[str, list[dict]] = {}
+            for line in journal.read_text().splitlines():
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                index.setdefault(rec.get("file"), []).append(rec)
+        except OSError:
+            _JOURNALS.pop(journal, None)
+            return {}
+        _JOURNALS[journal] = (st.st_size, st.st_mtime_ns, index)
+        return index
+
+
 def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
     """The per-surface answer history: every feedback batch the driver ever
     sent, from the feedback journal review-surface writes at accept time
@@ -544,22 +573,10 @@ def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
     artifact path it belongs to — filter, don't glob."""
     if not artifact:
         return []
-    out = []
-    try:
-        root = Path(state_dir) if state_dir is not None else Path(
-            os.environ.get("REVIEW_SURFACE_STATE_DIR")
-            or Path.home() / ".review-surface")
-        journal = root / "feedback-journal.jsonl"
-        for line in journal.read_text().splitlines():
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("file") == artifact:
-                out.append(rec)
-    except OSError:
-        pass
-    return out
+    root = Path(state_dir) if state_dir is not None else Path(
+        os.environ.get("REVIEW_SURFACE_STATE_DIR")
+        or Path.home() / ".review-surface")
+    return list(_journal_index(root / "feedback-journal.jsonl").get(artifact, []))
 
 
 def render_history(sf: dict, batches: list[dict]) -> str:
