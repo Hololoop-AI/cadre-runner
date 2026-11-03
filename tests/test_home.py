@@ -101,3 +101,48 @@ def test_backend_section_draws_the_strip_above_the_work_list():
         "snap": {}, "projs": {}}
     html = statusd.render_backend({"url": "http://m"}, data, None, NOW)
     assert html.index("Running now") < html.index("On the strip")
+
+
+# ------------------------------------------------------------------ items
+
+TREE = {"root": {"title": "Where to take Cadre next", "parent": "", "since": 1},
+        "kid": {"title": "Track A", "parent": "root", "since": 2, "working": True},
+        "grandkid": {"title": "Track A helper", "parent": "kid", "since": 3}}
+
+
+def _sf(key, task, opened, project="cadre", title=None):
+    return {"kind": "task", "path": f"/session/{key}", "key": key, "task": task,
+            "project": project, "opened": opened, "title": title or f"page {key}",
+            "artifact": f"/a/{key}.html"}
+
+
+def test_items_group_pages_under_the_root_of_their_session_tree():
+    surfaces = [_sf("r1", "root", NOW - 50), _sf("k1", "kid", NOW - 10),
+                _sf("g1", "grandkid", NOW - 30), _sf("lone", "solo", NOW - 5, project="")]
+    items = statusd.fleet_items(surfaces, TREE, {})
+    assert [it["key"] for it in items] == ["solo", "root"]          # newest touch first
+    root = items[1]
+    assert root["title"] == "Where to take Cadre next"
+    assert root["head"]["key"] == "r1"                              # opens the root's own page
+    assert {sf["key"] for sf in root["pages"]} == {"r1", "k1", "g1"}
+    assert root["touched"] == NOW - 10
+
+
+def test_a_page_with_no_task_is_an_item_of_its_own():
+    items = statusd.fleet_items([{"path": "/session/x", "key": "x", "title": "Loose",
+                                  "opened": NOW}], {}, {})
+    assert [(it["key"], it["title"]) for it in items] == [("page:x", "Loose")]
+
+
+def test_home_draws_items_with_pages_threads_slot_and_started_agents():
+    snap = {"surfaces": [_sf("r1", "root", NOW - 50, title="Root page"),
+                         _sf("k1", "kid", NOW - 10, title="Kid page")]}
+    html = statusd.render_fleet(snap, NOW, tree=TREE, by_item=True)
+    assert html.count('class="rowline item fold"') == 1
+    assert 'data-item="root"' in html and 'data-project="cadre"' in html
+    assert "Where to take Cadre next" in html and "2 pages" in html and "2 agents" in html
+    assert html.count('href="/view/k1"') == 1                       # never linked twice
+    assert "Message threads" in html and 'class="threads" data-item="root"' in html
+    assert "Agents started from this" in html and "Track A helper" in html
+    assert 'class="projfilter"' in html and '<option value="cadre">' in html
+    assert 'class="repo">cadre<' not in html                        # no project sections

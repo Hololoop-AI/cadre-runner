@@ -286,7 +286,7 @@ def test_repairs_move_replace_and_refuse_by_the_link_rules():
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "cadre"})
             assert "Moved+to+cadre" in loc
-            assert f'<span class="repo">cadre</span>' in env.get("/?partial=1")
+            assert 'data-project="cadre"' in env.get("/?partial=1")  # project is a filter on home
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "../etc"})
             assert "Refused" in loc

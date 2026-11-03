@@ -1101,6 +1101,24 @@ span.row.starting .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;
 .running-now .agentcard:first-of-type{border-top:0}
 .running-now .rtitle{margin:0;display:flex;flex-wrap:wrap;gap:.35rem .6rem;align-items:baseline}
 .running-now .rmeta{margin:.15rem 0 0;color:var(--muted);font-size:.8rem}
+.items h2 .badge{margin-left:.6rem;text-transform:none;letter-spacing:0}
+.items select.projfilter{float:right;text-transform:none;letter-spacing:0;font-size:.78rem;
+ background:var(--card-2);color:var(--fg);border:1px solid var(--border);border-radius:6px}
+details.item{display:block;border-top:1px solid var(--border)}
+details.item > summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem;
+ padding:.6rem .5rem;cursor:pointer;list-style:none}
+details.item > summary::-webkit-details-marker{display:none}
+details.item > summary:hover{background:var(--soft)}
+details.item > summary{font-family:var(--sans);color:var(--fg)}
+details.item details summary::before{content:none}
+details.item details summary{font-family:var(--mono)}
+details.item > summary .title{flex:1 1 12rem;font-size:.9rem;color:var(--fg)}
+details.item > summary .go{color:var(--accent);font-size:.78rem;font-family:var(--mono);text-decoration:none}
+details.item .igroups{padding:0 .5rem .6rem 1.2rem}
+details.item h4{margin:.5rem 0 .2rem;font-size:.68rem;text-transform:uppercase;
+ letter-spacing:.08em;color:var(--label)}
+.prow{display:flex;align-items:center;gap:.2rem}
+.prow > a.row{flex:1;min-width:0}
 .running-now a{color:var(--accent);text-decoration:none}
 .running-now .rmeta.folder{font-family:var(--mono);font-size:.72rem}
 .running-now h2 .badge{margin-left:.6rem;text-transform:none;letter-spacing:0}
@@ -1148,6 +1166,8 @@ details.fold summary{cursor:pointer;color:var(--label);font-family:var(--mono);
 details.fold summary::before{content:'▸ ';color:var(--ok)}
 details.fold[open] summary::before{content:'▾ '}
 details.fold summary:hover{color:var(--fg)}
+details.fold.item > summary{font-family:var(--sans);color:var(--fg)}
+details.item details > summary::before{content:none}
 #filter{width:100%;padding:.5rem .7rem;margin-bottom:.9rem;
  border:1px solid var(--border);border-radius:9px;background:var(--card);
  color:var(--fg);font:inherit;font-size:.88rem}
@@ -1327,17 +1347,22 @@ _PAGE_JS = """
  function applyFilter(){
   var f=document.getElementById('filter');
   var q=(f&&f.value||'').toLowerCase();
+  var pf=document.querySelector('#fleet select.projfilter'),proj=pf?pf.value:'';
   document.querySelectorAll('#fleet section.card').forEach(function(sec){
    var any=false, rows=sec.querySelectorAll('.rowline,.story');
    rows.forEach(function(r){
-    var hit=!q||r.textContent.toLowerCase().indexOf(q)>-1;
+    var hit=(!q||r.textContent.toLowerCase().indexOf(q)>-1)&&
+     (!proj||!r.dataset.item||r.dataset.project===proj);
     r.style.display=hit?'':'none'; if(hit)any=true;
    });
-   sec.style.display=(!q||any||!rows.length)?'':'none';
+   sec.style.display=(!q||any||!rows.length||sec.classList.contains('items'))?'':'none';
   });
   // a match hidden inside a closed fold is a match the driver can't see
-  if(q)document.querySelectorAll('#fleet details.fold').forEach(function(d){d.open=true});
+  if(q)document.querySelectorAll('#fleet details.fold:not(.item)').forEach(function(d){d.open=true});
  }
+ document.addEventListener('change',function(e){
+  if(e.target.matches&&e.target.matches('select.projfilter'))applyFilter();
+ });
  // Find across everything: the row filter above only sees what is listed;
  // this asks the server about every page ever opened, folded rounds included.
  var findT=null;
@@ -1410,8 +1435,10 @@ _PAGE_JS = """
     var el=document.getElementById('fleet');if(!el)return;
     var open={};  // fold state is DOM state — carry it across the swap
     el.querySelectorAll('details.fold[open]').forEach(function(d){open[d.dataset.fold]=1});
+    var pf=el.querySelector('select.projfilter'),proj=pf?pf.value:'';
     el.innerHTML=h;
     el.querySelectorAll('details.fold').forEach(function(d){if(open[d.dataset.fold])d.open=true});
+    pf=el.querySelector('select.projfilter');if(pf)pf.value=proj;
     applyFilter();markPicked();
    })
    .catch(function(){});
@@ -1511,7 +1538,7 @@ def render_fleet(snap: dict, now: float | None = None,
                  starting: dict | None = None, doing: dict | None = None,
                  spent: dict | None = None, histories: dict | None = None,
                  own=None, returned: dict | None = None,
-                 tree: dict | None = None) -> str:
+                 tree: dict | None = None, by_item: bool = False) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1533,7 +1560,9 @@ def render_fleet(snap: dict, now: float | None = None,
     when each task's newest turn ended, which is how new the work is — the
     page server's own timestamp also moves when the driver merely opens the
     page. `tree` is session_tree.load(): which session launched which, drawn
-    as a dropdown under every row that launched others."""
+    as a dropdown under every row that launched others. `by_item` draws the
+    home page's shape instead of project sections: one item per agent thread
+    (see fleet_items)."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     tree = tree_mod.clean(tree)
@@ -1689,6 +1718,12 @@ def render_fleet(snap: dict, now: float | None = None,
             (decided if settled else rows).append(row)
         return byline, rows, decided, len(rows_src)
 
+    if by_item:
+        return code_line(snap, own=own, now=now) + _items_html(
+            snap, now, tree, kids, projs or {}, starting or {}, doing, statuses, returned,
+            {"live": _live, "spent": _spent, "history": _history_link,
+             "menu": _page_link, "opened": _opened})
+
     exts = external_projects(snap)
     projs = projs or {}
     finished = finished or {}
@@ -1807,6 +1842,126 @@ def render_running(cards: list[dict], now: float | None = None) -> str:
                    f'<p class="rmeta folder">{escape(str(c.get("folder") or ""))}</p></div>')
     return (f'<section class="card running-now"><h2>Running now'
             f'<span class="badge">{len(out)}</span></h2>{"".join(out)}</section>')
+
+
+def _item_root(task: str, parents: dict) -> str:
+    return (tree_mod.ancestors(task, parents) or [task])[0]
+
+
+def fleet_items(surfaces: list[dict], tree: dict, projs: dict,
+                statuses: dict | None = None, returned: dict | None = None) -> list[dict]:
+    """The home page's items: one per agent thread, newest touch first.
+
+    An item is a root task of the session tree plus everything started from
+    it; a task nothing started and that started nothing is its own item. Each
+    collapsed page (conversations.collapse has already folded a dialogue's
+    rounds into one) files under the item its task belongs to; a page with no
+    task is an item of its own. Returns dicts carrying key (the root task id,
+    or "page:<key>"), title, head (the page the item opens), pages, project
+    (the durable project id, "" when none claims it) and touched (epoch).
+    """
+    statuses, returned = statuses or {}, returned or {}
+    parents = tree_mod.parents_of(tree)
+    by_name = {n: pid for pid in projs for n in projects_mod.names_of(projs, pid)}
+    items: dict[str, dict] = {}
+    for sf in surfaces:
+        if not sf.get("path") or conv_mod.key_of(sf) in _ARCHIVED:
+            continue
+        task = str(sf.get("task") or "")
+        key = _item_root(task, parents) if task else f'page:{conv_mod.key_of(sf)}'
+        it = items.setdefault(key, {"key": key, "pages": []})
+        it["pages"].append(sf)
+    out = []
+    for key, it in items.items():
+        pages = sorted(it["pages"], key=lambda sf: -(sf.get("opened") or 0))
+        head = next((sf for sf in pages if str(sf.get("task") or "") == key), pages[0])
+        # The durable project's id when one claims the page, else the name
+        # the page was registered under: either way the filter can reach it.
+        pid = by_name.get(str(head.get("project") or ""))
+        if pid is None:
+            owner = projects_mod.for_dir(projs, head.get("cwd") or "")
+            pid = owner["id"] if owner else str(head.get("project") or "")
+
+        def _touch(sf):
+            st = statuses.get(str(sf.get("path") or "").rsplit("/", 1)[-1]) or {}
+            return max(float(sf.get("opened") or 0), _iso_epoch(st.get("updated_at")),
+                       float(returned.get(str(sf.get("task") or "")) or 0))
+        out.append({"key": key, "head": head, "pages": pages, "project": pid,
+                    "title": str((tree.get(key) or {}).get("title") or head.get("title")
+                                 or head.get("task") or head.get("kind") or "page"),
+                    "touched": max(_touch(sf) for sf in pages)})
+    out.sort(key=lambda it: -it["touched"])
+    return out
+
+
+def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returned,
+                bits) -> str:
+    """render_fleet's by-item body. `bits` are render_fleet's per-row badge
+    and link helpers, so a page reads the same here as on a project page."""
+    items = fleet_items(snap.get("surfaces") or [], tree, projs, statuses, returned)
+
+    def _prow(sf, cls):
+        badge, hover = bits["opened"](sf)
+        title = escape(str(sf.get("title") or sf.get("kind") or ""))
+        return (f'<div class="{cls}"><a class="row"{hover} href="{escape(view_href(sf["path"]))}">'
+                f'<span class="title">{title}</span>{bits["live"](sf)}{badge}{bits["spent"](sf)}'
+                f'<span class="go">open →</span></a>{bits["history"](sf)}{bits["menu"](sf)}</div>')
+
+    rows = []
+    for it in items:
+        key, head = it["key"], it["head"]
+        n_agents = tree_mod.descendants(key, kids)
+        count = (f'<span class="badge">{len(it["pages"])} pages</span>'
+                 if len(it["pages"]) > 1 else "")
+        agents = (f'<span class="badge">{n_agents} agent{"s" if n_agents != 1 else ""}</span>'
+                  if n_agents else "")
+        # The head page is the item's own row; the list holds the rest, so no
+        # page is linked twice.
+        others = [sf for sf in it["pages"] if sf is not head]
+        pages = ("".join(_prow(sf, "prow") for sf in others)
+                 or '<p class="empty">No other pages.</p>')
+        started = (tree_list(key, tree, kids, now) if n_agents else
+                   '<p class="empty">None.</p>')
+        rows.append(
+            f'<details class="rowline item fold" data-fold="{escape(key)}" '
+            f'data-item="{escape(key)}" data-project="{escape(it["project"])}">'
+            f'<summary><span class="title">{escape(it["title"])}</span>{bits["live"](head)}'
+            f'{count}{agents}'
+            f'<a class="go" href="{escape(view_href(head["path"]))}">open →</a>'
+            f'{bits["history"](head)}{bits["menu"](head)}</summary>'
+            f'<div class="igroups"><h4>Other pages</h4>{pages}'
+            # Track B's message threads land here; the slot is drawn now so
+            # the item's shape does not change when they arrive.
+            f'<h4>Message threads</h4><div class="threads" data-item="{escape(key)}">'
+            f'<p class="empty">None yet.</p></div>'
+            f'<h4>Agents started from this</h4>{started}</div></details>')
+    # Launched work with no page yet that is not running: the strip shows the
+    # running ones, but "never started" and "ran, wrote no page" must stay seen.
+    stuck = [s for rows_ in starting.values() for s in rows_ if not s.get("running")]
+    out = ""
+    if stuck:
+        out += (f'<section class="card"><h2>Launched, no page yet</h2>'
+                f'{starting_rows(stuck, now, doing)}</section>')
+    # Project is a filter now, not the page's sections: every live project
+    # stays one pick away even with nothing in it.
+    names = {p["id"]: p["name"] for p in projects_mod.live(projs)}
+    for it in items:
+        names.setdefault(it["project"], it["project"])
+    names.pop("", None)
+    opts = "".join(f'<option value="{escape(k)}">{escape(v)}</option>'
+                   for k, v in sorted(names.items(), key=lambda kv: kv[1].lower()))
+    out += (f'<section class="card items"><h2>Work<span class="badge">{len(rows)}</span>'
+            f'<select class="projfilter" aria-label="project">'
+            f'<option value="">every project</option>{opts}</select></h2>'
+            + ("".join(rows) or '<p class="empty">No work yet. Start some with New work.</p>')
+            + '</section>')
+    # Pipeline stories (the PR pipeline's own work) keep their sections.
+    for p in fleet(snap):
+        flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
+                if p["attention"] else "")
+        out += (f'<section class="card project"><h2><span class="repo">{escape(p["repo"])}'
+                f'</span>{flag}</h2>{"".join(_story_html(s, now) for s in p["stories"])}</section>')
+    return out
 
 
 def code_line(snap: dict, own=None, now: float | None = None) -> str:
@@ -2763,7 +2918,7 @@ def render_backend(b: dict, data: dict | None, err: str | None,
                         starting=data.get("starting") or {}, doing=data.get("doing") or {},
                         spent=data.get("spent") or {}, histories=data.get("histories") or {},
                         own=own, returned=data.get("returned") or {},
-                        tree=data.get("tree") or {})
+                        tree=data.get("tree") or {}, by_item=True)
     return head + backends_mod.point_at(body, b, same) + '</div>'
 
 
