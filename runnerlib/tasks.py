@@ -30,6 +30,7 @@ CLI, never merge, never push to main) and prepending it to a node that has no
 repo, no PR and no story would be instructions for a different world.
 """
 
+import os
 import re
 import time
 import uuid
@@ -155,7 +156,7 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 
 
 def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
-                node: str = NODE) -> str:
+                node: str = NODE, parent=None) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
@@ -172,6 +173,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     session.
 
     `node` starts the task on another seeded node (`tutor`) instead of `task`.
+
+    `parent` files the task under another task's item on the home page — the
+    New work dialog's "part of" field. Given, it wins over CADRE_TASK.
     """
     if node != NODE and node not in NODES:
         raise ValueError(f"no dialogue node {node!r} — one of {', '.join(NODES)}")
@@ -210,6 +214,10 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
         entry = library.resolve(library.scan(dirs=[cwd], skills_source=cfg.skills_source), run)
         picked = {"run": f"{entry['kind']}:{entry['name']}", "invoke": entry["invoke"]}
     task_id = new_id(title)
+    # Launched from inside a session: that session's task is the parent, which
+    # is how the fleet draws an orchestrator's tree (session_tree.py). A
+    # parent the caller names (the driver, picking an item) wins.
+    parent = (parent or "").strip() or os.environ.get("CADRE_TASK")
 
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
     seed(cfg.data_dir, cfg)
@@ -221,7 +229,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
                      "task": task_id, "story": task_id,
                      "title": title, "task_text": text, "cwd": cwd,
                      "iteration": "1",
-                     **({"project": proj["id"]} if proj else {}), **picked})
+                     **({"project": proj["id"]} if proj else {}),
+                     **({"parent": parent} if parent else {}),
+                     **picked})
     finally:
         board.close()
     return task_id

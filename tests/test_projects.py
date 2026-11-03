@@ -468,12 +468,12 @@ def test_project_pages_create_launch_and_archive_through_the_page_server():
         assert calls == [("fix the header", str(work), {"project": "web", "run": "skill:x"})]
 
         code, body = srv.get("/")
-        assert 'href="/project/web"' in body, "an empty project is still on the fleet"
+        assert '<option value="web">' in body, "an empty project is still on the fleet's filter"
 
         code, loc = srv.post("/projects/web/archive", {"archived": "1"})
         assert code == 303 and projects.load(root)["web"]["archived"] is True
         code, body = srv.get("/?partial=1")
-        assert "/project/web" not in body
+        assert "/project/web" not in body and '<option value="web">' not in body
 
         code, loc = srv.post(statusd.PROJECTS_PATH, {"name": "bad", "dirs": "relative"})
         assert code == 303 and "not+created" in loc.lower()

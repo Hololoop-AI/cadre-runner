@@ -144,21 +144,17 @@ def test_find_reaches_folded_rounds_and_pages_never_on_the_fleet():
     assert conv.find("", _discussion(), [], {}, pages) == []
 
 
-def test_dispatch_rows_give_visible_feedback():
-    """'The fedora-1 system isn't clickable still' — it was; nothing visibly
-    happened. The page now marks the row, names the target in the form, and
-    flashes the form."""
+def test_the_home_page_has_no_dispatch_rows():
+    """The home page lists items made of pages. A registered checkout used to
+    be a row that prefilled a fleet-wide task box with its folder; New work's
+    folder field (with the projects' folders one click away) does that now, so
+    no checkout row and none of its click script is on the home page."""
     snap = {"surfaces": [{"path": "", "title": "fedora-1 system", "project": "cadre",
                           "kind": "external", "role": "checkout",
                           "cwd": "/home/x/cadre", "opened": 1.0}]}
     page = statusd.render_home(snap, now=0)
-    assert 'data-name="fedora-1 system"' in page and 'aria-pressed="false"' in page
-    # The row used to prefill a fleet-wide task box with this checkout's path.
-    # That box is gone — a project knows its own directory, so there is no
-    # path to prefill — and the row's job is now to open the project.
-    for hook in ("markPicked", "showTarget", "classList.add('flash')", "selected ✓"):
-        assert hook in page
-    assert ".card.flash" in page and ".story.dispatch.picked" in page
+    assert 'data-name="fedora-1 system"' not in page and "dispatchTo" not in page
+    assert 'id="workdir"' in page and 'class="sugg"' in page
 
 
 # ------------------------------------------------------------- http surface
@@ -286,7 +282,7 @@ def test_repairs_move_replace_and_refuse_by_the_link_rules():
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "cadre"})
             assert "Moved+to+cadre" in loc
-            assert f'<span class="repo">cadre</span>' in env.get("/?partial=1")
+            assert 'data-project="cadre"' in env.get("/?partial=1")  # project is a filter on home
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "../etc"})
             assert "Refused" in loc
