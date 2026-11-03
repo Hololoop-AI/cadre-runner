@@ -1029,7 +1029,7 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
             # heard.
             tasks_mod.mark_closing(reg, task_id)
             tasks_mod.write_feedback(cfg, reg, task_id, meta.get("cwd") or "",
-                                     notes, closing=True)
+                                     notes, closing=True, page=path)
             log(f"surface: {task_id} approved with {len(written)} annotation(s) — "
                 f"closing turn resumes the session to act on them and record "
                 f"the decision on the page; the dialogue closes when it ends")
@@ -1049,7 +1049,8 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         # line saying so is the bridge's, not words put in the driver's mouth.
         notes = [{"text": "Continue — the driver asked for another round "
                           "without annotating this page."}]
-    ev = tasks_mod.write_feedback(cfg, reg, task_id, meta.get("cwd") or "", notes)
+    ev = tasks_mod.write_feedback(cfg, reg, task_id, meta.get("cwd") or "", notes,
+                                  page=path)
     if ev is None:
         return
     log(f"surface: {task_id} round {ev['payload']['iteration']} requested — "

@@ -224,3 +224,10 @@ button, input[type="submit"] {
   cursor: pointer;
 }
 button:hover { filter: brightness(1.1); }
+
+/* A kept copy of an earlier round (runnerlib/tasks.py archive_round): it must
+   read as "not the current page" at a glance, before any of its content. */
+.prior-round {
+  border: 1px solid var(--accent); border-left-width: 4px; border-radius: 8px;
+  padding: 10px 14px; margin: 12px auto; background: var(--panel-2);
+}
