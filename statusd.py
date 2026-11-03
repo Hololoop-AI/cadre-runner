@@ -1830,6 +1830,19 @@ def render_fleet(snap: dict, now: float | None = None,
     return code_line(snap, own=own, now=now) + "".join(out)
 
 
+def render_inbox(data: dict | None = None, now: float | None = None) -> str:
+    """Track A's slot: questions agents ask mid-run, drawn above Running now.
+    Empty until track A lands; the call site is here so it lands as a fill-in,
+    not a layout change."""
+    return ""
+
+
+def render_footer_hooks() -> str:
+    """Track B's slot at the foot of the home page (the message-thread
+    messenger). Empty until track B lands."""
+    return ""
+
+
 def render_running(cards: list[dict], now: float | None = None) -> str:
     """The Running now strip: one card per running_agents() card, above the
     work list. Says plainly when nothing runs — an absent strip reads the same
@@ -1961,6 +1974,8 @@ def item_facts(items: list[dict], tree: dict, kids: dict, statuses: dict, doing:
         it["spent"] = sum(float(spent.get(t) or 0) for t in tasks)
         it["unseen"] = [(statuses.get(conv_mod.key_of(sf) or "") or {}).get("unseen")
                         for sf in it["pages"]]
+        it["viewed"] = [_iso_epoch((statuses.get(conv_mod.key_of(sf) or "") or {})
+                                   .get("viewed_at")) for sf in it["pages"]]
     return items
 
 
@@ -1986,6 +2001,34 @@ def _item_controls(sort: str, show: str, tag: str, tags: list, limit: int,
             f'<noscript><button type="submit">apply</button></noscript></form>')
 
 
+def catch_up_text(it: dict) -> str:
+    """The ask a Catch me up press sends: a short brief on this item since
+    the driver last opened it, from its own pages and the agents under it."""
+    seen = max((float(v) for v in it.get("viewed") or () if v), default=0.0)
+    since = (time.strftime("%Y-%m-%d %H:%M", time.localtime(seen)) if seen
+             else "the last time I opened any of its pages (the page server may not know)")
+    pages = "\n".join(f"- {sf.get('title') or sf.get('kind') or 'page'}: {sf.get('artifact') or ''}"
+                      for sf in it["pages"])
+    return (f"Catch me up on \"{it['title']}\": a short brief, one screen, of what changed "
+            f"in this line of work since {since}. Read its pages and what the agents started "
+            f"from it reported; say what is decided, what moved, and what waits on me. "
+            f"Change nothing.\n\nIts pages:\n{pages}")
+
+
+def _catch_up(key: str, it: dict) -> str:
+    """A Catch me up button on an idle item. It only ever runs when pressed:
+    it posts a New work request filed under this item."""
+    cwd = str(it["head"].get("cwd") or "")
+    if it.get("state") != items_mod.IDLE or key.startswith("page:") or not cwd:
+        return ""
+    return (f'<form method="post" action="{TASKS_PATH}">'
+            f'<input type="hidden" name="text" value="{escape(catch_up_text(it))}">'
+            f'<input type="hidden" name="cwd" value="{escape(cwd)}">'
+            f'<input type="hidden" name="parent" value="{escape(key)}">'
+            '<button type="submit" title="starts an agent that writes a short brief of '
+            'what changed since you last opened this">Catch me up</button></form>')
+
+
 def _item_actions(key: str, it: dict) -> str:
     """Done, hide and tags for one item: POST /items, back to the home page."""
     def _btn(action, label):
@@ -2002,7 +2045,7 @@ def _item_actions(key: str, it: dict) -> str:
         f'<input type="hidden" name="tag" value="{escape(t)}">'
         f'<button type="submit" title="remove this tag">{escape(t)} ×</button></form>'
         for t in it["tags"])
-    return (f'<div class="itemactions">{done}{hide}{untag}'
+    return (f'<div class="itemactions">{_catch_up(key, it)}{done}{hide}{untag}'
             f'<form method="post" action="{ITEMS_PATH}">'
             f'<input type="hidden" name="item" value="{escape(key)}">'
             '<input type="hidden" name="action" value="tag">'
@@ -2176,6 +2219,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<a href="{RUNS_PATH}">every run, newest first</a> · '
         f'<a href="{TREE_PATH}">which session launched which</a> · '
         f'<a href="{COSTS_PATH}">what each run cost</a></footer>'
+        f'{render_footer_hooks()}'
         f'</div><script>{_PAGE_JS}</script></body></html>')
 
 
@@ -3093,7 +3137,7 @@ def render_backend(b: dict, data: dict | None, err: str | None,
     code = data.get("fleet_page_code") or {}
     own = SimpleNamespace(stale=lambda: bool(code.get("stale")),
                           since=code.get("since"), head=code.get("head"))
-    body = render_running(data.get("running") or [], now) + render_recent(
+    body = render_inbox(data, now) + render_running(data.get("running") or [], now) + render_recent(
         data.get("recent") or [], now) + render_fleet(
                         data.get("snap") or {}, now, statuses=data.get("statuses") or {},
                         graph=tuple(data.get("graph") or ([], {}, {})),

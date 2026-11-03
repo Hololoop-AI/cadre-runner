@@ -310,3 +310,22 @@ def test_post_tasks_passes_parent_and_skill_and_tags_the_item():
                 sys.modules["runnerlib.tasks"] = keep
             else:
                 del runnerlib.tasks
+
+
+# ------------------------------------------------------------ catch me up
+
+def test_only_an_idle_item_offers_catch_me_up_filed_under_it():
+    surfaces = [{**_sf(f"p{n}", f"t{n}", NOW - n * 60, title=f"Work {n}"), "cwd": "/w/repo"}
+                for n in range(3)]
+    statuses = {"p2": {"viewed_at": "2026-11-01T10:00:00Z"}}
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, statuses=statuses, by_item=True,
+                                view={"limit": "2"})
+    assert html.count(">Catch me up</button>") == 1
+    form = html[html.index('data-fold="t2"'):]
+    form = form[:form.index(">Catch me up</button>")]
+    assert 'name="parent" value="t2"' in form and 'name="cwd" value="/w/repo"' in form
+    assert "Work 2" in form and "/a/p2.html" in form and "2026-11-01" in form
+
+
+def test_track_hooks_are_empty_slots():
+    assert statusd.render_inbox({}) == "" and statusd.render_footer_hooks() == ""
