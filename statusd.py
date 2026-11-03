@@ -50,6 +50,7 @@ from runnerlib import codestamp
 from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
 from runnerlib import costs as costs_mod
+from runnerlib import items as items_mod
 from runnerlib import library as library_mod
 from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
@@ -127,6 +128,7 @@ LIBRARY_PATH = "/library"
 COSTS_PATH = "/costs"
 RUNS_PATH = "/runs"
 TREE_PATH = "/tree"
+ITEMS_PATH = "/items"
 # rows on the fleet's "Recently returned" card, and all the API ships of them
 RECENT_LIMIT = 6
 STREAM_PATH = "/fleet/events"
@@ -1119,6 +1121,19 @@ details.item h4{margin:.5rem 0 .2rem;font-size:.68rem;text-transform:uppercase;
  letter-spacing:.08em;color:var(--label)}
 .prow{display:flex;align-items:center;gap:.2rem}
 .prow > a.row{flex:1;min-width:0}
+details.item.offlist{display:none}
+.unopened{color:var(--accent);font-size:.7rem}
+.badge.tag{border-style:dashed}
+.badge.state-done{border-color:var(--ok);color:var(--ok)}
+.badge.state-idle,.badge.state-hidden{color:var(--label)}
+form.itemctl{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 .6rem}
+form.itemctl select{font-size:.78rem;background:var(--card-2);color:var(--fg);
+ border:1px solid var(--border);border-radius:6px;padding:.15rem .3rem}
+.itemactions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.7rem}
+.itemactions form{margin:0}
+.itemactions button,.itemactions input{font-size:.75rem;background:var(--card-2);color:var(--fg);
+ border:1px solid var(--border);border-radius:6px;padding:.2rem .5rem;cursor:pointer}
+details.fold.idle > summary{padding:.5rem}
 .running-now a{color:var(--accent);text-decoration:none}
 .running-now .rmeta.folder{font-family:var(--mono);font-size:.72rem}
 .running-now h2 .badge{margin-left:.6rem;text-transform:none;letter-spacing:0}
@@ -1352,16 +1367,21 @@ _PAGE_JS = """
    var any=false, rows=sec.querySelectorAll('.rowline,.story');
    rows.forEach(function(r){
     var hit=(!q||r.textContent.toLowerCase().indexOf(q)>-1)&&
-     (!proj||!r.dataset.item||r.dataset.project===proj);
+     (!proj||!r.dataset.item||r.dataset.project===proj)&&
+     (!!q||!r.classList.contains('offlist'));
     r.style.display=hit?'':'none'; if(hit)any=true;
    });
    sec.style.display=(!q||any||!rows.length||sec.classList.contains('items'))?'':'none';
+  // a search match folded under Idle must be seen
+  if(q)document.querySelectorAll('#fleet details.fold.idle').forEach(function(d){d.open=true});
   });
   // a match hidden inside a closed fold is a match the driver can't see
   if(q)document.querySelectorAll('#fleet details.fold:not(.item)').forEach(function(d){d.open=true});
  }
  document.addEventListener('change',function(e){
-  if(e.target.matches&&e.target.matches('select.projfilter'))applyFilter();
+  if(!e.target.matches)return;
+  if(e.target.matches('select.projfilter'))applyFilter();
+  else if(e.target.matches('form.itemctl select'))e.target.form.submit();
  });
  // Find across everything: the row filter above only sees what is listed;
  // this asks the server about every page ever opened, folded rounds included.
@@ -1430,7 +1450,7 @@ _PAGE_JS = """
  // Live: the fleet stream says when the runner's snapshot, a review page or
  // a link changed; only then is the fleet fragment re-fetched.
  function refresh(){
-  fetch('/?partial=1',{cache:'no-store'}).then(function(r){return r.text()})
+  fetch('/?partial=1'+(location.search?'&'+location.search.slice(1):''),{cache:'no-store'}).then(function(r){return r.text()})
    .then(function(h){
     var el=document.getElementById('fleet');if(!el)return;
     var open={};  // fold state is DOM state — carry it across the swap
@@ -1538,7 +1558,8 @@ def render_fleet(snap: dict, now: float | None = None,
                  starting: dict | None = None, doing: dict | None = None,
                  spent: dict | None = None, histories: dict | None = None,
                  own=None, returned: dict | None = None,
-                 tree: dict | None = None, by_item: bool = False) -> str:
+                 tree: dict | None = None, by_item: bool = False,
+                 view: dict | None = None, item_store: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1562,7 +1583,9 @@ def render_fleet(snap: dict, now: float | None = None,
     page. `tree` is session_tree.load(): which session launched which, drawn
     as a dropdown under every row that launched others. `by_item` draws the
     home page's shape instead of project sections: one item per agent thread
-    (see fleet_items)."""
+    (see fleet_items), filtered and sorted by `view` (show, sort, tag, limit,
+    from the home page's query) with `item_store` (items.load) supplying tags,
+    done and hidden."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     tree = tree_mod.clean(tree)
@@ -1722,7 +1745,8 @@ def render_fleet(snap: dict, now: float | None = None,
         return code_line(snap, own=own, now=now) + _items_html(
             snap, now, tree, kids, projs or {}, starting or {}, doing, statuses, returned,
             {"live": _live, "spent": _spent, "history": _history_link,
-             "menu": _page_link, "opened": _opened})
+             "menu": _page_link, "opened": _opened},
+            spent=spent, view=view or {}, store=item_store or {})
 
     exts = external_projects(snap)
     projs = projs or {}
@@ -1894,11 +1918,100 @@ def fleet_items(surfaces: list[dict], tree: dict, projs: dict,
     return out
 
 
+def _page_state(sf: dict, statuses: dict, now: float) -> tuple[str, str]:
+    """agent_state_badge for one fleet row, with render_fleet's ownership rule."""
+    owned = (None if sf.get("kind") in (None, "page") or not sf.get("artifact")
+             else not surface_mod.unowned(sf))
+    return agent_state_badge(statuses.get(conv_mod.key_of(sf) or ""), now, owned=owned)
+
+
+def item_facts(items: list[dict], tree: dict, kids: dict, statuses: dict, doing: dict,
+               returned: dict, spent: dict, now: float) -> list[dict]:
+    """Add what the states, filters and sorts read to each fleet_items item,
+    in place: working (a page's agent or any agent in its tree is on it),
+    needs (0 when a page wants the driver now), returned, spent (all its
+    tasks' turns), unseen (each page's answer from the page server)."""
+    for it in items:
+        tasks = {str(sf.get("task") or "") for sf in it["pages"]} - {""}
+        if not it["key"].startswith("page:"):
+            tasks.add(it["key"])
+            stack = list(kids.get(it["key"]) or ())
+            while stack:
+                t = stack.pop()
+                if t not in tasks:
+                    tasks.add(t)
+                    stack.extend(kids.get(t) or ())
+        states = [_page_state(sf, statuses, now) for sf in it["pages"]]
+        it["working"] = (any(cls == "running" for _, cls in states)
+                         or any(t in doing or (tree.get(t) or {}).get("working") for t in tasks))
+        it["needs"] = 0 if any(cls == "needs" or "your turn" in label
+                               for label, cls in states) else 1
+        it["returned"] = max([float(returned.get(t) or 0) for t in tasks] or [0.0])
+        it["spent"] = sum(float(spent.get(t) or 0) for t in tasks)
+        it["unseen"] = [(statuses.get(conv_mod.key_of(sf) or "") or {}).get("unseen")
+                        for sf in it["pages"]]
+    return items
+
+
+def _options(choices: dict, current: str) -> str:
+    return "".join(f'<option value="{escape(k)}"{" selected" if k == current else ""}>'
+                   f'{escape(v)}</option>' for k, v in choices.items())
+
+
+def _item_controls(show: str, tag: str, tags: list, limit: int,
+                   project_opts: str) -> str:
+    """Show and tag are the home page's query (a GET form, so a view
+    is a link); project filters in the browser."""
+    tag_sel = ("" if not tags else
+               f'<select name="tag" aria-label="tag">'
+               f'{_options({"": "any tag", **{t: t for t in tags}}, tag)}</select>')
+    keep = ("" if limit == items_mod.HOME_LIMIT else
+            f'<input type="hidden" name="limit" value="{limit}">')
+    return (f'<form class="itemctl" method="get" action="{HOME_PATH}">'
+            f'<select name="show" aria-label="show">{_options(items_mod.SHOWS, show)}</select>'
+            f'{tag_sel}<select class="projfilter" aria-label="project">'
+            f'<option value="">every project</option>{project_opts}</select>{keep}'
+            f'<noscript><button type="submit">apply</button></noscript></form>')
+
+
+def _item_actions(key: str, it: dict) -> str:
+    """Done, hide and tags for one item: POST /items, back to the home page."""
+    def _btn(action, label):
+        return (f'<form method="post" action="{ITEMS_PATH}">'
+                f'<input type="hidden" name="item" value="{escape(key)}">'
+                f'<input type="hidden" name="action" value="{action}">'
+                f'<button type="submit">{label}</button></form>')
+    done = _btn("undone", "Not done") if it["state"] == items_mod.DONE else _btn("done", "Mark done")
+    hide = (_btn("unhide", "Show on home") if it["state"] == items_mod.HIDDEN
+            else _btn("hide", "Hide from home"))
+    untag = "".join(
+        f'<form method="post" action="{ITEMS_PATH}"><input type="hidden" name="item" '
+        f'value="{escape(key)}"><input type="hidden" name="action" value="untag">'
+        f'<input type="hidden" name="tag" value="{escape(t)}">'
+        f'<button type="submit" title="remove this tag">{escape(t)} ×</button></form>'
+        for t in it["tags"])
+    return (f'<div class="itemactions">{done}{hide}{untag}'
+            f'<form method="post" action="{ITEMS_PATH}">'
+            f'<input type="hidden" name="item" value="{escape(key)}">'
+            '<input type="hidden" name="action" value="tag">'
+            '<input name="tag" placeholder="add a tag" aria-label="tag" size="10" maxlength="32">'
+            '</form></div>')
+
+
 def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returned,
-                bits) -> str:
+                bits, spent=None, view=None, store=None) -> str:
     """render_fleet's by-item body. `bits` are render_fleet's per-row badge
     and link helpers, so a page reads the same here as on a project page."""
+    view, store = view or {}, store or {}
     items = fleet_items(snap.get("surfaces") or [], tree, projs, statuses, returned)
+    item_facts(items, tree, kids, statuses, doing or {}, returned or {}, spent or {}, now)
+    try:
+        limit = max(1, int(view.get("limit") or items_mod.HOME_LIMIT))
+    except ValueError:
+        limit = items_mod.HOME_LIMIT
+    items_mod.assign_states(items, store, limit)
+    show = view.get("show") if view.get("show") in items_mod.SHOWS else ""
+    tag = str(view.get("tag") or "")
 
     def _prow(sf, cls):
         badge, hover = bits["opened"](sf)
@@ -1907,7 +2020,7 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
                 f'<span class="title">{title}</span>{bits["live"](sf)}{badge}{bits["spent"](sf)}'
                 f'<span class="go">open →</span></a>{bits["history"](sf)}{bits["menu"](sf)}</div>')
 
-    rows = []
+    rows, idle, off = [], [], []
     for it in items:
         key, head = it["key"], it["head"]
         n_agents = tree_mod.descendants(key, kids)
@@ -1922,11 +2035,22 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
                  or '<p class="empty">No other pages.</p>')
         started = (tree_list(key, tree, kids, now) if n_agents else
                    '<p class="empty">None.</p>')
-        rows.append(
-            f'<details class="rowline item fold" data-fold="{escape(key)}" '
-            f'data-item="{escape(key)}" data-project="{escape(it["project"])}">'
-            f'<summary><span class="title">{escape(it["title"])}</span>{bits["live"](head)}'
-            f'{count}{agents}'
+        state = it["state"]
+        chip = (f'<span class="badge state-{state}">{items_mod.LABELS[state]}</span>'
+                if state in (items_mod.DONE, items_mod.HIDDEN, items_mod.IDLE) else "")
+        dot = ('<span class="unopened" title="a page here changed since you last opened it">'
+               '●</span>' if it["unopened"] else "")
+        tags = "".join(f'<span class="badge tag">{escape(t)}</span>' for t in it["tags"])
+        shown = items_mod.visible(it, show, tag)
+        # Not shown, still rendered: search reaches hidden and done items.
+        cls = "" if shown else " offlist"
+        (rows if shown and not (show == "" and state == items_mod.IDLE)
+         else idle if shown else off).append(
+            f'<details class="rowline item fold{cls}" data-fold="{escape(key)}" '
+            f'data-item="{escape(key)}" data-project="{escape(it["project"])}" '
+            f'data-state="{state}">'
+            f'<summary>{dot}<span class="title">{escape(it["title"])}</span>{bits["live"](head)}'
+            f'{chip}{tags}{count}{agents}'
             f'<a class="go" href="{escape(view_href(head["path"]))}">open →</a>'
             f'{bits["history"](head)}{bits["menu"](head)}</summary>'
             f'<div class="igroups"><h4>Other pages</h4>{pages}'
@@ -1934,7 +2058,8 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
             # the item's shape does not change when they arrive.
             f'<h4>Message threads</h4><div class="threads" data-item="{escape(key)}">'
             f'<p class="empty">None yet.</p></div>'
-            f'<h4>Agents started from this</h4>{started}</div></details>')
+            f'<h4>Agents started from this</h4>{started}'
+            f'{_item_actions(key, it)}</div></details>')
     # Launched work with no page yet that is not running: the strip shows the
     # running ones, but "never started" and "ran, wrote no page" must stay seen.
     stuck = [s for rows_ in starting.values() for s in rows_ if not s.get("running")]
@@ -1950,11 +2075,14 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
     names.pop("", None)
     opts = "".join(f'<option value="{escape(k)}">{escape(v)}</option>'
                    for k, v in sorted(names.items(), key=lambda kv: kv[1].lower()))
-    out += (f'<section class="card items"><h2>Work<span class="badge">{len(rows)}</span>'
-            f'<select class="projfilter" aria-label="project">'
-            f'<option value="">every project</option>{opts}</select></h2>'
-            + ("".join(rows) or '<p class="empty">No work yet. Start some with New work.</p>')
-            + '</section>')
+    all_tags = sorted({t for it in items for t in it["tags"]}, key=str.lower)
+    fold = (f'<details class="fold idle" data-fold="idle"><summary>Idle: {len(idle)} more'
+            f'</summary>{"".join(idle)}</details>') if idle else ""
+    out += (f'<section class="card items"><h2>Work<span class="badge">{len(rows) + len(idle)}'
+            f'</span></h2>{_item_controls(show, tag, all_tags, limit, opts)}'
+            + ("".join(rows) or '<p class="empty">Nothing here. Change the filter, '
+               'or start some work with New work.</p>')
+            + fold + "".join(off) + '</section>')
     # Pipeline stories (the PR pipeline's own work) keep their sections.
     for p in fleet(snap):
         flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
@@ -2865,6 +2993,7 @@ def fleet_payload() -> dict:
             "histories": {a: len(journal_batches(a)) for a in arts},
             "tree": tree,
             "running": running_agents(titles=pages, tree=tree),
+            "items": items_mod.load(DATA_DIR),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
 
@@ -2890,7 +3019,8 @@ def render_machines(results: list) -> str:
 
 
 def render_backend(b: dict, data: dict | None, err: str | None,
-                   now: float | None = None, index: int = 0) -> str:
+                   now: float | None = None, index: int = 0,
+                   view: dict | None = None) -> str:
     """One machine's section of the fleet, from its API payload: a heading
     naming the machine, then its fleet exactly as render_fleet draws any
     fleet. Nothing here knows whether the machine is this one, except where
@@ -2918,7 +3048,8 @@ def render_backend(b: dict, data: dict | None, err: str | None,
                         starting=data.get("starting") or {}, doing=data.get("doing") or {},
                         spent=data.get("spent") or {}, histories=data.get("histories") or {},
                         own=own, returned=data.get("returned") or {},
-                        tree=data.get("tree") or {}, by_item=True)
+                        tree=data.get("tree") or {}, by_item=True, view=view,
+                        item_store=data.get("items") or {})
     return head + backends_mod.point_at(body, b, same) + '</div>'
 
 
@@ -3127,8 +3258,10 @@ class Handler(BaseHTTPRequestHandler):
         the same API and rendered in its own section."""
         now = time.time()
         results = [(b, *backends_mod.fleet(b, now)) for b in self._backends()]
+        view = {k: (query.get(k) or [""])[0] for k in ("show", "sort", "tag", "limit")}
         fleet_html = render_machines(results) + "".join(
-            render_backend(b, data, err, now, i) for i, (b, data, err) in enumerate(results))
+            render_backend(b, data, err, now, i, view)
+            for i, (b, data, err) in enumerate(results))
         if query.get("partial"):
             self._send_html(fleet_html)
             return
@@ -3476,6 +3609,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
         self.wfile.flush()
 
+    def _items_post(self):
+        """POST /items: item, action=done|undone|hide|unhide|tag|untag, tag.
+        Writes <data_dir>/items.json and lands back on the home page with
+        what happened, the way an archive from the row menu does."""
+        form = self._form()
+        if form is None:
+            return
+        try:
+            msg = items_mod.apply(DATA_DIR, form.get("item", ""), form.get("action", ""),
+                                  form.get("tag", ""))
+        except ValueError as e:
+            msg = f"Refused: {e}"
+        self._redirect_home(msg)
+
     def _repair(self):
         """POST /repair: action=move (key, project) | replace (key, target —
         the page that replaces key) | end (key) | archive (key, back=home
@@ -3597,6 +3744,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == REPAIR_PATH and self.command == "POST":
             self._repair()
+            return
+        if path == ITEMS_PATH and self.command == "POST":
+            self._items_post()
             return
         if (path == PROJECTS_PATH or path.startswith(PROJECTS_PATH + "/")) \
                 and self.command == "POST":

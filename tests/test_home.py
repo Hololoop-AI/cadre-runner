@@ -146,3 +146,99 @@ def test_home_draws_items_with_pages_threads_slot_and_started_agents():
     assert "Agents started from this" in html and "Track A helper" in html
     assert 'class="projfilter"' in html and '<option value="cadre">' in html
     assert 'class="repo">cadre<' not in html                        # no project sections
+
+
+# ------------------------------------------------- states, filters, store
+
+from runnerlib import items as items_mod
+
+
+def _it(key, touched, working=False, unseen=()):
+    return {"key": key, "touched": touched, "working": working, "unseen": list(unseen)}
+
+
+def test_idle_is_by_count_never_by_age_and_working_is_never_idle():
+    items = [_it(f"i{n}", NOW - n * 86400 * 30) for n in range(5)]   # months apart
+    items.append(_it("busy", 0, working=True))                        # oldest, but running
+    items_mod.assign_states(items, {}, limit=3)
+    state = {it["key"]: it["state"] for it in items}
+    assert state["busy"] == "working"
+    assert [k for k in ("i0", "i1", "i2", "i3", "i4") if state[k] == "your-turn"] == ["i0", "i1"]
+    assert state["i2"] == state["i3"] == state["i4"] == "idle"
+    # with room for everything, nothing is idle however old
+    items_mod.assign_states(items, {}, limit=15)
+    assert "idle" not in {it["state"] for it in items}
+
+
+def test_done_and_hidden_come_from_the_store_and_leave_the_home_view():
+    items = [_it("a", NOW), _it("b", NOW), _it("c", NOW)]
+    store = {"a": {"done_at": NOW, "tags": ["x"]}, "b": {"hidden_at": NOW}}
+    items_mod.assign_states(items, store)
+    assert [it["state"] for it in items] == ["done", "hidden", "your-turn"]
+    assert [it["key"] for it in items if items_mod.visible(it)] == ["c"]
+    assert [it["key"] for it in items if items_mod.visible(it, "done")] == ["a"]
+    assert [it["key"] for it in items if items_mod.visible(it, "hidden")] == ["b"]
+    assert [it["key"] for it in items if items_mod.visible(it, "all", "x")] == ["a"]
+
+
+def test_unopened_is_true_only_for_an_unseen_true_page():
+    items = [_it("seen", NOW, unseen=[False]), _it("new", NOW, unseen=[None, True]),
+             _it("unknown", NOW, unseen=[None])]
+    items_mod.assign_states(items, {})
+    assert [it["key"] for it in items if items_mod.visible(it, "unopened")] == ["new"]
+
+
+def test_store_round_trip_and_refusals():
+    with tempfile.TemporaryDirectory() as d:
+        assert "Tagged" in items_mod.apply(d, "root", "tag", "cadre", now=NOW)
+        items_mod.apply(d, "root", "hide", now=NOW)
+        assert items_mod.load(d) == {"root": {"tags": ["cadre"], "done_at": None,
+                                              "hidden_at": NOW}}
+        items_mod.apply(d, "root", "unhide")
+        items_mod.apply(d, "root", "untag", "cadre")
+        assert items_mod.load(d) == {}                       # empty records are dropped
+        for bad in [("", "done", ""), ("k", "explode", ""), ("k", "tag", "<b>")]:
+            try:
+                items_mod.apply(d, *bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"accepted {bad}")
+
+
+def test_home_view_folds_idle_and_keeps_hidden_items_searchable():
+    surfaces = [_sf(f"p{n}", f"t{n}", NOW - n * 60, title=f"Work {n}") for n in range(4)]
+    store = {"t3": {"hidden_at": NOW}}
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True,
+                                view={"limit": "2"}, item_store=store)
+    assert "Idle: 1 more" in html                                    # t2 is past the limit
+    assert html.index("Work 0") < html.index("Work 1") < html.index("Idle: 1 more")
+    assert 'offlist" data-fold="t3"' in html                         # rendered for search
+    assert 'action="/items"' in html and "Hide from home" in html
+    done = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True,
+                                view={"show": "hidden"}, item_store=store)
+    assert 'class="rowline item fold" data-fold="t3"' in done and "Show on home" in done
+
+
+def test_post_items_writes_the_store_and_lands_home():
+    import test_status
+    with tempfile.TemporaryDirectory() as root:
+        (Path(root) / "status").mkdir()
+        srv = test_status._Server(Path(root) / "status")
+        try:
+            code, loc = srv.post("/items", {"item": "root", "action": "done"})
+            assert code == 303 and loc.startswith("/?") and "Marked+done" in loc
+            assert items_mod.load(root)["root"]["done_at"]
+            code, loc = srv.post("/items", {"item": "root", "action": "tag", "tag": "<x>"})
+            assert "Refused" in loc
+        finally:
+            srv.close()
+
+
+def test_an_item_with_an_unseen_page_carries_the_dot_and_the_unopened_filter_finds_it():
+    surfaces = [_sf("p0", "t0", NOW, title="Changed"), _sf("p1", "t1", NOW, title="Seen")]
+    statuses = {"p0": {"unseen": True}, "p1": {"unseen": None}}
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, statuses=statuses, by_item=True,
+                                view={"show": "unopened"})
+    assert html.count('class="unopened"') == 1
+    assert 'class="rowline item fold" data-fold="t0"' in html
+    assert 'offlist" data-fold="t1"' in html
