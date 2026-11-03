@@ -30,10 +30,12 @@ CLI, never merge, never push to main) and prepending it to a node that has no
 repo, no PR and no story would be instructions for a different world.
 """
 
+import re
 import time
 import uuid
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
 from . import engine_seam, library, projects, seed_nodes
 from .blackboard import Board
@@ -337,8 +339,37 @@ def mark_closing(reg, task_id: str) -> None:
         reg.save()
 
 
+_VERDICT_FORM = re.compile(
+    r"<form[^>]*data-review-surface-question=[\"']verdict[\"'].*?</form>", re.S | re.I)
+# Inside the page's column when it has one, else at the top of the body.
+_OPENINGS = (re.compile(r"<main\b[^>]*>", re.I), re.compile(r"<body\b[^>]*>", re.I))
+
+
+def archive_round(page, round_no: int) -> Path | None:
+    """Keep the round the driver just read: `<page>-r<N>.html` beside it.
+
+    A dialogue page is one file rewritten in place every round, so a link to
+    an earlier round used to land on whatever the page says now. The copy is
+    marked as a previous version and links to the latest; its verdict form is
+    dropped, because nothing polls a copy and an answer there would go nowhere.
+    """
+    page = Path(page)
+    if not page.is_file():
+        return None
+    html = _VERDICT_FORM.sub("", page.read_text(encoding="utf-8", errors="replace"))
+    banner = (f'<p class="prior-round"><strong>Previous version: round {round_no} '
+              f'of this dialogue.</strong> It was replaced when the dialogue moved '
+              f'on, and nothing on it can be answered. '
+              f'<a href="/open?file={quote(str(page))}">Open the latest round</a></p>')
+    m = next((m for m in (rx.search(html) for rx in _OPENINGS) if m), None)
+    html = (html[:m.end()] + banner + html[m.end():]) if m else banner + html
+    kept = page.with_name(f"{page.stem}-r{round_no}.html")
+    kept.write_text(html, encoding="utf-8")
+    return kept
+
+
 def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
-                   closing: bool = False) -> dict | None:
+                   closing: bool = False, page=None) -> dict | None:
     """The driver annotated the page: write the `task:feedback` command.
 
     This is the board-side half of "a surface annotation is the next turn". The
@@ -351,7 +382,9 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
     if not text:
         return None
     rec = record(reg, task_id)
-    rec["iteration"] = int(rec.get("iteration") or 1) + 1
+    read = int(rec.get("iteration") or 1)
+    kept = archive_round(page, read) if page else None
+    rec["iteration"] = read + 1
     if hasattr(reg, "save"):
         # The bumped round has to survive a restart between this write and the
         # spawn it triggers, or the next turn renders as the round before it.
@@ -364,6 +397,9 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
                      "cwd": cwd or rec.get("cwd") or "",
                      "iteration": str(rec["iteration"]),
                      "feedback": text, "resume": "session",
+                     # The round the driver read, kept aside: the next turn
+                     # reads it as $surface_prev before rewriting the page.
+                     **({"surface_prev": str(kept)} if kept else {}),
                      # The closing turn: the driver approved AND said something.
                      # The node is told so, because "act on this and record the
                      # decision" is a different instruction from "here is the
