@@ -1139,10 +1139,10 @@ details.fold.idle > summary{padding:.5rem}
 .running-now h2 .badge{margin-left:.6rem;text-transform:none;letter-spacing:0}
 .dirwrap{position:relative;display:block}
 .dirwrap .lbl{display:block;font-size:.78rem;color:var(--muted);margin:0 0 .2rem}
-#dir1{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
+#dir1,#workdir{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
  padding:.45rem .6rem .45rem 1.7rem;border:1px solid var(--line);border-radius:6px;
  background:var(--card) url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%238a94a6'%3E%3Cpath d='M1.5 3.5a1 1 0 011-1h3.2l1.3 1.4h6.5a1 1 0 011 1v6.6a1 1 0 01-1 1h-11a1 1 0 01-1-1z'/%3E%3C/svg%3E") no-repeat .5rem 50%/ .9rem .9rem}
-#dir1:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
+#dir1:focus,#workdir:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
 /* Floats over the page: the list is a transient overlay, not a block that
    pushes the rest of the form down every time it opens. */
 .sug{position:absolute;z-index:40;top:100%;left:0;right:0;margin:.15rem 0 0;padding:0;
@@ -1229,7 +1229,8 @@ nav.machines a:hover b{text-decoration:underline}
 .machine a{color:var(--accent);text-decoration:none}.machine a:hover{text-decoration:underline}
 .project .member h3{font-size:.8rem;margin:.2rem 0;font-family:var(--mono);font-weight:600}
 .project .member h3 a{color:var(--muted);text-decoration:none}
-form.newtask select,form.newtask input[name=name],form.newtask input[name=context]{
+form.newtask select,form.newtask input[name=name],form.newtask input[name=context],
+form.newtask input[name=tags]{
  padding:.45rem .6rem;border:1px solid var(--border);border-radius:9px;
  background:var(--bg);color:var(--fg);font:inherit;font-size:.84rem}
 pre.brief{white-space:pre-wrap;font-family:var(--mono);font-size:.78rem;color:var(--muted);
@@ -1918,6 +1919,16 @@ def fleet_items(surfaces: list[dict], tree: dict, projs: dict,
     return out
 
 
+def parent_choices(data: dict) -> list[tuple[str, str]]:
+    """[(item key, title)] a new task can be filed under, newest first, from
+    this machine's fleet payload. Only task items: a lone page has no task to
+    be a parent."""
+    snap, graph = data.get("snap") or {}, data.get("graph") or ([], {}, {})
+    surfaces = conv_mod.collapse(snap.get("surfaces") or [], *graph)
+    items = fleet_items(surfaces, tree_mod.clean(data.get("tree")), data.get("projs") or {})
+    return [(it["key"], it["title"]) for it in items if not it["key"].startswith("page:")]
+
+
 def _page_state(sf: dict, statuses: dict, now: float) -> tuple[str, str]:
     """agent_state_badge for one fleet row, with render_fleet's ownership rule."""
     owned = (None if sf.get("kind") in (None, "page") or not sf.get("artifact")
@@ -2062,7 +2073,10 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
             f'<h4>Message threads</h4><div class="threads" data-item="{escape(key)}">'
             f'<p class="empty">None yet.</p></div>'
             f'<h4>Agents started from this</h4>{started}'
-            f'{_item_actions(key, it)}</div></details>')
+            + ("" if key.startswith("page:") else
+               f'<p><a class="hist" href="{HOME_PATH}?parent={escape(urllib.parse.quote(key))}'
+               f'#newwork">new work under this →</a></p>')
+            + f'{_item_actions(key, it)}</div></details>')
     # Launched work with no page yet that is not running: the strip shows the
     # running ones, but "never started" and "ran, wrote no page" must stay seen.
     stuck = [s for rows_ in starting.values() for s in rows_ if not s.get("running")]
@@ -2123,7 +2137,8 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
                 projs: dict | None = None, finished: dict | None = None,
                 starting: dict | None = None, doing: dict | None = None,
                 spent: dict | None = None, week_usd: float | None = None,
-                fleet_html: str | None = None) -> str:
+                fleet_html: str | None = None, parents: list | None = None,
+                entries: list | None = None, parent: str = "") -> str:
     """The panel: a static layout — task box, find, the fleet — whose fleet
     fragment is re-fetched when the fleet stream reports a change.
     `fleet_html` is the fleet already rendered from every backend's API (the
@@ -2150,6 +2165,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         # the driver to type a raw absolute path, which is what tab-complete
         # exists to avoid. Launch from a project instead — it knows its own
         # directory, so there is no path to type.
+        f'{_new_work_form(parents or [], entries or [], parent)}'
         f'{_new_project_form(projs or {})}'
         '<input id="filter" type="search" aria-label="find" '
         'placeholder="find — filters the rows below and searches every page ever opened">'
@@ -2213,30 +2229,25 @@ def complete_dirs(prefix: str, limit: int = 40) -> list[str]:
     return names[:limit]
 
 
-def _new_project_form(projs: dict) -> str:
+def _dir_field(fid: str, lid: str, label: str, name: str = "") -> str:
+    """A directory input that completes from this machine through /fs
+    (complete_dirs), with its own suggestion list. Two forms use it: New
+    project and New work."""
     return (
-        # Open by default: this is the one control that creates the thing the
-        # whole page is organised around, and a collapsed summary made it read
-        # as an advanced option.
-        '<details class="card" open><summary class="meta">New project — a durable home '
-        'for work, kept on the fleet until you archive it</summary>'
-        f'<form class="newtask" method="post" action="{PROJECTS_PATH}">'
-        '<div class="row"><input name="name" required maxlength="64" '
-        'placeholder="name, e.g. Cadre"></div>'
-        '<div class="dirwrap"><label class="lbl" for="dir1">Working directory — '
+        f'<div class="dirwrap"><label class="lbl" for="{fid}">{label} — '
         'type <code>/</code> or <code>~</code> and it completes from this machine'
-        '</label><input name="dir1" id="dir1" '
+        f'</label><input name="{name or fid}" id="{fid}" '
         'autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" '
-        'aria-autocomplete="list" aria-controls="dirsug" '
+        f'aria-autocomplete="list" aria-controls="{lid}" '
         'placeholder="~/Projects/…">'
-        '<ul id="dirsug" class="sug" role="listbox" hidden></ul></div>'
+        f'<ul id="{lid}" class="sug" role="listbox" hidden></ul></div>'
         # A real completion list rather than a datalist: a datalist only opens
         # when the browser feels like it and filters full paths badly, so it
         # read as "no autocomplete at all". This draws every keystroke's
         # matches, supports arrow keys and Enter, and shows "no match" rather
         # than going silent — the feedback the driver asked for.
         '<script>(function(){'
-        'var i=document.getElementById("dir1"),box=document.getElementById("dirsug");'
+        f'var i=document.getElementById("{fid}"),box=document.getElementById("{lid}");'
         'if(!i||!box)return;var t,items=[],cur=-1;'
         'function hide(){box.hidden=true;i.setAttribute("aria-expanded","false");cur=-1;}'
         'function show(){box.hidden=false;i.setAttribute("aria-expanded","true");}'
@@ -2266,6 +2277,45 @@ def _new_project_form(projs: dict) -> str:
         'else if(e.key==="Enter"&&cur>=0){e.preventDefault();pick(cur);}'
         'else if(e.key==="Tab"&&items.length===1){e.preventDefault();pick(0);}});'
         '})();</script>'
+    )
+
+
+def _new_work_form(parents: list, entries: list, parent: str = "") -> str:
+    """New work, from the home page: what to do, the folder (completed from
+    this machine; the project is worked out from it), an optional item it is
+    part of, tags, and an optional skill to run. Posts to /tasks.
+
+    `parents` is [(item key, title)] — the items a new task can join;
+    `parent` preselects one (an item's "new work under this" link)."""
+    opts = "".join(f'<option value="{escape(k)}"{" selected" if k == parent else ""}>'
+                   f'{escape(t[:90])}</option>' for k, t in parents)
+    return (
+        f'<details class="card newwork" id="newwork"{" open" if parent else ""}>'
+        '<summary class="meta">New work — start an agent on something</summary>'
+        f'<form class="newtask" method="post" action="{TASKS_PATH}">'
+        '<textarea name="text" required placeholder="What should the agent do?"></textarea>'
+        f'{_dir_field("workdir", "worksug", "Folder", name="cwd")}'
+        '<p class="meta">The project is the one that owns this folder; a folder no '
+        'project owns becomes a new project.</p>'
+        '<div class="row"><select name="parent" aria-label="part of">'
+        '<option value="">its own item</option>'
+        f'{opts}</select>'
+        '<input name="tags" placeholder="tags, comma separated" aria-label="tags">'
+        '<button type="submit">Start</button></div>'
+        f'{_run_picker(entries)}</form><script>{_PICKER_JS}</script></details>')
+
+
+def _new_project_form(projs: dict) -> str:
+    return (
+        # Open by default: this is the one control that creates the thing the
+        # whole page is organised around, and a collapsed summary made it read
+        # as an advanced option.
+        '<details class="card" open><summary class="meta">New project — a durable home '
+        'for work, kept on the fleet until you archive it</summary>'
+        f'<form class="newtask" method="post" action="{PROJECTS_PATH}">'
+        '<div class="row"><input name="name" required maxlength="64" '
+        'placeholder="name, e.g. Cadre"></div>'
+        f'{_dir_field("dir1", "dirsug", "Working directory")}'
         # No free-text box here. A large empty textarea on a creation form
         # reads as "describe this thing", and the one that used to sit here
         # took absolute paths — so a sentence typed into it came back as
@@ -3274,7 +3324,11 @@ class Handler(BaseHTTPRequestHandler):
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(mine.get("snap") or {}, notice=notice,
                                     projs=mine.get("projs") or {},
-                                    week_usd=mine.get("week_usd"), fleet_html=fleet_html))
+                                    week_usd=mine.get("week_usd"), fleet_html=fleet_html,
+                                    parents=parent_choices(mine),
+                                    entries=library_mod.scan(dirs=[],
+                                                             skills_source=_skills_source()),
+                                    parent=(query.get("parent") or [""])[0]))
 
     def _backends(self) -> list[dict]:
         return backends_mod.with_self(BACKENDS, self.server.server_address)
@@ -3695,8 +3749,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _new_task(self):
         """Form contract: POST /tasks, application/x-www-form-urlencoded,
-        `text` (required) and `cwd` (optional). Hands off to
-        runnerlib.tasks.submit_task(cfg, text, cwd) and redirects back home."""
+        `text` (required), `cwd`, `parent`, `run` and `tags` (comma
+        separated; all optional). Hands off to runnerlib.tasks.submit_task,
+        tags the item in items.json, and redirects back home."""
         if not self._same_origin():
             self.send_error(403, "cross-origin post")
             return
@@ -3708,6 +3763,11 @@ class Handler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(raw, keep_blank_values=True)
         text = (form.get("text") or [""])[0].strip()
         cwd = (form.get("cwd") or [""])[0].strip() or None
+        # The New work dialog's extras; passed only when given, so a bare
+        # text+cwd post calls submit_task exactly as it always did.
+        extra = {k: v for k in ("parent", "run")
+                 if (v := (form.get(k) or [""])[0].strip())}
+        tags = [t.strip() for t in (form.get("tags") or [""])[0].split(",") if t.strip()]
         if not text:
             self._redirect_home("A task needs some text.")
             return
@@ -3720,11 +3780,21 @@ class Handler(BaseHTTPRequestHandler):
             self._redirect_home("Task submission is not installed on this runner.")
             return
         try:
-            result = tasks_mod.submit_task(_CFG, text, cwd)
+            result = tasks_mod.submit_task(_CFG, text, cwd, **extra)
         except Exception as e:                      # a bad task must not 500 the page
             self._redirect_home(f"Task rejected: {e}")
             return
-        self._redirect_home(f"Task submitted{f': {result}' if result else '.'}")
+        # Tags belong to the item: the parent's when the task joins one,
+        # else the new task's own.
+        untagged = []
+        for t in tags:
+            try:
+                items_mod.apply(DATA_DIR, extra.get("parent") or str(result), "tag", t)
+            except ValueError:
+                untagged.append(t)
+        note = f" Not tagged (letters, digits, space, . _ - only): {', '.join(untagged)}." \
+            if untagged else ""
+        self._redirect_home(f"Task submitted{f': {result}' if result else '.'}{note}")
 
     def _redirect_home(self, notice: str):
         # 303 so a refresh after submitting does not re-post the task.

@@ -174,16 +174,17 @@ def test_rendering_links_surfaces_and_prs():
         assert 'href="/s/orph"' in html                # orphan session still reachable
         assert "Loose sessions" in html
         assert "o/hot" in html and "o/calm" in html
-        # work is launched from a project page, not a fleet-wide task box
-        assert f'action="{statusd.TASKS_PATH}"' not in html
+        # New work on the home page (the redesign) — its folder completes
+        # from this machine, so no absolute path is typed by hand.
+        assert f'action="{statusd.TASKS_PATH}"' in html and 'aria-controls="worksug"' in html
 
 
 def test_page_renders_with_zero_stories():
     html = statusd.render_home({})
     assert "No stories in flight" in html
-    # There is no fleet-wide task box any more: work is launched from a
-    # project, which knows its own directory, so no absolute path is typed.
-    assert 'name="cwd"' not in html
+    # The home page's New work box takes a folder, but one that completes
+    # from this machine (/fs), never a bare path field.
+    assert html.count('name="cwd"') == 1 and 'id="worksug"' in html
     assert 'New project' in html
     assert 'id="dirsug"' in html            # the directory field completes
     assert statusd.render_fleet({}).strip() != ""

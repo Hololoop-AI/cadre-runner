@@ -151,3 +151,19 @@ def test_another_machines_malformed_tree_degrades_instead_of_breaking_its_sectio
     assert "<summary>3 child sessions</summary>" in html
     assert statusd.render_fleet(snap, now=10.0, tree=["not", "a", "tree"])
     assert ">Orchestrate<" in statusd.render_tree("", bad, now=10.0)
+
+
+def test_an_explicit_parent_wins_over_the_launching_session():
+    d = Path(tempfile.mkdtemp())
+    cfg = FakeCfg(d)
+    old = os.environ.get("CADRE_TASK")
+    os.environ["CADRE_TASK"] = "task-the-orchestrator"
+    try:
+        tasks.submit_task(cfg, "brief me on this item", cwd=str(d), parent="task-the-item")
+    finally:
+        os.environ.pop("CADRE_TASK")
+        if old is not None:
+            os.environ["CADRE_TASK"] = old
+    tasks.submit_task(cfg, "picked from the dialog", cwd=str(d), parent="task-the-item")
+    evs = Board(engine_seam.board_path(cfg)).peek(topic="tasks", kind="command")
+    assert [e["payload"]["parent"] for e in evs] == ["task-the-item", "task-the-item"]

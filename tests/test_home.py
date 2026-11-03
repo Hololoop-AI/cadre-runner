@@ -253,3 +253,60 @@ def test_an_item_with_an_unseen_page_carries_the_dot_and_the_unopened_filter_fin
     assert html.count('class="unopened"') == 1
     assert 'class="rowline item fold" data-fold="t0"' in html
     assert 'offlist" data-fold="t1"' in html
+
+
+# ------------------------------------------------------------- new work
+
+def test_new_work_dialog_has_every_field_and_preselects_a_parent():
+    html = statusd.render_home({}, now=NOW, fleet_html="",
+                               parents=[("root", "Where to take Cadre next"), ("x", "Other")],
+                               parent="root")
+    form = html[html.index('id="newwork"'):]
+    form = form[:form.index("</details>", form.index('id="runlib"'))]
+    assert 'name="text"' in form and 'name="cwd"' in form and 'aria-controls="worksug"' in form
+    assert '<option value="root" selected>Where to take Cadre next</option>' in form
+    assert 'name="tags"' in form and 'name="run"' in form
+    assert 'id="newwork" open' in html
+
+
+def test_parent_choices_are_task_items_only():
+    data = {"snap": {"surfaces": [_sf("r1", "root", NOW), {"path": "/session/z", "key": "z",
+                                                            "opened": NOW}]},
+            "tree": TREE}
+    assert statusd.parent_choices(data) == [("root", "Where to take Cadre next")]
+
+
+def test_post_tasks_passes_parent_and_skill_and_tags_the_item():
+    import test_status
+    calls = []
+
+    def fake_submit(cfg, text, cwd, **kw):
+        calls.append((text, cwd, kw))
+        return "task-new"
+    import types
+    mod = types.ModuleType("runnerlib.tasks")
+    mod.submit_task = fake_submit
+    sys.modules["runnerlib.tasks"] = mod
+    import runnerlib
+    keep = getattr(runnerlib, "tasks", None)
+    runnerlib.tasks = mod
+    with tempfile.TemporaryDirectory() as root:
+        (Path(root) / "status").mkdir()
+        srv = test_status._Server(Path(root) / "status")
+        try:
+            code, loc = srv.post("/tasks", {"text": "brief me", "cwd": "/w", "parent": "root",
+                                            "run": "skill:x", "tags": "cadre, <bad>"})
+            assert code == 303 and "task-new" in loc and "Not+tagged" in loc
+            assert calls == [("brief me", "/w", {"parent": "root", "run": "skill:x"})]
+            assert items_mod.load(root)["root"]["tags"] == ["cadre"]
+            srv.post("/tasks", {"text": "alone", "tags": "solo"})
+            assert calls[-1] == ("alone", None, {})
+            assert items_mod.load(root)["task-new"]["tags"] == ["solo"]
+        finally:
+            srv.close()
+            sys.modules.pop("runnerlib.tasks", None)
+            if keep is not None:
+                runnerlib.tasks = keep
+                sys.modules["runnerlib.tasks"] = keep
+            else:
+                del runnerlib.tasks
