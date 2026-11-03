@@ -122,6 +122,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".json": "application/json",
 
 HOME_PATH = "/"
 TASKS_PATH = "/tasks"
+PARTIAL_SPLIT = "<!--cadre:work-->"
 REPAIR_PATH = "/repair"
 PROJECTS_PATH = "/projects"
 LIBRARY_PATH = "/library"
@@ -795,14 +796,15 @@ def requested_tasks(data_dir) -> dict:
     return out
 
 
-def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
-    """{project id: [tasks launched but with no page yet]}.
+def pageless_tasks(projs: dict, data_dir: Path | None = None) -> list[dict]:
+    """Every task launched that has no page, newest launch first, whichever
+    project it is in (`project` is "" when none claims it).
 
     A task becomes visible on the fleet only once its first round finishes and
     writes a page, which can be minutes. Until then pressing Launch changed
     nothing on screen, so the driver pressed it again — the report was four
     identical dialogues in one project. A launch has to leave a mark
-    immediately.
+    immediately, and so does a run that died before writing anything.
 
     Two sources, because the registry alone is a step behind: submitting
     writes a request event to the BOARD, and the registry record only appears
@@ -833,7 +835,7 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
     # like any other row; only the ones with nothing to show belong here.
     paged = {str((m or {}).get("task") or "") for m in store.values()
              if isinstance(m, dict)}
-    out: dict[str, list] = {}
+    out = []
     for task_id, rec in tasks.items() if isinstance(tasks, dict) else ():
         if not isinstance(rec, dict) or task_id in paged:
             continue
@@ -841,10 +843,9 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
         if not proj:
             owner = projects_mod.for_dir(projs, rec.get("cwd") or "")
             proj = owner["id"] if owner else ""
-        if not proj:
-            continue
-        out.setdefault(proj, []).append(
-            {"task": task_id, "since": rec.get("since") or 0,
+        out.append(
+            {"task": task_id, "since": rec.get("since") or 0, "project": proj,
+             "title": str(rec.get("title") or ""), "cwd": str(rec.get("cwd") or ""),
              "running": bool(rec.get("active_runs")),
              "ran": bool(rec.get("last_result")),
              # A session id is assigned before the process starts, so its
@@ -853,8 +854,58 @@ def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
              # and died". Those two need different repairs.
              "started": bool(rec.get("session_id")),
              "failed": rec.get("failed") or ""})
-    for rows in out.values():
-        rows.sort(key=lambda r: -(r.get("since") or 0))
+    out.sort(key=lambda r: -(r.get("since") or 0))
+    return out
+
+
+def starting_tasks(projs: dict, data_dir: Path | None = None) -> dict:
+    """{project id: [tasks launched but with no page yet]} — pageless_tasks()
+    by project, for the project pages. One with no project is left out."""
+    out: dict[str, list] = {}
+    for row in pageless_tasks(projs, data_dir):
+        if row["project"]:
+            out.setdefault(row["project"], []).append(row)
+    return out
+
+
+def bare_endings(turns: list[dict], store: dict, busy) -> dict:
+    """{task id: its newest finished turn} for each task whose newest turn
+    ended without writing or rewriting any of its pages — a handoff or a
+    continuation round that died, which otherwise leaves its item showing the
+    last round as if nothing had happened. A task with a turn in flight
+    (`busy`, task ids) is not judged yet.
+
+    `store` is the page server's session store (sessions.json: {page file:
+    meta with its task}) — every page each task ever wrote, not the fleet's
+    collapsed rows, which fold a handoff's page into the dialogue it answers.
+    A page counts as written in a turn when its file changed after the turn
+    started (`ended - seconds`). A turn that wrote one and then failed is
+    still reported when it failed (`ok` False). Each value carries ended, ok
+    and node (the stage that ran)."""
+    last: dict[str, dict] = {}
+    for e in turns:
+        task = str(e.get("story") or "")
+        if task and float(e.get("ended") or 0) >= float(
+                (last.get(task) or {}).get("ended") or 0):
+            last[task] = e
+    written: dict[str, float] = {}
+    for art, meta in (store.items() if isinstance(store, dict) else ()):
+        task = str((meta or {}).get("task") or "") if isinstance(meta, dict) else ""
+        if not task or not art:
+            continue
+        try:
+            written[task] = max(written.get(task, 0.0), Path(art).stat().st_mtime)
+        except OSError:
+            continue
+    out = {}
+    for task, e in last.items():
+        if task in busy or task not in written:
+            continue
+        ended = float(e.get("ended") or 0)
+        began = ended - float(e.get("seconds") or 0)
+        if written[task] < began or e.get("ok") is False:
+            out[task] = {"ended": ended, "ok": e.get("ok") is not False,
+                         "node": str(e.get("stage") or "")}
     return out
 
 
@@ -1355,40 +1406,270 @@ _PICKER_JS = """
 })();
 """
 
+_HOME_CSS = """
+/* The home page, after the round-2 mockup the driver approved: a header with
+   + New work, Running now as a grid of cards, then Work as one list of items
+   with a toolbar of chips. Tokens are _CSS's. */
+body.home{font-size:14px;padding-bottom:4rem}
+body.home .wrap{max-width:1000px;padding:22px 22px 0}
+body.home header{align-items:center;gap:12px;margin-bottom:14px}
+body.home header h1{font:600 20px/1 Georgia,serif}
+body.home header .sp{flex:1}
+body.home header a{color:var(--muted);font-size:12px;text-decoration:none}
+body.home header a:hover{color:var(--accent)}
+body.home button,body.home select,body.home input,body.home textarea,body.home .btn{
+ font:inherit;color:var(--fg);background:var(--card-2);border:1px solid var(--border);
+ border-radius:8px;padding:6px 10px}
+body.home button,body.home .btn{cursor:pointer;text-decoration:none;display:inline-block;
+ line-height:1.4}
+body.home button.primary{background:#8fc7ff22;border-color:var(--accent);color:var(--accent);
+ font-weight:600}
+body.home .ghost{background:transparent}
+.notice{border:1px solid var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;
+ margin:0 0 12px;color:var(--fg)}
+.home h2,.home h2.sect{font:600 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+ color:var(--muted);margin:18px 0 8px;display:flex;gap:8px;align-items:center}
+.home h2 .n{color:var(--fg)}
+.running-now .agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+ gap:8px;margin:0;font-size:inherit}
+.card.agent{padding:10px 12px;display:flex;flex-direction:column;gap:4px;margin:0;border-radius:10px}
+.agent .top{display:flex;gap:6px;align-items:center}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--run);animation:pulse 1.6s infinite;
+ flex:none}
+.agent.waiting .pulse{background:var(--label);animation:none}
+@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+.agent .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent .doing{color:var(--run);font-size:12px}
+.agent .pg{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.agent .pg a{color:var(--accent)}
+.agent .pg a.under{color:var(--muted);text-decoration:none}
+.agent .pg a.under b{color:var(--fg)}
+.agent .nopage{color:var(--label)}
+.bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--run)}
+.home .badge{font-size:11px;padding:1px 7px}
+.badge.you{border-color:var(--accent);color:var(--accent)}
+.badge.work{border-color:var(--run);color:var(--run)}
+.badge.idle{border-style:dashed}
+.badge.done{border-color:var(--ok);color:var(--ok)}
+.badge.q{border-color:var(--hot);color:var(--hot)}
+.tag{font-size:11px;color:#c9b3ff}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.toolbar input[type=search]{flex:1 1 220px}
+body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-radius:8px;
+ background:var(--card-2)}
+.toolbar .hint,.hint{font-size:12px;color:var(--muted)}
+.toolbar.chips:empty{display:none}
+.chipbtn{font-size:12px!important;padding:3px 10px!important;border-radius:99px!important}
+.chipbtn[aria-pressed=true]{border-color:var(--accent)!important;color:var(--accent)!important;
+ background:#8fc7ff14!important}
+.unseen{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
+.card.items{padding:0;overflow:visible;border-radius:10px}
+.items details.item{border-top:1px solid var(--border)}
+.items details.item:first-child{border-top:0}
+.items details.item.offlist,.items .offbox details.item{display:none}
+.items summary.row{display:flex;gap:8px;align-items:center;padding:9px 12px;cursor:pointer;
+ list-style:none}
+.items summary.row::-webkit-details-marker{display:none}
+.items summary.row:hover{background:#ffffff06}
+.items .caret{color:var(--muted);width:12px;flex:none}
+.items .caret::before{content:'▸'}
+.items details[open] > summary .caret::before{content:'▾'}
+.items .row .title{font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+ text-overflow:ellipsis;font-size:inherit;color:var(--fg)}
+.items .row .proj{font:11px var(--mono);color:var(--muted)}
+.items .row .when{font-size:12px;color:var(--muted);width:84px;text-align:right;flex:none}
+.items .inside{padding:0 12px 12px 32px}
+.items .grp{font:11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em;
+ margin:8px 0 2px}
+.items .pages{border-left:2px solid var(--border);padding-left:10px;margin:4px 0 8px}
+.items .pages .pages{margin:0 0 2px 6px}
+.items .page{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:13px;flex-wrap:wrap}
+.items .page a{color:var(--accent);text-decoration:none}
+.items .page a.hist{color:var(--label)}
+.items .page .k{font:11px var(--mono);color:var(--muted);width:70px;flex:none}
+.items .threads:empty{display:none}
+.items .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.items .acts form{margin:0}
+.items .acts input[name=tag]{padding:4px 8px;font-size:12px}
+.items details.item:not([data-state=idle]) .cmu{display:none}
+details.addtag{display:inline-flex;gap:6px;align-items:center}
+details.addtag > summary{list-style:none}
+details.addtag > summary::-webkit-details-marker{display:none}
+details.addtag[open]{display:inline-flex}
+.items .idlefold > summary.foldrow{padding:8px 12px;color:var(--muted);cursor:pointer;
+ border-top:1px solid var(--border);background:#ffffff04;list-style:none;font-size:inherit}
+.items .idlefold > summary::-webkit-details-marker{display:none}
+.items .idlefold > summary::before{content:'▸ '}
+.items .idlefold[open] > summary::before{content:'▾ '}
+.items .idlefold[hidden]{display:none}
+.items .idlebox details.item:first-child{border-top:1px solid var(--border)}
+.items .noitems{padding:14px;margin:0}
+.card.items[hidden]{display:none}
+details.item[data-machine] .proj::after{content:' · ' attr(data-machine)}
+dialog#newwork{background:var(--card);color:var(--fg);border:1px solid var(--border);
+ border-radius:12px;width:min(560px,92vw)}
+dialog#newwork::backdrop{background:#0008}
+dialog#newwork h3{margin:0}
+dialog#newwork label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+dialog#newwork textarea,dialog#newwork input,dialog#newwork select{width:100%}
+dialog#newwork .dirwrap .lbl{font-size:12px;margin:10px 0 4px}
+.sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.sugg button{font:12px var(--mono)!important;padding:2px 8px!important}
+.dlgacts{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+details.newproject{margin-top:22px}
+.home .backend{border:0;padding:0;margin:0}
+@media (max-width:640px){
+ body.home .wrap{padding:14px 12px 0}
+ .items summary.row{flex-wrap:wrap}
+ .items .row .title{flex:1 1 calc(100% - 40px);white-space:normal}
+ .items .row .when{width:auto}
+ .items .inside{padding-left:16px}
+}
+"""
+
+
 _PAGE_JS = """
 (function(){
- var FALLBACK=%d;
+ var FALLBACK=%d, SPLIT='%s', KEY='cadre.home.v1';
+ var LABEL={working:'Agent working','your-turn':'Your turn',idle:'Idle',done:'Done',hidden:'Hidden'};
+ var CLS={'your-turn':'you',idle:'idle',done:'done',hidden:'idle'};
+ var CHIPS=[['your-turn','Your turn'],['working','Agent working'],['idle','Idle'],
+  ['unopened','Unopened'],['done','Done'],['hidden','Hidden']];
+ var HOME=['your-turn','working','idle'];
+ function $(id){return document.getElementById(id)}
  function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
- function applyFilter(){
-  var f=document.getElementById('filter');
-  var q=(f&&f.value||'').toLowerCase();
-  var pf=document.querySelector('#fleet select.projfilter'),proj=pf?pf.value:'';
-  document.querySelectorAll('#fleet section.card').forEach(function(sec){
-   var any=false, rows=sec.querySelectorAll('.rowline,.story');
-   rows.forEach(function(r){
-    var hit=(!q||r.textContent.toLowerCase().indexOf(q)>-1)&&
-     (!proj||!r.dataset.item||r.dataset.project===proj)&&
-     (!!q||!r.classList.contains('offlist'));
-    r.style.display=hit?'':'none'; if(hit)any=true;
-   });
-   sec.style.display=(!q||any||!rows.length||sec.classList.contains('items'))?'':'none';
-  // a search match folded under Idle must be seen
-  if(q)document.querySelectorAll('#fleet details.fold.idle').forEach(function(d){d.open=true});
+ // The view: which states show, the tag, the project, the sort and the home
+ // limit. Kept in this browser; a link with ?show= ?sort= ?tag= ?limit= wins.
+ var sel={show:HOME.slice(),unopened:false,tag:'',proj:'',sort:'',limit:0,idleOpen:false};
+ try{var kept=JSON.parse(localStorage.getItem(KEY)||'{}');for(var k in kept)sel[k]=kept[k];}catch(e){}
+ (function(){
+  var q=new URLSearchParams(location.search);
+  if(q.get('sort'))sel.sort=q.get('sort');
+  if(q.get('limit'))sel.limit=+q.get('limit')||0;
+  if(q.has('tag'))sel.tag=q.get('tag');
+  if(q.has('show')){var s=q.get('show');sel.unopened=s==='unopened';
+   sel.show=s==='done'?['done']:s==='hidden'?['hidden']:(s==='all'||s==='unopened')?
+    HOME.concat(['done','hidden']):HOME.slice();}
+ })();
+ function save(){try{localStorage.setItem(KEY,JSON.stringify(sel))}catch(e){}}
+ function n(el,k){return parseFloat(el.dataset[k])||0}
+ function tagsOf(el){return el.dataset.tags?el.dataset.tags.split(','):[]}
+ function lists(){return [].slice.call(document.querySelectorAll('#fleet .card.items'))}
+ // Every machine draws its own list; the page shows them as one.
+ function merge(){
+  var all=lists();if(all.length<2)return;
+  all.slice(1).forEach(function(l){
+   l.querySelectorAll('details.item').forEach(function(it){all[0].querySelector('.offbox').appendChild(it)});
+   l.hidden=true;
   });
-  // a match hidden inside a closed fold is a match the driver can't see
-  if(q)document.querySelectorAll('#fleet details.fold:not(.item)').forEach(function(d){d.open=true});
  }
- document.addEventListener('change',function(e){
-  if(!e.target.matches)return;
-  if(e.target.matches('select.projfilter'))applyFilter();
-  else if(e.target.matches('form.itemctl select'))e.target.form.submit();
+ function badge(el,st){
+  var b=el.querySelector('.stbadge');if(!b)return;
+  var a=n(el,'agents');
+  b.innerHTML=st==='working'?'<span class="badge work">'+(a?a+' agent'+(a>1?'s':'')+' running':'Agent working')+'</span>'
+   :'<span class="badge '+CLS[st]+'">'+LABEL[st]+'</span>';
+ }
+ function layout(){
+  merge();
+  var list=lists()[0];if(!list)return;
+  var items=[].slice.call(document.querySelectorAll('#fleet details.item'));
+  var limitSel=$('limit'),limit=sel.limit||(limitSel?+limitSel.value:15)||15;
+  if(limitSel&&sel.limit){
+   if(![].some.call(limitSel.options,function(o){return +o.value===sel.limit}))limitSel.add(new Option(sel.limit,sel.limit));
+   limitSel.value=String(sel.limit);
+  }
+  // Idle is by count, never by age: of the items not done or hidden, the
+  // limit most recently touched stay; an item an agent works on never idles.
+  var live=items.filter(function(e){return !e.dataset.store});
+  var busy=live.filter(function(e){return e.dataset.working==='1'}).length;
+  var quiet=live.filter(function(e){return e.dataset.working!=='1'})
+   .sort(function(a,b){return n(b,'touched')-n(a,'touched')});
+  var room=Math.max(0,limit-busy),count={unopened:0};
+  items.forEach(function(e){
+   var st=e.dataset.store||(e.dataset.working==='1'?'working':quiet.indexOf(e)<room?'your-turn':'idle');
+   e.dataset.state=st;badge(e,st);count[st]=(count[st]||0)+1;
+   if(e.dataset.unopened==='1')count.unopened++;
+  });
+  chips(count,items);
+  var f=$('filter'),q=(f&&f.value||'').trim().toLowerCase();
+  var pf=$('proj'),proj=pf?pf.value:'';
+  var shown=items.filter(function(e){
+   return (q||sel.show.indexOf(e.dataset.state)>-1)&&(!sel.unopened||e.dataset.unopened==='1')
+    &&(!sel.tag||tagsOf(e).indexOf(sel.tag)>-1)&&(!proj||e.dataset.project===proj)
+    &&(!q||e.textContent.toLowerCase().indexOf(q)>-1);
+  });
+  var sort=$('sort')?$('sort').value:'needs';
+  var shelf=function(e){return e.dataset.state==='done'||e.dataset.state==='hidden'?1:0};
+  shown.sort(sort==='result'?function(a,b){return n(b,'returned')-n(a,'returned')}
+   :sort==='untouched'?function(a,b){return n(a,'touched')-n(b,'touched')}
+   :sort==='spent'?function(a,b){return n(b,'spent')-n(a,'spent')}
+   :function(a,b){return shelf(a)-shelf(b)||n(a,'working')-n(b,'working')||n(a,'needs')-n(b,'needs')
+    ||n(b,'touched')-n(a,'touched')});
+  var fold=list.querySelector('.idlefold'),box=fold.querySelector('.idlebox'),
+      off=list.querySelector('.offbox'),none=list.querySelector('.noitems');
+  items.forEach(function(e){if(shown.indexOf(e)<0){e.classList.add('offlist');off.appendChild(e);}});
+  var idle=0;
+  shown.forEach(function(e){
+   e.classList.remove('offlist');
+   if(e.dataset.state==='idle'){box.appendChild(e);idle++;}else list.insertBefore(e,none);
+  });
+  fold.hidden=!idle;fold.querySelector('.n').textContent=idle;
+  fold.open=!!idle&&(sel.idleOpen||!!q);
+  none.hidden=!!shown.length;
+  if(pf){ // projects only the items know of (another machine's, or by name)
+   items.forEach(function(e){var v=e.dataset.project;
+    if(v&&![].some.call(pf.options,function(o){return o.value===v}))pf.add(new Option(e.dataset.projname||v,v));});
+   if(sel.proj&&pf.value!==sel.proj&&[].some.call(pf.options,function(o){return o.value===sel.proj}))pf.value=sel.proj;
+  }
+ }
+ function chips(count,items){
+  var s=$('states');if(!s)return;s.innerHTML='';
+  CHIPS.forEach(function(c){
+   var on=c[0]==='unopened'?sel.unopened:sel.show.indexOf(c[0])>-1;
+   var b=document.createElement('button');b.type='button';b.className='chipbtn';
+   b.setAttribute('aria-pressed',on);
+   b.innerHTML=(c[0]==='unopened'?'<span class="unseen"></span> ':'')+esc(c[1])+' '+(count[c[0]]||0);
+   b.onclick=function(){
+    if(c[0]==='unopened')sel.unopened=!sel.unopened;
+    else{var i=sel.show.indexOf(c[0]);if(i>-1)sel.show.splice(i,1);else sel.show.push(c[0]);}
+    save();layout();
+   };
+   s.appendChild(b);
+  });
+  var t=$('tags');if(!t)return;t.innerHTML='';
+  var all={};items.forEach(function(e){tagsOf(e).forEach(function(x){all[x]=1})});
+  var names=Object.keys(all).sort();
+  if(sel.tag&&!all[sel.tag])names.push(sel.tag);
+  if(!names.length)return;
+  t.innerHTML='<span class="hint">tags:</span>';
+  names.forEach(function(x){
+   var b=document.createElement('button');b.type='button';b.className='chipbtn';
+   b.setAttribute('aria-pressed',sel.tag===x);b.textContent='#'+x;
+   b.onclick=function(){sel.tag=sel.tag===x?'':x;save();layout();};
+   t.appendChild(b);
+  });
+ }
+ ['sort','proj','limit'].forEach(function(id){
+  var el=$(id);if(!el)return;
+  if(id==='sort'&&sel.sort&&[].some.call(el.options,function(o){return o.value===sel.sort}))el.value=sel.sort;
+  el.addEventListener('change',function(){
+   if(id==='sort')sel.sort=el.value;else if(id==='proj')sel.proj=el.value;else sel.limit=+el.value;
+   save();layout();
+  });
  });
- // Find across everything: the row filter above only sees what is listed;
+ var bar=$('workbar');if(bar)bar.addEventListener('submit',function(e){e.preventDefault();});
+ document.addEventListener('toggle',function(e){
+  if(e.target.classList&&e.target.classList.contains('idlefold')){
+   var f=$('filter');if(!(f&&f.value.trim()))sel.idleOpen=e.target.open;save();}
+ },true);
+ // Find across everything: the list filter above only sees what is listed;
  // this asks the server about every page ever opened, folded rounds included.
  var findT=null;
  function findEverywhere(){
-  var f=document.getElementById('filter'),box=document.getElementById('found');
+  var f=$('filter'),box=$('found');
   if(!f||!box)return;
   var q=f.value.trim();
   if(q.length<2){box.hidden=true;box.innerHTML='';return;}
@@ -1396,76 +1677,67 @@ _PAGE_JS = """
    .then(function(h){if(f.value.trim()!==q)return;box.innerHTML=h;box.hidden=false;})
    .catch(function(){});
  }
- var f=document.getElementById('filter');
- if(f)f.addEventListener('input',function(){applyFilter();clearTimeout(findT);findT=setTimeout(findEverywhere,200);});
- // Dispatch-target rows: click (or Enter) points the task box at that
- // checkout. It must LOOK like it did something: the row stays marked, the
- // form says where the task will run, and the form flashes into view.
- function markPicked(){
-  var cwd=document.querySelector('form.newtask input[name=cwd]');
-  var v=cwd?cwd.value:'';
-  document.querySelectorAll('.dispatch[data-cwd]').forEach(function(r){
-   var on=!!v&&r.dataset.cwd===v;
-   r.classList.toggle('picked',on);r.setAttribute('aria-pressed',on?'true':'false');
-   var go=r.querySelector('.go');if(go)go.textContent=on?'selected ✓':'new task here →';
-  });
+ var f=$('filter');
+ if(f)f.addEventListener('input',function(){layout();clearTimeout(findT);findT=setTimeout(findEverywhere,200);});
+ // New work: the header button, an item's "New work under this", or a link
+ // with ?parent= opens the dialog; the folder says which project it files under.
+ var dlg=$('newwork');
+ function openWork(parent){
+  if(!dlg)return;
+  var u=$('under');if(u&&parent!=null)u.value=parent;
+  if(dlg.showModal&&!dlg.open)dlg.showModal();else dlg.setAttribute('open','');
+  hint();var w=$('what');if(w)w.focus();
  }
- function showTarget(){
-  var form=document.querySelector('form.newtask');if(!form)return;
-  var cwd=form.querySelector('input[name=cwd]'),note=form.querySelector('.target');
-  var txt=form.querySelector('textarea'),v=cwd?cwd.value.trim():'';
-  var picked=document.querySelector('.dispatch.picked');
-  var name=picked?(picked.dataset.name||v):v;
-  if(note){
-   note.hidden=!v;
-   note.innerHTML=v?'New task will run in <b>'+esc(name)+'</b> <code>'+esc(v)+
-    '</code> <button type=button class=clear>clear</button>':'';
-  }
-  if(txt)txt.placeholder=v?'What should the fleet do in '+name+'?':'What should the fleet do?';
+ var owners={};try{owners=JSON.parse(($('owners')||{}).textContent||'{}')}catch(e){}
+ function hint(){
+  var i=$('workdir'),h=$('projhint');if(!i||!h)return;
+  var v=i.value.trim().replace(/\\/+$/,'');
+  if(!v){h.textContent='The project is the one that owns this folder; a folder no project owns becomes a new project.';return;}
+  if(v[0]==='~')v=(owners.home||'')+v.slice(1);
+  var best=null;(owners.dirs||[]).forEach(function(d){
+   if((v===d[0]||v.indexOf(d[0]+'/')===0)&&(!best||d[0].length>best[0].length))best=d;});
+  h.textContent=best?'Files under project “'+best[1]+'” (from the folder).'
+   :'No project owns this folder yet: it starts one named after the folder.';
  }
- function dispatchTo(el){
-  var form=document.querySelector('form.newtask');if(!form)return;
-  var cwd=form.querySelector('input[name=cwd]'),txt=form.querySelector('textarea');
-  if(cwd)cwd.value=el.dataset.cwd||'';
-  markPicked();showTarget();
-  var card=form.closest('.card');
-  if(card){card.classList.remove('flash');void card.offsetWidth;card.classList.add('flash');}
-  form.scrollIntoView({behavior:'smooth',block:'center'});
-  if(txt)txt.focus({preventScroll:true});
- }
+ var wd=$('workdir');if(wd){wd.addEventListener('input',hint);wd.addEventListener('change',hint);}
  document.addEventListener('click',function(e){
-  if(e.target.closest&&e.target.closest('form.newtask .clear')){
-   var c=document.querySelector('form.newtask input[name=cwd]');if(c)c.value='';
-   markPicked();showTarget();return;
-  }
-  var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
-  if(r)dispatchTo(r);
+  var t=e.target.closest?e.target:null;if(!t)return;
+  if(t.closest('#newworkbtn')){openWork('');return;}
+  if(t.closest('#cancelwork')){dlg.close?dlg.close():dlg.removeAttribute('open');return;}
+  var d=t.closest('.sugg button[data-dir]');
+  if(d&&wd){wd.value=d.dataset.dir;hint();return;}
+  var u=t.closest('a.nwu[data-parent]');
+  if(u&&!u.target){e.preventDefault();openWork(u.dataset.parent);}
  });
- document.addEventListener('keydown',function(e){
-  if(e.key!=='Enter'&&e.key!==' ')return;
-  var r=e.target.closest&&e.target.closest('.dispatch[data-cwd]');
-  if(r){e.preventDefault();dispatchTo(r);}
+ if(dlg&&dlg.hasAttribute('data-open'))openWork(null);
+ // An item's done, hide and tag change in place: the store is written, then
+ // the list is re-fetched, so the driver never loses their place.
+ document.addEventListener('submit',function(e){
+  var fm=e.target;if(!fm.matches||!fm.matches('#fleet form[action="/items"]'))return;
+  e.preventDefault();
+  // getAttribute: the form's own field named "action" shadows fm.action
+  fetch(fm.getAttribute('action'),{method:'POST',body:new URLSearchParams(new FormData(fm)),redirect:'manual'})
+   .then(function(){refresh();}).catch(function(){fm.submit();});
  });
- var cwdIn=document.querySelector('form.newtask input[name=cwd]');
- if(cwdIn)cwdIn.addEventListener('input',function(){markPicked();showTarget();});
  // Live: the fleet stream says when the runner's snapshot, a review page or
- // a link changed; only then is the fleet fragment re-fetched.
+ // a link changed; only then are Running now and the list re-fetched.
  function refresh(){
-  fetch('/?partial=1'+(location.search?'&'+location.search.slice(1):''),{cache:'no-store'}).then(function(r){return r.text()})
+  fetch('/?partial=1'+(location.search?'&'+location.search.slice(1):''),{cache:'no-store'})
+   .then(function(r){return r.text()})
    .then(function(h){
-    var el=document.getElementById('fleet');if(!el)return;
-    var open={};  // fold state is DOM state — carry it across the swap
-    el.querySelectorAll('details.fold[open]').forEach(function(d){open[d.dataset.fold]=1});
-    var pf=el.querySelector('select.projfilter'),proj=pf?pf.value:'';
-    el.innerHTML=h;
-    el.querySelectorAll('details.fold').forEach(function(d){if(open[d.dataset.fold])d.open=true});
-    pf=el.querySelector('select.projfilter');if(pf)pf.value=proj;
-    applyFilter();markPicked();
+    var el=$('fleet'),run=$('fleet-running');if(!el)return;
+    var i=h.indexOf(SPLIT);if(i<0)return;
+    var open={};  // which items are open is DOM state — carry it across the swap
+    el.querySelectorAll('details.item[open]').forEach(function(d){open[d.dataset.fold]=1});
+    if(run)run.innerHTML=h.slice(0,i);
+    el.innerHTML=h.slice(i+SPLIT.length);
+    el.querySelectorAll('details.item').forEach(function(d){if(open[d.dataset.fold])d.open=true});
+    layout();
    })
    .catch(function(){});
  }
  var soonT=null;function soon(){clearTimeout(soonT);soonT=setTimeout(refresh,250);}
- var live=document.getElementById('live'),poll=null;
+ var live=$('live'),poll=null;
  function setLive(ok,upstream){
   if(!live)return;
   live.className='live '+(ok?(upstream?'on':'half'):'off');
@@ -1487,9 +1759,9 @@ _PAGE_JS = """
   es.addEventListener('change',soon);
   es.onerror=function(){setLive(false);startPoll();};
  }
- markPicked();showTarget();
+ layout();
 })();
-""" % (FALLBACK_POLL_MS, STREAM_PATH)
+""" % (FALLBACK_POLL_MS, PARTIAL_SPLIT, STREAM_PATH)
 
 
 def _rel_time(ts: float, now: float | None = None) -> str:
@@ -1560,7 +1832,9 @@ def render_fleet(snap: dict, now: float | None = None,
                  spent: dict | None = None, histories: dict | None = None,
                  own=None, returned: dict | None = None,
                  tree: dict | None = None, by_item: bool = False,
-                 view: dict | None = None, item_store: dict | None = None) -> str:
+                 view: dict | None = None, item_store: dict | None = None,
+                 running: list | None = None, endings: dict | None = None,
+                 pageless: list | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1586,7 +1860,9 @@ def render_fleet(snap: dict, now: float | None = None,
     home page's shape instead of project sections: one item per agent thread
     (see fleet_items), filtered and sorted by `view` (show, sort, tag, limit,
     from the home page's query) with `item_store` (items.load) supplying tags,
-    done and hidden."""
+    done and hidden; `running` (running_agents()), `endings` (bare_endings())
+    and `pageless` (pageless_tasks()) say which items have agents on them and
+    which had a run end without a page."""
     now = time.time() if now is None else now
     statuses = statuses or {}
     tree = tree_mod.clean(tree)
@@ -1744,10 +2020,11 @@ def render_fleet(snap: dict, now: float | None = None,
 
     if by_item:
         return code_line(snap, own=own, now=now) + _items_html(
-            snap, now, tree, kids, projs or {}, starting or {}, doing, statuses, returned,
+            snap, now, tree, kids, projs or {}, doing, statuses, returned,
             {"live": _live, "spent": _spent, "history": _history_link,
              "menu": _page_link, "opened": _opened},
-            spent=spent, view=view or {}, store=item_store or {})
+            spent=spent, view=view or {}, store=item_store or {}, running=running,
+            endings=endings, pageless=pageless)
 
     exts = external_projects(snap)
     projs = projs or {}
@@ -1843,43 +2120,68 @@ def render_footer_hooks() -> str:
     return ""
 
 
-def render_running(cards: list[dict], now: float | None = None) -> str:
-    """The Running now strip: one card per running_agents() card, above the
-    work list. Says plainly when nothing runs — an absent strip reads the same
-    as a broken one."""
+def _home_path(p: str) -> str:
+    """A folder as the driver would type it: ~ for the home directory."""
+    home = str(Path.home())
+    return "~" + p[len(home):] if p == home or p.startswith(home + "/") else p
+
+
+def running_cards_html(cards: list[dict], now: float | None = None) -> tuple[str, int, int]:
+    """(cards html, running, waiting) for the Running now strip: one card per
+    running_agents() card — what it is doing, its page, the item it is under,
+    its folder and its clock against the deadline. No node names."""
     now = time.time() if now is None else now
-    if not cards:
-        return ('<section class="card running-now"><h2>Running now</h2>'
-                '<p class="empty">No agent is running.</p></section>')
-    out = []
+    out, n_run, n_wait = [], 0, 0
     for c in cards:
         if not isinstance(c, dict) or not c.get("task"):
             continue
+        title = escape(str(c.get("title") or c["task"]))
         if c.get("waiting"):
+            n_wait += 1
             doing = "waiting for a slot"
         else:
+            n_run += 1
             doing = str(c.get("doing") or "working")
             n = int(c.get("agents") or 0)
             if n and "agent" not in doing:
-                doing = f"{n} agent{'s' if n != 1 else ''} · {doing}"
+                doing = f"{n} subagent{'s' if n != 1 else ''} · {doing}"
         page = (f'<a href="{escape(view_href(c["page"]))}">'
                 f'{escape(str(c.get("page_title") or "its page"))}</a>'
-                if c.get("page") else '<span class="empty">not written yet</span>')
-        item = ("" if c.get("item") == c.get("task") else
-                f'<p class="rmeta">part of <a href="{_tree_href(str(c["item"]))}">'
-                f'{escape(str(c.get("item_title") or c["item"]))}</a></p>')
+                if c.get("page") else '<span class="nopage">not written yet</span>')
+        under = ("" if c.get("item") == c.get("task") else
+                 f' · under <a class="under" href="{_tree_href(str(c["item"]))}">'
+                 f'<b>{escape(str(c.get("item_title") or c["item"]))}</b></a>')
         started, deadline = float(c.get("started") or 0), float(c.get("deadline") or 0)
         used = int(max(0.0, now - started) // 60) if started else 0
-        clock = (f"{used}m of {int((deadline - started) // 60)}m" if deadline > started
-                 else f"{used}m")
-        out.append(f'<div class="agentcard"><p class="rtitle">{escape(str(c.get("title") or c["task"]))}'
-                   f'<span class="badge running">{escape(doing)}</span>'
-                   f'<span class="badge" title="minutes this turn has used, against its deadline">'
-                   f'{escape(clock)}</span></p>'
-                   f'<p class="rmeta">page: {page}</p>{item}'
-                   f'<p class="rmeta folder">{escape(str(c.get("folder") or ""))}</p></div>')
-    return (f'<section class="card running-now"><h2>Running now'
-            f'<span class="badge">{len(out)}</span></h2>{"".join(out)}</section>')
+        budget = int((deadline - started) // 60) if deadline > started else 0
+        clock = f"{used} min of {budget}" if budget else f"{used} min"
+        pct = min(100, int(used * 100 / budget)) if budget else 0
+        out.append(f'<div class="card agent{" waiting" if c.get("waiting") else ""}">'
+                   f'<div class="top"><span class="pulse"></span>'
+                   f'<span class="t" title="{title}">{title}</span></div>'
+                   f'<div class="doing">{escape(doing)}</div>'
+                   f'<div class="pg">page: {page}{under}</div>'
+                   f'<div class="pg" title="minutes this turn has used, against its deadline">'
+                   f'{escape(_home_path(str(c.get("folder") or "")))} · {escape(clock)}</div>'
+                   f'<div class="bar"><i style="width:{pct}%"></i></div></div>')
+    return "".join(out), n_run, n_wait
+
+
+def running_section(body: str, n_run: int, n_wait: int, slots: int = 0) -> str:
+    """The strip around running_cards_html(): a count against the runner's
+    slots, and a plain sentence when nothing runs — an absent strip reads the
+    same as a broken one."""
+    count = f"{n_run} of {slots} slots" if slots else str(n_run)
+    if n_wait:
+        count += f" · {n_wait} waiting for a slot"
+    inner = body or '<p class="empty">No agent is running.</p>'
+    return (f'<section class="running-now"><h2>Running now <span class="n">{count}</span></h2>'
+            f'<div class="agents">{inner}</div></section>')
+
+
+def render_running(cards: list[dict], now: float | None = None, slots: int = 0) -> str:
+    """The Running now strip for one machine's cards, above the work list."""
+    return running_section(*running_cards_html(cards, now), slots)
 
 
 def _item_root(task: str, parents: dict) -> str:
@@ -1887,16 +2189,20 @@ def _item_root(task: str, parents: dict) -> str:
 
 
 def fleet_items(surfaces: list[dict], tree: dict, projs: dict,
-                statuses: dict | None = None, returned: dict | None = None) -> list[dict]:
+                statuses: dict | None = None, returned: dict | None = None,
+                pageless: list | None = None) -> list[dict]:
     """The home page's items: one per agent thread, newest touch first.
 
     An item is a root task of the session tree plus everything started from
     it; a task nothing started and that started nothing is its own item. Each
     collapsed page (conversations.collapse has already folded a dialogue's
     rounds into one) files under the item its task belongs to; a page with no
-    task is an item of its own. Returns dicts carrying key (the root task id,
-    or "page:<key>"), title, head (the page the item opens), pages, project
-    (the durable project id, "" when none claims it) and touched (epoch).
+    task is an item of its own. A launched task with no page (`pageless`,
+    pageless_tasks()) is an item too when nothing else holds its tree: a run
+    that died before writing anything must still be on the list. Returns dicts
+    carrying key (the root task id, or "page:<key>"), title, head (the page
+    the item opens, None when it has none), pages, cwd, project (the durable
+    project id, "" when none claims it) and touched (epoch).
     """
     statuses, returned = statuses or {}, returned or {}
     parents = tree_mod.parents_of(tree)
@@ -1925,9 +2231,23 @@ def fleet_items(surfaces: list[dict], tree: dict, projs: dict,
             return max(float(sf.get("opened") or 0), _iso_epoch(st.get("updated_at")),
                        float(returned.get(str(sf.get("task") or "")) or 0))
         out.append({"key": key, "head": head, "pages": pages, "project": pid,
+                    "cwd": str(head.get("cwd") or ""),
                     "title": str((tree.get(key) or {}).get("title") or head.get("title")
                                  or head.get("task") or head.get("kind") or "page"),
                     "touched": max(_touch(sf) for sf in pages)})
+    held = {it["key"] for it in out}
+    for row in pageless or ():
+        key = _item_root(str(row.get("task") or ""), parents)
+        if not row.get("task") or key in held:
+            continue
+        held.add(key)
+        top = row if key == row["task"] else {}
+        out.append({"key": key, "head": None, "pages": [], "project": str(row.get("project") or ""),
+                    "cwd": str(row.get("cwd") or ""),
+                    "title": str((tree.get(key) or {}).get("title") or top.get("title")
+                                 or _task_label(key)),
+                    "touched": max(float(row.get("since") or 0),
+                                   float(returned.get(row["task"]) or 0))})
     out.sort(key=lambda it: -it["touched"])
     return out
 
@@ -1938,7 +2258,8 @@ def parent_choices(data: dict) -> list[tuple[str, str]]:
     be a parent."""
     snap, graph = data.get("snap") or {}, data.get("graph") or ([], {}, {})
     surfaces = conv_mod.collapse(snap.get("surfaces") or [], *graph)
-    items = fleet_items(surfaces, tree_mod.clean(data.get("tree")), data.get("projs") or {})
+    items = fleet_items(surfaces, tree_mod.clean(data.get("tree")), data.get("projs") or {},
+                        pageless=data.get("pageless") or [])
     return [(it["key"], it["title"]) for it in items if not it["key"].startswith("page:")]
 
 
@@ -1949,12 +2270,44 @@ def _page_state(sf: dict, statuses: dict, now: float) -> tuple[str, str]:
     return agent_state_badge(statuses.get(conv_mod.key_of(sf) or ""), now, owned=owned)
 
 
+def pageless_phrase(row: dict, now: float) -> str:
+    """What became of a launch with no page, in starting_rows' words; "" while
+    it runs (the Running now strip has it)."""
+    if row.get("running"):
+        return ""
+    if row.get("ran"):
+        return "ran, but wrote no page"
+    if row.get("failed"):
+        return f"could not start — {_short_error(row['failed'])}"
+    if row.get("started"):
+        return "started, then stopped before writing a page"
+    if now - float(row.get("since") or 0) > STARTUP_GRACE:
+        return "never started"
+    return "queued"
+
+
+def ending_phrase(e: dict, now: float) -> str:
+    """A bare_endings() value as the item says it."""
+    who = "" if e.get("node") in ("", "task") else f'{e["node"]} '
+    what = "failed" if not e.get("ok", True) else "ended without a page"
+    return f"{who}run {what} {_rel_time(e.get('ended') or 0, now)}".strip()
+
+
 def item_facts(items: list[dict], tree: dict, kids: dict, statuses: dict, doing: dict,
-               returned: dict, spent: dict, now: float) -> list[dict]:
+               returned: dict, spent: dict, now: float, running: list | None = None,
+               endings: dict | None = None, pageless: list | None = None) -> list[dict]:
     """Add what the states, filters and sorts read to each fleet_items item,
     in place: working (a page's agent or any agent in its tree is on it),
-    needs (0 when a page wants the driver now), returned, spent (all its
-    tasks' turns), unseen (each page's answer from the page server)."""
+    agents (running cards under it), needs (0 when a page wants the driver
+    now, or a run in it died without a page), returned, spent (all its
+    tasks' turns), unseen (each page's answer from the page server), and
+    bare: the words for a run in it that ended without a page, "" if none."""
+    endings = endings or {}
+    bare_rows = {str(r.get("task")): r for r in pageless or () if r.get("task")}
+    under: dict[str, int] = {}
+    for c in running or ():
+        if isinstance(c, dict) and not c.get("waiting"):
+            under[str(c.get("item") or "")] = under.get(str(c.get("item") or ""), 0) + 1
     for it in items:
         tasks = {str(sf.get("task") or "") for sf in it["pages"]} - {""}
         if not it["key"].startswith("page:"):
@@ -1966,10 +2319,17 @@ def item_facts(items: list[dict], tree: dict, kids: dict, statuses: dict, doing:
                     tasks.add(t)
                     stack.extend(kids.get(t) or ())
         states = [_page_state(sf, statuses, now) for sf in it["pages"]]
-        it["working"] = (any(cls == "running" for _, cls in states)
-                         or any(t in doing or (tree.get(t) or {}).get("working") for t in tasks))
-        it["needs"] = 0 if any(cls == "needs" or "your turn" in label
-                               for label, cls in states) else 1
+        it["agents"] = under.get(it["key"], 0)
+        it["working"] = (bool(it["agents"]) or any(cls == "running" for _, cls in states)
+                         or any(t in doing or (tree.get(t) or {}).get("working") for t in tasks)
+                         or any((bare_rows.get(t) or {}).get("running") for t in tasks))
+        said = [ending_phrase(endings[t], now) for t in sorted(
+            tasks & set(endings), key=lambda t: -float(endings[t].get("ended") or 0))]
+        said += [p for p in (pageless_phrase(bare_rows[t], now) for t in tasks & set(bare_rows))
+                 if p]
+        it["bare"] = "" if it["working"] or not said else said[0]
+        it["needs"] = 0 if it["bare"] or any(cls == "needs" or "your turn" in label
+                                             for label, cls in states) else 1
         it["returned"] = max([float(returned.get(t) or 0) for t in tasks] or [0.0])
         it["spent"] = sum(float(spent.get(t) or 0) for t in tasks)
         it["unseen"] = [(statuses.get(conv_mod.key_of(sf) or "") or {}).get("unseen")
@@ -1984,21 +2344,31 @@ def _options(choices: dict, current: str) -> str:
                    f'{escape(v)}</option>' for k, v in choices.items())
 
 
-def _item_controls(sort: str, show: str, tag: str, tags: list, limit: int,
-                   project_opts: str) -> str:
-    """Show, sort and tag are the home page's query (a GET form, so a view
-    is a link); project filters in the browser."""
-    tag_sel = ("" if not tags else
-               f'<select name="tag" aria-label="tag">'
-               f'{_options({"": "any tag", **{t: t for t in tags}}, tag)}</select>')
-    keep = ("" if limit == items_mod.HOME_LIMIT else
-            f'<input type="hidden" name="limit" value="{limit}">')
-    return (f'<form class="itemctl" method="get" action="{HOME_PATH}">'
-            f'<select name="show" aria-label="show">{_options(items_mod.SHOWS, show)}</select>'
-            f'<select name="sort" aria-label="sort">{_options(items_mod.SORTS, sort)}</select>'
-            f'{tag_sel}<select class="projfilter" aria-label="project">'
-            f'<option value="">every project</option>{project_opts}</select>{keep}'
-            f'<noscript><button type="submit">apply</button></noscript></form>')
+def work_toolbar(projs: dict, limit: int = items_mod.HOME_LIMIT, sort: str = "needs") -> str:
+    """The Work list's controls, drawn once in the page chrome so a live
+    refresh never takes the search box from under the driver's typing: find,
+    sort, project, how many items the home shows before the rest fold into
+    Idle, then the state and tag chips (filled by the page script from the
+    items it finds). A GET form, so a view is a link and works without the
+    script."""
+    names = {p["id"]: p["name"] for p in projects_mod.live(projs)}
+    projects = "".join(f'<option value="{escape(k)}">{escape(v)}</option>'
+                       for k, v in sorted(names.items(), key=lambda kv: kv[1].lower()))
+    limits = sorted({6, 15, 30, 50, limit})
+    return (f'<form class="toolbar" id="workbar" method="get" action="{HOME_PATH}">'
+            '<input id="filter" type="search" name="q" aria-label="find" autocomplete="off" '
+            'placeholder="find: filters these items and searches every page ever opened">'
+            f'<select id="sort" name="sort" aria-label="sort">'
+            f'{_options({k: "Sort: " + v for k, v in items_mod.SORTS.items()}, sort)}</select>'
+            f'<select id="proj" class="projfilter" aria-label="project">'
+            f'<option value="">All projects</option>{projects}</select>'
+            '<label class="hint">Home shows <select id="limit" name="limit" '
+            f'aria-label="home limit">{_options({str(n): str(n) for n in limits}, str(limit))}'
+            '</select> items, then the least recently touched fold into Idle</label>'
+            '<noscript><button type="submit">apply</button></noscript></form>'
+            '<div class="toolbar chips" id="states"></div>'
+            '<div class="toolbar chips" id="tags"></div>'
+            '<section id="found" class="card" hidden></section>')
 
 
 def catch_up_text(it: dict) -> str:
@@ -2016,12 +2386,14 @@ def catch_up_text(it: dict) -> str:
 
 
 def _catch_up(key: str, it: dict) -> str:
-    """A Catch me up button on an idle item. It only ever runs when pressed:
-    it posts a New work request filed under this item."""
-    cwd = str(it["head"].get("cwd") or "")
-    if it.get("state") != items_mod.IDLE or key.startswith("page:") or not cwd:
+    """A Catch me up button. Drawn on every item with a folder; the page shows
+    it only while the item is idle, because the page script moves items in
+    and out of Idle as the driver changes the home limit. It only ever runs
+    when pressed: it posts a New work request filed under this item."""
+    cwd = it.get("cwd") or ""
+    if key.startswith("page:") or not cwd or not it["pages"]:
         return ""
-    return (f'<form method="post" action="{TASKS_PATH}">'
+    return (f'<form class="cmu" method="post" action="{TASKS_PATH}">'
             f'<input type="hidden" name="text" value="{escape(catch_up_text(it))}">'
             f'<input type="hidden" name="cwd" value="{escape(cwd)}">'
             f'<input type="hidden" name="parent" value="{escape(key)}">'
@@ -2030,36 +2402,84 @@ def _catch_up(key: str, it: dict) -> str:
 
 
 def _item_actions(key: str, it: dict) -> str:
-    """Done, hide and tags for one item: POST /items, back to the home page."""
-    def _btn(action, label):
+    """Catch me up, done, hide, tags and new work for one item. The store
+    changes POST /items and come back to the home page."""
+    def _btn(action, label, extra=""):
         return (f'<form method="post" action="{ITEMS_PATH}">'
                 f'<input type="hidden" name="item" value="{escape(key)}">'
-                f'<input type="hidden" name="action" value="{action}">'
+                f'<input type="hidden" name="action" value="{action}">{extra}'
                 f'<button type="submit">{label}</button></form>')
-    done = _btn("undone", "Not done") if it["state"] == items_mod.DONE else _btn("done", "Mark done")
+    done = _btn("undone", "Reopen") if it["state"] == items_mod.DONE else _btn("done", "Mark done")
     hide = (_btn("unhide", "Show on home") if it["state"] == items_mod.HIDDEN
             else _btn("hide", "Hide from home"))
-    untag = "".join(
-        f'<form method="post" action="{ITEMS_PATH}"><input type="hidden" name="item" '
-        f'value="{escape(key)}"><input type="hidden" name="action" value="untag">'
-        f'<input type="hidden" name="tag" value="{escape(t)}">'
-        f'<button type="submit" title="remove this tag">{escape(t)} ×</button></form>'
-        for t in it["tags"])
-    return (f'<div class="itemactions">{_catch_up(key, it)}{done}{hide}{untag}'
+    untag = "".join(_btn("untag", f"#{escape(t)} ×",
+                         f'<input type="hidden" name="tag" value="{escape(t)}">')
+                    for t in it["tags"])
+    under = ("" if key.startswith("page:") else
+             f'<a class="btn ghost nwu" data-parent="{escape(key)}" '
+             f'href="{HOME_PATH}?parent={escape(urllib.parse.quote(key))}#newwork">'
+             'New work under this</a>')
+    return (f'<div class="acts">{_catch_up(key, it)}{done}{hide}'
+            f'<details class="addtag"><summary class="btn ghost">+ Tag</summary>'
             f'<form method="post" action="{ITEMS_PATH}">'
             f'<input type="hidden" name="item" value="{escape(key)}">'
             '<input type="hidden" name="action" value="tag">'
-            '<input name="tag" placeholder="add a tag" aria-label="tag" size="10" maxlength="32">'
-            '</form></div>')
+            '<input name="tag" placeholder="tag, then Enter" aria-label="tag" size="12" '
+            'maxlength="32"></form></details>'
+            f'{under}{untag}</div>')
 
 
-def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returned,
-                bits, spent=None, view=None, store=None) -> str:
-    """render_fleet's by-item body. `bits` are render_fleet's per-row badge
-    and link helpers, so a page reads the same here as on a project page."""
-    view, store = view or {}, store or {}
-    items = fleet_items(snap.get("surfaces") or [], tree, projs, statuses, returned)
-    item_facts(items, tree, kids, statuses, doing or {}, returned or {}, spent or {}, now)
+def _kid_rows(task: str, tree: dict, kids: dict, now: float, endings: dict,
+              bare: dict, seen=None) -> str:
+    """The agents started from `task`, all the way down, each with how it
+    stands: running, ended, or ended with no page — the one that must never
+    pass unseen."""
+    seen = set(seen or ()) | {task}
+    rows = []
+    for child in kids.get(task) or ():
+        if child in seen:
+            continue
+        node = tree.get(child) or {}
+        title = escape(str(node.get("title") or _task_label(child)))
+        href = escape(view_href(node["page"])) if node.get("page") else _tree_href(child)
+        if node.get("working"):
+            state = '<span class="badge work">running</span>'
+        elif child in endings:
+            state = f'<span class="badge q">{escape(ending_phrase(endings[child], now))}</span>'
+        elif child in bare and pageless_phrase(bare[child], now):
+            state = f'<span class="badge q">{escape(pageless_phrase(bare[child], now))}</span>'
+        else:
+            state = '<span class="badge">ended</span>'
+        deeper = _kid_rows(child, tree, kids, now, endings, bare, seen)
+        rows.append(f'<div class="page"><a href="{href}">{title}</a>{state}</div>'
+                    + (f'<div class="pages">{deeper}</div>' if deeper else ""))
+    return "".join(rows)
+
+
+_STATE_BADGE = {items_mod.YOUR_TURN: "you", items_mod.IDLE: "idle",
+                items_mod.DONE: "done", items_mod.HIDDEN: "idle"}
+
+
+def _state_badge(it: dict) -> str:
+    if it["state"] == items_mod.WORKING:
+        n = it.get("agents") or 0
+        text = f'{n} agent{"s" if n != 1 else ""} running' if n else "Agent working"
+        return f'<span class="badge work">{text}</span>'
+    return (f'<span class="badge {_STATE_BADGE[it["state"]]}">'
+            f'{items_mod.LABELS[it["state"]]}</span>')
+
+
+def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
+                bits, spent=None, view=None, store=None, running=None,
+                endings=None, pageless=None) -> str:
+    """render_fleet's by-item body: the Work list. Every item is drawn with
+    the facts the page script sorts, filters and folds on (data-*), so the
+    toolbar answers at once, and in the order and state the server would pick
+    so the list reads right before the script runs."""
+    view, store, endings = view or {}, store or {}, endings or {}
+    items = fleet_items(snap.get("surfaces") or [], tree, projs, statuses, returned, pageless)
+    item_facts(items, tree, kids, statuses, doing or {}, returned or {}, spent or {}, now,
+               running=running, endings=endings, pageless=pageless)
     try:
         limit = max(1, int(view.get("limit") or items_mod.HOME_LIMIT))
     except ValueError:
@@ -2069,84 +2489,69 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
     show = view.get("show") if view.get("show") in items_mod.SHOWS else ""
     tag = str(view.get("tag") or "")
     items = items_mod.order(items, sort)
+    names = {p["id"]: p["name"] for p in projects_mod.live(projs)}
+    bare = {str(r.get("task")): r for r in pageless or () if r.get("task")}
 
-    def _prow(sf, cls):
-        badge, hover = bits["opened"](sf)
-        title = escape(str(sf.get("title") or sf.get("kind") or ""))
-        return (f'<div class="{cls}"><a class="row"{hover} href="{escape(view_href(sf["path"]))}">'
-                f'<span class="title">{title}</span>{bits["live"](sf)}{badge}{bits["spent"](sf)}'
-                f'<span class="go">open →</span></a>{bits["history"](sf)}{bits["menu"](sf)}</div>')
+    def _prow(sf):
+        label, cls = _page_state(sf, statuses, now)
+        st = (f'<span class="badge {"work" if cls == "running" else "q"}">{escape(label)}</span>'
+              if cls in ("running", "needs") else "")
+        n = len(sf.get("earlier") or [])
+        k = f"round {n + 1}" if n else str(sf.get("kind") or "page")
+        new = ('<span class="badge you">unopened</span>'
+               if (statuses.get(conv_mod.key_of(sf) or "") or {}).get("unseen") is True else "")
+        return (f'<div class="page"><span class="k">{escape(k)}</span>'
+                f'<a href="{escape(view_href(sf["path"]))}">'
+                f'{escape(str(sf.get("title") or sf.get("kind") or "page"))}</a>'
+                f'{new}{st}{bits["spent"](sf)}{bits["history"](sf)}{bits["menu"](sf)}</div>')
 
     rows, idle, off = [], [], []
     for it in items:
-        key, head = it["key"], it["head"]
-        n_agents = tree_mod.descendants(key, kids)
-        count = (f'<span class="badge">{len(it["pages"])} pages</span>'
-                 if len(it["pages"]) > 1 else "")
-        agents = (f'<span class="badge">{n_agents} agent{"s" if n_agents != 1 else ""}</span>'
-                  if n_agents else "")
-        # The head page is the item's own row; the list holds the rest, so no
-        # page is linked twice.
-        others = [sf for sf in it["pages"] if sf is not head]
-        pages = ("".join(_prow(sf, "prow") for sf in others)
-                 or '<p class="empty">No other pages.</p>')
-        started = (tree_list(key, tree, kids, now) if n_agents else
-                   '<p class="empty">None.</p>')
-        state = it["state"]
-        chip = (f'<span class="badge state-{state}">{items_mod.LABELS[state]}</span>'
-                if state in (items_mod.DONE, items_mod.HIDDEN, items_mod.IDLE) else "")
-        dot = ('<span class="unopened" title="a page here changed since you last opened it">'
-               '●</span>' if it["unopened"] else "")
-        tags = "".join(f'<span class="badge tag">{escape(t)}</span>' for t in it["tags"])
-        if sort == "spent" and it.get("spent"):
-            # sorted by spend, the order has to be checkable on the row
-            tags += (f'<span class="badge" title="every turn of every task in this item">'
-                     f'{escape(costs_mod.usd(it["spent"]))}</span>')
+        key, state = it["key"], it["state"]
+        pages = ("".join(_prow(sf) for sf in it["pages"])
+                 or '<p class="empty">No page yet.</p>')
+        started = _kid_rows(key, tree, kids, now, endings, bare)
+        dot = ('<span class="unseen" title="has a page you have not opened since the agent '
+               'wrote it"></span>' if it["unopened"] else "")
+        flag = (f'<span class="badge q" title="a run in this item stopped without leaving a '
+                f'page to read">{escape(it["bare"])}</span>' if it["bare"] else "")
+        tags = "".join(f'<span class="tag">#{escape(t)}</span>' for t in it["tags"])
+        pname = names.get(it["project"], it["project"])
+        cost = (f'<span class="badge cost" title="every turn of every task in this item">'
+                f'{escape(costs_mod.usd(it["spent"]))}</span>' if it.get("spent") else "")
+        stored = state if state in (items_mod.DONE, items_mod.HIDDEN) else ""
         shown = items_mod.visible(it, show, tag)
-        # Not shown, still rendered: search reaches hidden and done items.
-        cls = "" if shown else " offlist"
-        (rows if shown and not (show == "" and state == items_mod.IDLE)
-         else idle if shown else off).append(
-            f'<details class="rowline item fold{cls}" data-fold="{escape(key)}" '
+        html = (
+            f'<details class="item{"" if shown else " offlist"}" data-fold="{escape(key)}" '
             f'data-item="{escape(key)}" data-project="{escape(it["project"])}" '
-            f'data-state="{state}">'
-            f'<summary>{dot}<span class="title">{escape(it["title"])}</span>{bits["live"](head)}'
-            f'{chip}{tags}{count}{agents}'
-            f'<a class="go" href="{escape(view_href(head["path"]))}">open →</a>'
-            f'{bits["history"](head)}{bits["menu"](head)}</summary>'
-            f'<div class="igroups"><h4>Other pages</h4>{pages}'
-            # Track B's message threads land here; the slot is drawn now so
-            # the item's shape does not change when they arrive.
-            f'<h4>Message threads</h4><div class="threads" data-item="{escape(key)}">'
-            f'<p class="empty">None yet.</p></div>'
-            f'<h4>Agents started from this</h4>{started}'
-            + ("" if key.startswith("page:") else
-               f'<p><a class="hist" href="{HOME_PATH}?parent={escape(urllib.parse.quote(key))}'
-               f'#newwork">new work under this →</a></p>')
+            f'data-projname="{escape(pname)}" data-state="{state}" data-store="{stored}" '
+            f'data-working="{int(bool(it["working"]))}" data-agents="{it.get("agents") or 0}" '
+            f'data-needs="{it["needs"]}" data-touched="{int(it["touched"])}" '
+            f'data-returned="{int(it["returned"])}" data-spent="{it["spent"]:.2f}" '
+            f'data-unopened="{int(it["unopened"])}" '
+            f'data-tags="{escape(",".join(it["tags"]))}">'
+            f'<summary class="row"><span class="caret"></span>{dot}'
+            f'<span class="title">{escape(it["title"])}</span>'
+            f'<span class="stbadge">{_state_badge(it)}</span>{flag}{tags}'
+            f'<span class="proj">{escape(pname)}</span>{cost}'
+            f'<span class="when" title="last touched">{escape(_rel_time(it["touched"], now))}'
+            f'</span></summary><div class="inside">'
+            f'<div class="grp">Pages</div><div class="pages">{pages}</div>'
+            # Track B's message threads land here, under the item they are about.
+            f'<div class="threads" data-item="{escape(key)}"></div>'
+            + (f'<div class="grp">Agents started from this</div>'
+               f'<div class="pages">{started}</div>' if started else "")
             + f'{_item_actions(key, it)}</div></details>')
-    # Launched work with no page yet that is not running: the strip shows the
-    # running ones, but "never started" and "ran, wrote no page" must stay seen.
-    stuck = [s for rows_ in starting.values() for s in rows_ if not s.get("running")]
-    out = ""
-    if stuck:
-        out += (f'<section class="card"><h2>Launched, no page yet</h2>'
-                f'{starting_rows(stuck, now, doing)}</section>')
-    # Project is a filter now, not the page's sections: every live project
-    # stays one pick away even with nothing in it.
-    names = {p["id"]: p["name"] for p in projects_mod.live(projs)}
-    for it in items:
-        names.setdefault(it["project"], it["project"])
-    names.pop("", None)
-    opts = "".join(f'<option value="{escape(k)}">{escape(v)}</option>'
-                   for k, v in sorted(names.items(), key=lambda kv: kv[1].lower()))
-    all_tags = sorted({t for it in items for t in it["tags"]}, key=str.lower)
-    fold = (f'<details class="fold idle" data-fold="idle"><summary>Idle: {len(idle)} more'
-            f'</summary>{"".join(idle)}</details>') if idle else ""
-    out += (f'<section class="card items"><h2>Work<span class="badge">{len(rows) + len(idle)}'
-            f'</span></h2>{_item_controls(sort, show, tag, all_tags, limit, opts)}'
-            + ("".join(rows) or '<p class="empty">Nothing here. Change the filter, '
-               'or start some work with New work.</p>')
-            + fold + "".join(off) + '</section>')
+        (rows if shown and not (show == "" and state == items_mod.IDLE)
+         else idle if shown else off).append(html)
+    fold = (f'<details class="idlefold" data-fold="idle"{"" if idle else " hidden"}>'
+            f'<summary class="foldrow">Idle: <span class="n">{len(idle)}</span> more, least '
+            'recently touched. They fold here only because the home limit is reached.'
+            f'</summary><div class="idlebox">{"".join(idle)}</div></details>')
+    out = (f'<div class="card items" data-limit="{limit}">{"".join(rows)}'
+           f'<p class="empty noitems"{"" if not rows and not idle else " hidden"}>'
+           'Nothing matches. Clear a filter above.</p>'
+           f'{fold}<div class="offbox">{"".join(off)}</div></div>')
     # Pipeline stories (the PR pipeline's own work) keep their sections.
     for p in fleet(snap):
         flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
@@ -2184,47 +2589,57 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
                 projs: dict | None = None, finished: dict | None = None,
                 starting: dict | None = None, doing: dict | None = None,
                 spent: dict | None = None, week_usd: float | None = None,
-                fleet_html: str | None = None, parents: list | None = None,
-                entries: list | None = None, parent: str = "") -> str:
-    """The panel: a static layout — task box, find, the fleet — whose fleet
-    fragment is re-fetched when the fleet stream reports a change.
-    `fleet_html` is the fleet already rendered from every backend's API (the
-    live page); None renders `snap` directly (tests)."""
+                fleet_html=None, parents: list | None = None,
+                entries: list | None = None, parent: str = "",
+                view: dict | None = None) -> str:
+    """The home page: a header (spend, cards, every run, + New work), the
+    Running now strip, track A's inbox slot, then Work — its toolbar drawn
+    here, once, and its list re-fetched when the fleet stream reports a
+    change. `fleet_html` is (running html, work html) already rendered from
+    every backend's API (the live page); None renders `snap` directly
+    (tests)."""
     now = time.time() if now is None else now
-    stamp = snap.get("iso") or "—"
-    banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
+    view = view or {}
+    projs = projs or {}
+    if fleet_html is None:
+        fleet_html = ("", render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs,
+                                       finished=finished, doing=doing, spent=spent,
+                                       by_item=True, view=view))
+    elif isinstance(fleet_html, str):
+        fleet_html = ("", fleet_html)
+    running_html, work_html = fleet_html
+    try:
+        limit = max(1, int(view.get("limit") or items_mod.HOME_LIMIT))
+    except ValueError:
+        limit = items_mod.HOME_LIMIT
+    sort = view.get("sort") if view.get("sort") in items_mod.SORTS else "needs"
+    banner = f'<p class="notice">{escape(notice)}</p>' if notice else ""
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>Cadre — Agent Fleet</title>'
+        '<title>Cadre</title>'
         '<link rel="icon" href="data:image/svg+xml,'
         '%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E'
         '%3Ctext y=%2213%22 font-size=%2213%22%3E%F0%9F%9B%B0%3C/text%3E%3C/svg%3E">'
-        f'<style>{_CSS}</style></head><body><div class="wrap">'
-        '<header><h1>Cadre<span class="dot">.</span> agent fleet</h1>'
-        f'<span class="updated">snapshot {escape(str(stamp))}</span>'
-        + (f'<a class="costs" href="{COSTS_PATH}">{escape(costs_mod.usd(week_usd))} '
-           'in 7 days</a>' if week_usd is not None else "") +
-        f'<a class="costs" href="{CARDS_PATH}">cards</a>'
-        '<span id="live" class="live">connecting…</span></header>'
+        f'<style>{_CSS}{_HOME_CSS}</style></head><body class="home"><div class="wrap">'
+        '<header><h1>Cadre<span class="dot">.</span></h1><span class="sp"></span>'
+        + (f'<a href="{COSTS_PATH}">{escape(costs_mod.usd(week_usd))} in 7 days</a>'
+           if week_usd is not None else "") +
+        f'<a href="{CARDS_PATH}">cards</a><a href="{RUNS_PATH}">every run</a>'
+        f'<span id="live" class="live" title="snapshot {escape(str(snap.get("iso") or "—"))}">'
+        'connecting…</span>'
+        '<button type="button" class="primary" id="newworkbtn">+ New work</button></header>'
         f'{banner}'
-        # No fleet-wide task box: work belongs to a project, and the box asked
-        # the driver to type a raw absolute path, which is what tab-complete
-        # exists to avoid. Launch from a project instead — it knows its own
-        # directory, so there is no path to type.
-        f'{_new_work_form(parents or [], entries or [], parent)}'
-        f'{_new_project_form(projs or {})}'
-        '<input id="filter" type="search" aria-label="find" '
-        'placeholder="find — filters the rows below and searches every page ever opened">'
-        '<section id="found" class="card" hidden></section>'
-        f'<div id="fleet">{render_fleet(snap, now, statuses=statuses, graph=graph, projs=projs, finished=finished, starting=starting, doing=doing, spent=spent) if fleet_html is None else fleet_html}</div>'
-        '<footer>Live: refreshes when the runner, a review page or a link changes · '
-        f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
-        f'<a href="{RUNS_PATH}">every run, newest first</a> · '
+        f'<div id="fleet-running">{running_html}</div>'
+        f'<h2 class="sect">Work</h2>{work_toolbar(projs, limit, sort)}'
+        f'<div id="fleet">{work_html}</div>'
+        f'{_new_project_form(projs)}'
+        f'<footer><a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         f'<a href="{TREE_PATH}">which session launched which</a> · '
         f'<a href="{COSTS_PATH}">what each run cost</a></footer>'
-        f'{render_footer_hooks()}'
-        f'</div><script>{_PAGE_JS}</script></body></html>')
+        f'{render_footer_hooks()}</div>'
+        f'{_new_work_form(parents or [], entries or [], parent, projs)}'
+        f'<script>{_PAGE_JS}</script></body></html>')
 
 
 def _group_options(projs: dict, selected: str = "", exclude: str = "") -> str:
@@ -2328,37 +2743,55 @@ def _dir_field(fid: str, lid: str, label: str, name: str = "") -> str:
     )
 
 
-def _new_work_form(parents: list, entries: list, parent: str = "") -> str:
-    """New work, from the home page: what to do, the folder (completed from
-    this machine; the project is worked out from it), an optional item it is
-    part of, tags, and an optional skill to run. Posts to /tasks.
+def _new_work_form(parents: list, entries: list, parent: str = "",
+                   projs: dict | None = None) -> str:
+    """New work, a dialog the header's + New work opens: what to do, the
+    folder (completed from this machine, with the projects' own folders one
+    click away, and which project the folder files under said as you type),
+    an optional item to put it under, tags, and an optional skill. Posts to
+    /tasks.
 
     `parents` is [(item key, title)] — the items a new task can join;
-    `parent` preselects one (an item's "new work under this" link)."""
+    `parent` preselects one and opens the dialog (an item's "new work under
+    this" link)."""
     opts = "".join(f'<option value="{escape(k)}"{" selected" if k == parent else ""}>'
                    f'{escape(t[:90])}</option>' for k, t in parents)
+    live = projects_mod.live(projs or {})
+    owners = json.dumps({"home": str(Path.home()),
+                         "dirs": [[str(d).rstrip("/"), p["name"]] for p in live
+                                  for d in p.get("dirs") or ()]})
+    picks = "".join(f'<button type="button" data-dir="{escape(_home_path(str(d)))}">'
+                    f'{escape(_home_path(str(d)))}</button>'
+                    for d in dict.fromkeys(str((p.get("dirs") or [""])[0]) for p in live) if d)
     return (
-        f'<details class="card newwork" id="newwork"{" open" if parent else ""}>'
-        '<summary class="meta">New work — start an agent on something</summary>'
+        f'<dialog id="newwork"{" data-open" if parent else ""}>'
         f'<form class="newtask" method="post" action="{TASKS_PATH}">'
-        '<textarea name="text" required placeholder="What should the agent do?"></textarea>'
-        f'{_dir_field("workdir", "worksug", "Folder", name="cwd")}'
-        '<p class="meta">The project is the one that owns this folder; a folder no '
-        'project owns becomes a new project.</p>'
-        '<div class="row"><select name="parent" aria-label="part of">'
-        '<option value="">its own item</option>'
+        '<h3>Start work</h3>'
+        '<label for="what">What should the agent do?</label>'
+        '<textarea id="what" name="text" rows="3" required '
+        'placeholder="e.g. Find out why Study cards are not useful yet"></textarea>'
+        f'{_dir_field("workdir", "worksug", "Folder it works in", name="cwd")}'
+        f'<div class="sugg">{picks}</div>'
+        f'<script type="application/json" id="owners">{owners}</script>'
+        '<p class="hint" id="projhint">The project is the one that owns this folder; a '
+        'folder no project owns becomes a new project.</p>'
+        '<label for="under">Put it under an item (optional)</label>'
+        '<select id="under" name="parent"><option value="">New item of its own</option>'
         f'{opts}</select>'
-        '<input name="tags" placeholder="tags, comma separated" aria-label="tags">'
-        '<button type="submit">Start</button></div>'
-        f'{_run_picker(entries)}</form><script>{_PICKER_JS}</script></details>')
+        '<label for="newtags">Tags</label>'
+        '<input id="newtags" name="tags" placeholder="comma separated, e.g. cadre, ux">'
+        '<label>Use a skill (optional)</label>'
+        f'{_run_picker(entries)}'
+        '<div class="dlgacts"><button type="button" class="ghost" id="cancelwork">Cancel'
+        '</button><button type="submit" class="primary">Start</button></div>'
+        f'</form><script>{_PICKER_JS}</script></dialog>')
 
 
 def _new_project_form(projs: dict) -> str:
     return (
-        # Open by default: this is the one control that creates the thing the
-        # whole page is organised around, and a collapsed summary made it read
-        # as an advanced option.
-        '<details class="card" open><summary class="meta">New project — a durable home '
+        # Folded under the work list: New work makes a project from a folder
+        # no project owns, so this is for naming one up front or grouping it.
+        '<details class="card newproject"><summary class="meta">New project — a durable home '
         'for work, kept on the fleet until you archive it</summary>'
         f'<form class="newtask" method="post" action="{PROJECTS_PATH}">'
         '<div class="row"><input name="name" required maxlength="64" '
@@ -2980,7 +3413,7 @@ def _local_signature() -> str:
     """What the fleet looks like from this machine's files, as one hash: the
     runner's snapshot minus its heartbeat fields (it is rewritten every pass
     whether or not anything moved), plus the size and mtime of every link
-    store."""
+    store, the project store and the item store (tags, done, hidden)."""
     h = hashlib.sha1()
     try:
         snap = json.loads((STATUS_DIR / "status.json").read_text(encoding="utf-8"))
@@ -2990,7 +3423,8 @@ def _local_signature() -> str:
         h.update(json.dumps(snap, sort_keys=True, default=str).encode())
     except (OSError, ValueError):
         h.update(b"no-snapshot")
-    for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE]:
+    for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE,
+              DATA_DIR / items_mod.FILE]:
         try:
             st = os.stat(f)
             h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
@@ -3069,6 +3503,14 @@ def fleet_version() -> dict:
             "review_events": _EVENTS["upstream"]}
 
 
+def _session_store() -> dict:
+    try:
+        store = json.loads((DATA_DIR / "surfaces" / "sessions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return store if isinstance(store, dict) else {}
+
+
 def fleet_payload() -> dict:
     """Everything render_fleet needs for this machine, as JSON. Anything the
     renderer would otherwise read from this machine's disk (answer-history
@@ -3081,6 +3523,7 @@ def fleet_payload() -> dict:
     turns, owners, pages = load_runs(titles=graph[2])
     arts = {str(sf.get("artifact") or "") for sf in surfaces} - {""}
     tree = load_tree(pages)
+    running = running_agents(titles=pages, tree=tree)
     return {**fleet_version(),
             "snap": snap, "graph": list(graph),
             "statuses": fetch_agent_statuses(surfaces),
@@ -3093,7 +3536,11 @@ def fleet_payload() -> dict:
             "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
             "histories": {a: len(journal_batches(a)) for a in arts},
             "tree": tree,
-            "running": running_agents(titles=pages, tree=tree),
+            "running": running,
+            "slots": int((_CFG.runner if _CFG else {}).get("max_concurrent_runs") or 0),
+            "pageless": pageless_tasks(projs),
+            "endings": bare_endings(turns, _session_store(),
+                                    {c["task"] for c in running if not c["waiting"]}),
             "items": items_mod.load(DATA_DIR),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
@@ -3119,39 +3566,56 @@ def render_machines(results: list) -> str:
     return f'<nav class="machines card">{"".join(bits)}</nav>'
 
 
-def render_backend(b: dict, data: dict | None, err: str | None,
-                   now: float | None = None, index: int = 0,
-                   view: dict | None = None) -> str:
-    """One machine's section of the fleet, from its API payload: a heading
-    naming the machine, then its fleet exactly as render_fleet draws any
-    fleet. Nothing here knows whether the machine is this one, except where
-    the links point and the 'this machine' label."""
-    same = bool(data) and data.get("instance") == INSTANCE
-    url = escape(b["url"], quote=True)
-    name = escape(_backend_name(b, data))
-    where = ("this machine" if same else
-             f'<a target="_blank" rel="noopener" href="{url}/">{url} →</a>')
-    head = (f'<div class="backend{"" if same else " remote"}" id="machine-{index}">'
-            f'<p class="machine">machine · <b>{name}</b> · {where}</p>')
-    if data is None:
-        return head + (f'<section class="card"><p><span class="badge needs">unreachable</span> '
-                       f'Could not reach the Cadre backend at <code>{url}</code>: '
-                       f'{escape(err or "no answer")}. Its pages are still on that machine; '
-                       'this section comes back when it answers.</p></section></div>')
-    code = data.get("fleet_page_code") or {}
-    own = SimpleNamespace(stale=lambda: bool(code.get("stale")),
-                          since=code.get("since"), head=code.get("head"))
-    body = render_inbox(data, now) + render_running(data.get("running") or [], now) + render_recent(
-        data.get("recent") or [], now) + render_fleet(
-                        data.get("snap") or {}, now, statuses=data.get("statuses") or {},
-                        graph=tuple(data.get("graph") or ([], {}, {})),
-                        projs=data.get("projs") or {}, finished=data.get("finished") or {},
-                        starting=data.get("starting") or {}, doing=data.get("doing") or {},
-                        spent=data.get("spent") or {}, histories=data.get("histories") or {},
-                        own=own, returned=data.get("returned") or {},
-                        tree=data.get("tree") or {}, by_item=True, view=view,
-                        item_store=data.get("items") or {})
-    return head + backends_mod.point_at(body, b, same) + '</div>'
+def fleet_parts(results: list, now: float | None = None,
+                view: dict | None = None) -> tuple[str, str]:
+    """(Running now html, Work html) for the home page from every backend's
+    API payload, this machine's included. Running now is one strip across
+    every machine; each machine's items are drawn into its own list, which
+    the page script merges into one, so Work reads as one list too. A machine
+    gets a heading only when there is more than one to tell apart, and one
+    that does not answer says so where its items would be. Links on another
+    machine's cards and items point at that machine (backends.point_at)."""
+    now = time.time() if now is None else now
+    many = len(results) > 1
+    cards, n_run, n_wait, slots, inbox, work = [], 0, 0, 0, [], []
+    for i, (b, data, err) in enumerate(results):
+        same = bool(data) and data.get("instance") == INSTANCE
+        url = escape(b["url"], quote=True)
+        name = escape(_backend_name(b, data))
+        where = ("this machine" if same else
+                 f'<a target="_blank" rel="noopener" href="{url}/">{url} →</a>')
+        head = (f'<p class="machine" id="machine-{i}">machine · <b>{name}</b> · {where}</p>'
+                if many or data is None else "")
+        if data is None:
+            work.append(head + f'<section class="card"><p><span class="badge needs">unreachable'
+                        f'</span> Could not reach the Cadre backend at <code>{url}</code>: '
+                        f'{escape(err or "no answer")}. Its pages are still on that machine; '
+                        'its items come back when it answers.</p></section>')
+            continue
+        html, r, w = running_cards_html(data.get("running") or [], now)
+        cards.append(backends_mod.point_at(html, b, same))
+        n_run, n_wait, slots = n_run + r, n_wait + w, slots + int(data.get("slots") or 0)
+        inbox.append(backends_mod.point_at(render_inbox(data, now), b, same))
+        code = data.get("fleet_page_code") or {}
+        own = SimpleNamespace(stale=lambda c=code: bool(c.get("stale")),
+                              since=code.get("since"), head=code.get("head"))
+        body = render_fleet(
+            data.get("snap") or {}, now, statuses=data.get("statuses") or {},
+            graph=tuple(data.get("graph") or ([], {}, {})),
+            projs=data.get("projs") or {}, finished=data.get("finished") or {},
+            doing=data.get("doing") or {}, spent=data.get("spent") or {},
+            histories=data.get("histories") or {}, own=own,
+            returned=data.get("returned") or {}, tree=data.get("tree") or {},
+            by_item=True, view=view, item_store=data.get("items") or {},
+            running=data.get("running") or [], endings=data.get("endings") or {},
+            pageless=data.get("pageless") or [])
+        if many and not same:
+            body = body.replace('<details class="item', f'<details data-machine="{name}" '
+                                'class="item')
+        work.append(f'<div class="backend{"" if same else " remote"}">{head}'
+                    f'{backends_mod.point_at(body, b, same)}</div>')
+    return (running_section("".join(cards), n_run, n_wait, slots) + "".join(inbox),
+            "".join(work))
 
 
 def _known_keys() -> tuple[set, list[dict], dict]:
@@ -3360,11 +3824,11 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         results = [(b, *backends_mod.fleet(b, now)) for b in self._backends()]
         view = {k: (query.get(k) or [""])[0] for k in ("show", "sort", "tag", "limit")}
-        fleet_html = render_machines(results) + "".join(
-            render_backend(b, data, err, now, i, view)
-            for i, (b, data, err) in enumerate(results))
+        running_html, work_html = fleet_parts(results, now, view)
+        running_html = render_machines(results) + running_html
         if query.get("partial"):
-            self._send_html(fleet_html)
+            # The page script splits the two halves at the marker.
+            self._send_html(running_html + PARTIAL_SPLIT + work_html)
             return
         # The page chrome around the sections (snapshot time, spend, the new
         # project form) is this machine's, from the same payload.
@@ -3372,7 +3836,8 @@ class Handler(BaseHTTPRequestHandler):
         notice = (query.get("notice") or [""])[0]
         self._send_html(render_home(mine.get("snap") or {}, notice=notice,
                                     projs=mine.get("projs") or {},
-                                    week_usd=mine.get("week_usd"), fleet_html=fleet_html,
+                                    week_usd=mine.get("week_usd"),
+                                    fleet_html=(running_html, work_html), view=view,
                                     parents=parent_choices(mine),
                                     entries=library_mod.scan(dirs=[],
                                                              skills_source=_skills_source()),

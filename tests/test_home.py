@@ -79,11 +79,12 @@ def test_running_strip_shows_each_card_without_node_names():
               "folder": "/w", "started": NOW - 5}]
     html = statusd.render_running(cards, NOW)
     assert "Running now" in html and "Build the strip" in html
-    assert "2 agents · Bash pytest, just now" in html
-    assert "not written yet" in html and "Home redesign" in html and "/w/repo" in html
-    assert "10m of 120m" in html
-    assert "waiting for a slot" in html
+    assert "2 subagents · Bash pytest, just now" in html
+    assert "not written yet" in html and "under" in html and "Home redesign" in html
+    assert "/w/repo · 10 min of 120" in html and 'style="width:8%"' in html    # the clock bar
+    assert "waiting for a slot" in html and "1 · 1 waiting for a slot" in html
     assert "implement" not in html
+    assert "1 of 4 slots" in statusd.render_running(cards, NOW, slots=4)
 
 
 def test_running_strip_says_so_when_nothing_runs():
@@ -95,12 +96,16 @@ def test_home_footer_drops_the_legacy_dashboard_link():
     assert "legacy dashboard" not in html and "/index.html" not in html
 
 
-def test_backend_section_draws_the_strip_above_the_work_list():
-    data = {"instance": "x", "running": [
+def test_the_home_draws_the_strip_above_the_work_list():
+    data = {"instance": statusd.INSTANCE, "slots": 4, "running": [
         {"task": "t", "title": "On the strip", "item": "t", "started": NOW, "folder": "/w"}],
-        "snap": {}, "projs": {}}
-    html = statusd.render_backend({"url": "http://m"}, data, None, NOW)
-    assert html.index("Running now") < html.index("On the strip")
+        "snap": {"surfaces": [_sf("p0", "t", NOW, title="In the list")]}, "projs": {}}
+    running, work = statusd.fleet_parts([({"url": "http://m"}, data, None)], NOW)
+    assert "On the strip" in running and "1 of 4 slots" in running
+    assert "In the list" in work and "machine ·" not in work      # one machine: no heading
+    html = statusd.render_home({}, now=NOW, fleet_html=(running, work))
+    assert html.index("Running now") < html.index("On the strip") < html.index(
+        'id="workbar"') < html.index("In the list")
 
 
 # ------------------------------------------------------------------ items
@@ -138,14 +143,16 @@ def test_home_draws_items_with_pages_threads_slot_and_started_agents():
     snap = {"surfaces": [_sf("r1", "root", NOW - 50, title="Root page"),
                          _sf("k1", "kid", NOW - 10, title="Kid page")]}
     html = statusd.render_fleet(snap, NOW, tree=TREE, by_item=True)
-    assert html.count('class="rowline item fold"') == 1
+    assert html.count('<details class="item"') == 1
     assert 'data-item="root"' in html and 'data-project="cadre"' in html
-    assert "Where to take Cadre next" in html and "2 pages" in html and "2 agents" in html
-    assert html.count('href="/view/k1"') == 1                       # never linked twice
-    assert "Message threads" in html and 'class="threads" data-item="root"' in html
+    assert "Where to take Cadre next" in html and "Agent working" in html
+    assert html.count('href="/view/k1"') == 1 and html.count('href="/view/r1"') == 1
+    assert 'class="threads" data-item="root"' in html               # track B's slot
     assert "Agents started from this" in html and "Track A helper" in html
-    assert 'class="projfilter"' in html and '<option value="cadre">' in html
+    assert '<span class="badge work">running</span>' in html        # Track A is working
     assert 'class="repo">cadre<' not in html                        # no project sections
+    bar = statusd.work_toolbar({"cadre": {"id": "cadre", "name": "Cadre", "dirs": []}})
+    assert 'class="projfilter"' in bar and '<option value="cadre">Cadre</option>' in bar
 
 
 # ------------------------------------------------- states, filters, store
@@ -221,13 +228,14 @@ def test_home_view_folds_idle_and_keeps_hidden_items_searchable():
     store = {"t3": {"hidden_at": NOW}}
     html = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True,
                                 view={"limit": "2"}, item_store=store)
-    assert "Idle: 1 more" in html                                    # t2 is past the limit
-    assert html.index("Work 0") < html.index("Work 1") < html.index("Idle: 1 more")
-    assert 'offlist" data-fold="t3"' in html                         # rendered for search
+    assert '<span class="n">1</span> more' in html                    # t2 is past the limit
+    assert html.index("Work 0") < html.index("Work 1") < html.index("idlefold") < html.index(
+        "Work 2")
+    assert 'class="item offlist" data-fold="t3"' in html               # rendered for search
     assert 'action="/items"' in html and "Hide from home" in html
     done = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True,
                                 view={"show": "hidden"}, item_store=store)
-    assert 'class="rowline item fold" data-fold="t3"' in done and "Show on home" in done
+    assert '<details class="item" data-fold="t3"' in done and "Show on home" in done
 
 
 def test_post_items_writes_the_store_and_lands_home():
@@ -250,9 +258,9 @@ def test_an_item_with_an_unseen_page_carries_the_dot_and_the_unopened_filter_fin
     statuses = {"p0": {"unseen": True}, "p1": {"unseen": None}}
     html = statusd.render_fleet({"surfaces": surfaces}, NOW, statuses=statuses, by_item=True,
                                 view={"show": "unopened"})
-    assert html.count('class="unopened"') == 1
-    assert 'class="rowline item fold" data-fold="t0"' in html
-    assert 'offlist" data-fold="t1"' in html
+    assert html.count('class="unseen"') == 1 and 'data-unopened="1"' in html
+    assert '<details class="item" data-fold="t0"' in html
+    assert 'class="item offlist" data-fold="t1"' in html
 
 
 # ------------------------------------------------------------- new work
@@ -261,12 +269,13 @@ def test_new_work_dialog_has_every_field_and_preselects_a_parent():
     html = statusd.render_home({}, now=NOW, fleet_html="",
                                parents=[("root", "Where to take Cadre next"), ("x", "Other")],
                                parent="root")
-    form = html[html.index('id="newwork"'):]
-    form = form[:form.index("</details>", form.index('id="runlib"'))]
+    form = html[html.index('<dialog id="newwork"'):]
+    form = form[:form.index("</dialog>")]
     assert 'name="text"' in form and 'name="cwd"' in form and 'aria-controls="worksug"' in form
     assert '<option value="root" selected>Where to take Cadre next</option>' in form
     assert 'name="tags"' in form and 'name="run"' in form
-    assert 'id="newwork" open' in html
+    assert '<dialog id="newwork" data-open>' in html                # opens itself on load
+    assert 'id="newworkbtn"' in html                                # the header's + New work
 
 
 def test_parent_choices_are_task_items_only():
@@ -314,13 +323,18 @@ def test_post_tasks_passes_parent_and_skill_and_tags_the_item():
 
 # ------------------------------------------------------------ catch me up
 
-def test_only_an_idle_item_offers_catch_me_up_filed_under_it():
+def test_catch_me_up_shows_only_on_idle_items_filed_under_it():
     surfaces = [{**_sf(f"p{n}", f"t{n}", NOW - n * 60, title=f"Work {n}"), "cwd": "/w/repo"}
                 for n in range(3)]
     statuses = {"p2": {"viewed_at": "2026-11-01T10:00:00Z"}}
     html = statusd.render_fleet({"surfaces": surfaces}, NOW, statuses=statuses, by_item=True,
                                 view={"limit": "2"})
-    assert html.count(">Catch me up</button>") == 1
+    # Every item with a folder carries the button; only an idle one shows it,
+    # because the page script moves items in and out of Idle as the limit changes.
+    assert html.count(">Catch me up</button>") == 3
+    assert ".items details.item:not([data-state=idle]) .cmu{display:none}" in statusd._HOME_CSS
+    assert 'data-fold="t2" data-item="t2" data-project="cadre" data-projname="cadre" ' \
+           'data-state="idle"' in html
     form = html[html.index('data-fold="t2"'):]
     form = form[:form.index(">Catch me up</button>")]
     assert 'name="parent" value="t2"' in form and 'name="cwd" value="/w/repo"' in form
@@ -337,3 +351,62 @@ def test_sorted_by_spend_each_item_shows_its_total():
                                 spent={"t0": 1.0, "t1": 7.5}, view={"sort": "spent"})
     assert html.index('data-fold="t1"') < html.index('data-fold="t0"')
     assert "$7.50" in html and "$1.00" in html
+
+
+# ------------------------------------------- runs that end without a page
+
+def test_a_handoff_that_ends_without_writing_a_page_is_flagged_on_its_item():
+    """The driver hands a page off; the implement run dies before writing its
+    page. The item must say so, or it reads as the last round, untouched."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        page = Path(d) / "round1.html"
+        page.write_text("<p>round 1</p>")
+        os.utime(page, (NOW - 3600, NOW - 3600))
+        surfaces = [{**_sf("p0", "t0", NOW - 3600, title="Round 1"), "artifact": str(page)}]
+        died = {"story": "t0", "stage": "implement", "ended": NOW - 60, "seconds": 300,
+                "ok": True}
+        # the handoff's own page, folded out of the fleet's rows, still counts
+        handoff = Path(d) / "round1-implement.html"
+        store = {str(page): {"task": "t0"}, str(handoff): {"task": "t0"}}
+        endings = statusd.bare_endings([died], store, set())
+        assert endings == {"t0": {"ended": NOW - 60, "ok": True, "node": "implement"}}
+        assert statusd.bare_endings([died], store, {"t0"}) == {}         # still running
+        handoff.write_text("<p>implemented</p>")
+        os.utime(handoff, (NOW - 100, NOW - 100))                         # it wrote one
+        assert statusd.bare_endings([died], store, set()) == {}
+        assert statusd.bare_endings([{**died, "ok": False}], store, set())["t0"]["ok"] is False
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True, endings=endings)
+    assert "implement run ended without a page 1m ago" in html
+    assert 'data-needs="0"' in html                                    # it wants the driver
+
+
+def test_a_launch_that_died_with_no_page_at_all_is_an_item_and_a_child_row():
+    pageless = [{"task": "lone", "since": NOW - 900, "project": "", "title": "Lone run",
+                 "cwd": "/w", "running": False, "ran": False, "started": True, "failed": ""},
+                {"task": "grandkid", "since": NOW - 900, "project": "cadre", "title": "",
+                 "cwd": "/w", "running": False, "ran": True, "started": True, "failed": ""}]
+    snap = {"surfaces": [_sf("r1", "root", NOW - 50, title="Root page")]}
+    html = statusd.render_fleet(snap, NOW, tree=TREE, by_item=True, pageless=pageless)
+    lone = html[html.index('data-fold="lone"'):]
+    assert "Lone run" in lone and "started, then stopped before writing a page" in lone
+    assert "No page yet." in lone
+    root = html[html.index('data-fold="root"'):html.index('data-fold="lone"')
+                if html.index('data-fold="lone"') > html.index('data-fold="root"') else None]
+    # the helper is drawn under the agent that started it, saying what became of it
+    assert "Track A helper" in root and "ran, but wrote no page" in root
+    assert [it["key"] for it in statusd.fleet_items(snap["surfaces"], TREE, {},
+                                                    pageless=pageless)] == ["root", "lone"]
+
+
+def test_pageless_tasks_keep_launches_with_no_project():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _registry(root, {"t-proj": {"task": "t-proj", "cwd": "/w", "since": NOW,
+                                    "project": "p", "session_id": "s"},
+                         "t-none": {"task": "t-none", "cwd": "/nowhere", "since": NOW - 5,
+                                    "session_id": "s", "last_result": "done"}})
+        rows = statusd.pageless_tasks({}, data_dir=root)
+        assert [(r["task"], r["project"], r["ran"]) for r in rows] == [
+            ("t-proj", "p", False), ("t-none", "", True)]
+        assert list(statusd.starting_tasks({}, data_dir=root)) == ["p"]   # project pages

@@ -172,7 +172,7 @@ def test_rendering_links_surfaces_and_prs():
         assert 'href="/s/abc"' in html                 # deep link to the live surface
         assert 'https://github.com/o/hot/pull/99' in html
         assert 'href="/s/orph"' in html                # orphan session still reachable
-        assert "Loose sessions" in html
+        assert 'data-item="page:' in html             # a page with no task is its own item
         assert "o/hot" in html and "o/calm" in html
         # New work on the home page (the redesign) — its folder completes
         # from this machine, so no absolute path is typed by hand.
@@ -181,7 +181,7 @@ def test_rendering_links_surfaces_and_prs():
 
 def test_page_renders_with_zero_stories():
     html = statusd.render_home({})
-    assert "No stories in flight" in html
+    assert "No agent is running" not in html and "Nothing matches" in html
     # The home page's New work box takes a folder, but one that completes
     # from this machine (/fs), never a bare path field.
     assert html.count('name="cwd"') == 1 and 'id="worksug"' in html
@@ -279,9 +279,10 @@ def test_home_and_partial_are_served():
         srv = _Server(Path(root) / "status")
         try:
             code, body = srv.get("/")
-            assert code == 200 and "agent fleet" in body and "o/hot" in body
+            assert code == 200 and "+ New work" in body and "o/hot" in body
             code, frag = srv.get("/?partial=1")
             assert code == 200 and "<html" not in frag and "o/hot" in frag
+            assert frag.index("Running now") < frag.index(statusd.PARTIAL_SPLIT)
         finally:
             srv.close()
 
@@ -363,7 +364,7 @@ def test_legacy_dashboard_is_still_static():
         try:
             assert srv.get("/index.html") == (200, "<p>legacy</p>")
             home = srv.get("/")[1]                     # / is the fleet page now
-            assert "<p>legacy</p>" not in home and "agent fleet" in home
+            assert "<p>legacy</p>" not in home and "+ New work" in home
         finally:
             srv.close()
 
@@ -647,7 +648,7 @@ def test_decided_surfaces_fold_and_active_ones_stay_in_the_scan():
     assert "workspace organization" not in fold          # active row outside
     assert "workspace organization" in html
     page = render_home(snap, now=0)
-    assert 'id="filter"' in page and "applyFilter" in page
+    assert 'id="filter"' in page and 'id="states"' in page
 
 
 def test_registered_checkout_rows_are_dispatch_targets():
@@ -664,7 +665,8 @@ def test_registered_checkout_rows_are_dispatch_targets():
     html = render_fleet(snap, now=0)
     assert 'data-cwd="/home/x/Projects/cadre/cadre"' in html
     assert 'class="story dispatch"' in html and 'new task' in html
-    assert "dispatchTo" in render_home(snap, now=0)
+    # The home page lists items made of pages; a checkout row is no item.
+    assert 'data-cwd="/home/x/Projects/cadre/cadre"' not in render_home(snap, now=0)
 
 
 def test_stranded_rows_carry_a_loud_badge_and_the_dead_letter_link():
@@ -844,11 +846,12 @@ def test_runs_page_lists_every_project_newest_first_and_filters():
             _, body = srv.get("/runs?view=open")
             assert "old one" in body.split("</form>")[1]
             assert "new one" not in body.split("</form>")[1]
-            # the home page carries the cross-project card and the way in
+            # the way in is the header's "every run"; the newest result is
+            # the Work list's "newest result" sort, not a card of its own
             _, home = srv.get("/")
-            assert "Recently returned" in home and 'href="/runs"' in home
+            assert ">every run</a>" in home and 'href="/runs"' in home
             _, partial = srv.get("/?partial=1")
-            assert "Recently returned" in partial
+            assert "Recently returned" not in partial
         finally:
             srv.close()
 
