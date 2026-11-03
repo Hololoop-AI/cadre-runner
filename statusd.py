@@ -2098,6 +2098,10 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
         dot = ('<span class="unopened" title="a page here changed since you last opened it">'
                '●</span>' if it["unopened"] else "")
         tags = "".join(f'<span class="badge tag">{escape(t)}</span>' for t in it["tags"])
+        if sort == "spent" and it.get("spent"):
+            # sorted by spend, the order has to be checkable on the row
+            tags += (f'<span class="badge" title="every turn of every task in this item">'
+                     f'{escape(costs_mod.usd(it["spent"]))}</span>')
         shown = items_mod.visible(it, show, tag)
         # Not shown, still rendered: search reaches hidden and done items.
         cls = "" if shown else " offlist"

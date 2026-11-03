@@ -329,3 +329,11 @@ def test_only_an_idle_item_offers_catch_me_up_filed_under_it():
 
 def test_track_hooks_are_empty_slots():
     assert statusd.render_inbox({}) == "" and statusd.render_footer_hooks() == ""
+
+
+def test_sorted_by_spend_each_item_shows_its_total():
+    surfaces = [_sf("p0", "t0", NOW), _sf("p1", "t1", NOW - 60)]
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, by_item=True,
+                                spent={"t0": 1.0, "t1": 7.5}, view={"sort": "spent"})
+    assert html.index('data-fold="t1"') < html.index('data-fold="t0"')
+    assert "$7.50" in html and "$1.00" in html
