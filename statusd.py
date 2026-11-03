@@ -54,6 +54,7 @@ from runnerlib import library as library_mod
 from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
 from runnerlib import recent as recent_mod
+from runnerlib import session_tree as tree_mod
 from runnerlib import surface as surface_mod
 from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
 
@@ -125,6 +126,7 @@ PROJECTS_PATH = "/projects"
 LIBRARY_PATH = "/library"
 COSTS_PATH = "/costs"
 RUNS_PATH = "/runs"
+TREE_PATH = "/tree"
 # rows on the fleet's "Recently returned" card, and all the API ships of them
 RECENT_LIMIT = 6
 STREAM_PATH = "/fleet/events"
@@ -605,6 +607,111 @@ def render_history(sf: dict, batches: list[dict]) -> str:
             f'{back}{body}</div></body></html>')
 
 
+def _tree_href(task: str) -> str:
+    """/tree/<task>, quoted: a task id from another machine's payload is not
+    guaranteed to be a slug."""
+    return escape(f'{TREE_PATH}/{urllib.parse.quote(task, safe="")}')
+
+
+def _tree_node(task: str, node: dict, now: float) -> str:
+    """One session in a tree: what it is and how it stands, never its page."""
+    # Only "working" is known for every machine's sessions; whether a quiet
+    # one waits on the driver is the page server's to say, on the fleet row.
+    state = '<span class="badge running">working</span>' if node.get("working") else ""
+    step = escape(str(node.get("node") or "task"))
+    if node.get("round"):
+        step += f' · round {escape(str(node["round"]))}'
+    page = (f'<a class="hist" href="{escape(view_href(node["page"]))}">page →</a>'
+            if node.get("page") else "")
+    return (f'<div class="tnode"><a class="ttitle" href="{_tree_href(task)}">'
+            f'{escape(str(node.get("title") or task))}</a>{state}'
+            f'<span class="badge">{step}</span>'
+            f'<span class="badge">{escape(str(node.get("project") or ""))}</span>'
+            f'<span class="badge">launched {escape(_rel_time(node.get("since") or 0, now))}</span>'
+            f'{page}</div>')
+
+
+def tree_list(task: str, nodes: dict, kids: dict, now: float, seen=None) -> str:
+    """`task`'s children as nested lists, all the way down. Each child carries
+    the first line of its last result, so the tree says what each did."""
+    seen = set(seen or ()) | {task}
+    items = []
+    for child in kids.get(task) or ():
+        if child in seen:
+            continue
+        node = nodes.get(child) or {}
+        said = str(node.get("result") or "").strip().split("\n", 1)[0]
+        line = f'<p class="tsaid">{escape(said[:200])}</p>' if said else ""
+        items.append(f'<li>{_tree_node(child, node, now)}{line}'
+                     f'{tree_list(child, nodes, kids, now, seen)}</li>')
+    return f'<ul class="tree">{"".join(items)}</ul>' if items else ""
+
+
+def tree_dropdown(task: str, nodes: dict, kids: dict, now: float) -> str:
+    n = tree_mod.descendants(task, kids)
+    return (f'<details class="kids"><summary>{n} child session{"s" if n != 1 else ""}'
+            f'</summary>{tree_list(task, nodes, kids, now)}'
+            f'<a class="hist" href="{_tree_href(task)}">the whole tree →</a></details>')
+
+
+def load_tree(pages: dict | None = None) -> dict:
+    """session_tree.load() with each session titled the way its newest page
+    is (`pages` is load_runs()'s) — the title the author gave the page reads
+    far better than the ask's first 80 characters."""
+    pages = load_runs()[2] if pages is None else pages
+    nodes = tree_mod.load(DATA_DIR)
+    for t, n in nodes.items():
+        title = (pages.get(t) or {}).get("title")
+        if title:
+            n["title"] = title
+    return nodes
+
+
+def render_tree(task: str, nodes: dict, now: float | None = None) -> str:
+    """/tree/<task>: one session and everything it launched, without its
+    review page. /tree alone: every session that launched others."""
+    now = time.time() if now is None else now
+    nodes = tree_mod.clean(nodes)
+    kids = tree_mod.kids_of(nodes)
+    if task:
+        node = nodes[task]
+        title = str(node.get("title") or task)
+        trail = " › ".join(f'<a href="{_tree_href(a)}">'
+                           f'{escape(str((nodes.get(a) or {}).get("title") or a))}</a>'
+                           for a in tree_mod.ancestors(task, tree_mod.parents_of(nodes)))
+        if trail:
+            origin = f'launched by {trail}'
+        elif node.get("launcher"):
+            origin = (f'launched by session {escape(node["launcher"])}, which this '
+                      'machine does not know as a task')
+        else:
+            origin = 'launched from outside any session'
+        result = str(node.get("result") or "").strip()
+        result_html = (f'<p class="tresult">{escape(result[:tree_mod.RESULT_CHARS])}</p>' if result else
+                       '<p class="empty">No turn has finished yet.</p>')
+        kids_html = (tree_list(task, nodes, kids, now) or
+                     '<p class="empty">This session has not launched any others.</p>')
+        n = tree_mod.descendants(task, kids)
+        body = (f'<section class="card"><h2>{escape(title)}</h2>'
+                f'{_tree_node(task, node, now)}<p class="meta">{origin}</p>{result_html}</section>'
+                f'<section class="card"><h2>{n} child session{"s" if n != 1 else ""}</h2>'
+                f'{kids_html}</section>')
+    else:
+        roots = [t for t in nodes if not nodes[t].get("parent") and kids.get(t)]
+        roots.sort(key=lambda t: -(nodes[t].get("since") or 0))
+        body = "".join(f'<section class="card">{_tree_node(t, nodes[t], now)}'
+                       f'{tree_list(t, nodes, kids, now)}</section>' for t in roots) or (
+            '<section class="card"><p class="empty">No session has launched another yet.'
+            '</p></section>')
+        title = "Session trees"
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{escape(title)} — tree</title><style>{_CSS}</style></head>'
+            f'<body><div class="wrap"><header><h1>{escape(title)}<span class="dot">.</span> '
+            f'tree</h1></header><p class="meta"><a href="/">← fleet</a> · '
+            f'<a href="{TREE_PATH}">every tree</a></p>{body}</div></body></html>')
+
+
 def orphan_surfaces(snap: dict) -> list[dict]:
     """Open sessions with no story to live under (ad-hoc notices, asks from a
     story that has since been closed). They still want a human, so they render
@@ -860,6 +967,16 @@ form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
  text-decoration:none;white-space:nowrap;padding:.2rem .4rem;border-radius:6px}
 .hist:hover{color:var(--accent);background:var(--soft)}
 .rowmenu{position:relative}
+.kids{margin:.1rem 0 .4rem 1.2rem;font-size:.8rem;color:var(--muted)}
+.kids > summary{cursor:pointer;font-family:var(--mono);font-size:.74rem;color:var(--label)}
+.kids > summary:hover{color:var(--accent)}
+ul.tree{list-style:none;margin:.3rem 0 .3rem .4rem;padding-left:.9rem;border-left:1px solid var(--border)}
+ul.tree li{margin:.35rem 0}
+.tnode{display:flex;flex-wrap:wrap;align-items:baseline;gap:.3rem .5rem}
+.tnode .ttitle{color:var(--fg);text-decoration:none;font-size:.86rem}
+.tnode .ttitle:hover{color:var(--accent)}
+.tsaid{margin:.1rem 0 0;color:var(--muted);font-size:.78rem}
+.tresult{white-space:pre-wrap;font-size:.86rem;color:var(--fg)}
 .rowmenu > summary{list-style:none;cursor:pointer;font-size:1rem;line-height:1}
 .rowmenu > summary::-webkit-details-marker{display:none}
 .rowmenu .menu{position:absolute;right:0;top:100%;z-index:5;min-width:9rem;
@@ -1309,7 +1426,8 @@ def render_fleet(snap: dict, now: float | None = None,
                  projs: dict | None = None, finished: dict | None = None,
                  starting: dict | None = None, doing: dict | None = None,
                  spent: dict | None = None, histories: dict | None = None,
-                 own=None, returned: dict | None = None) -> str:
+                 own=None, returned: dict | None = None,
+                 tree: dict | None = None) -> str:
     """The hierarchy fragment — also what the stream-triggered refresh swaps
     in, so the page and the refresh can never render two different shapes.
     `statuses` is the live agent-state map from fetch_agent_statuses; None
@@ -1330,9 +1448,12 @@ def render_fleet(snap: dict, now: float | None = None,
     stale-code line, per code_line. `returned` is recent_mod.last_returned():
     when each task's newest turn ended, which is how new the work is — the
     page server's own timestamp also moves when the driver merely opens the
-    page."""
+    page. `tree` is session_tree.load(): which session launched which, drawn
+    as a dropdown under every row that launched others."""
     now = time.time() if now is None else now
     statuses = statuses or {}
+    tree = tree_mod.clean(tree)
+    kids = tree_mod.kids_of(tree)
     doing = doing or {}
     spent = spent or {}
     returned = returned or {}
@@ -1419,6 +1540,20 @@ def render_fleet(snap: dict, now: float | None = None,
             return "", f' title="page opened {ago}"' if ago else ""
         return f'<span class="badge">{ago}</span>', ""
 
+    def _parent_link(sf) -> str:
+        parent = (tree.get(str(sf.get("task") or "")) or {}).get("parent")
+        if not parent:
+            return ""
+        title = escape(str((tree.get(parent) or {}).get("title") or parent))
+        return (f'<a class="hist" href="{_tree_href(parent)}" '
+                f'title="launched by {title}">↳ parent</a>')
+
+    def _kids_dropdown(sf) -> str:
+        # An orchestrator's children are a dropdown under its row, recursive,
+        # so the tree it built is readable without opening any page.
+        task = str(sf.get("task") or "")
+        return tree_dropdown(task, tree, kids, now) if kids.get(task) else ""
+
     def _group_rows(ext_rows):
         """(byline, live rows, settled rows, row count) for one project's
         registered sessions."""
@@ -1447,7 +1582,8 @@ def render_fleet(snap: dict, now: float | None = None,
                        f'<a class="row"{hover} href="{escape(view_href(sf["path"]))}">'
                        f'<span class="title">{title}</span>{_live(sf)}{role}{badge}'
                        f'{_spent(sf)}<span class="go">open →</span></a>'
-                       f'{_history_link(sf)}{_page_link(sf)}</div>')
+                       f'{_parent_link(sf)}{_history_link(sf)}{_page_link(sf)}</div>'
+                       f'{_kids_dropdown(sf)}')
             elif sf.get("cwd"):
                 # A dispatch target: clicking prefills the task box's cwd.
                 # A row that shows up as a "session" but responds to nothing
@@ -1532,7 +1668,7 @@ def render_fleet(snap: dict, now: float | None = None,
                 f'<a class="row"{hover} href="{escape(view_href(sf.get("path")))}">'
                 f'<span class="title">{escape(label)}</span>{_live(sf)}{when}{_spent(sf)}'
                 f'<span class="go">open →</span></a>'
-                f'{_history_link(sf)}{_page_link(sf)}</div>')
+                f'{_parent_link(sf)}{_history_link(sf)}{_page_link(sf)}</div>{_kids_dropdown(sf)}')
 
     if orphans:
         rows = "".join(_orow(sf, str(sf.get("title") or sf.get("task") or sf.get("story")
@@ -1613,6 +1749,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         '<footer>Live: refreshes when the runner, a review page or a link changes · '
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         f'<a href="{RUNS_PATH}">every run, newest first</a> · '
+        f'<a href="{TREE_PATH}">which session launched which</a> · '
         f'<a href="{COSTS_PATH}">what each run cost</a> · '
         '<a href="/index.html">legacy dashboard</a></footer>'
         f'</div><script>{_PAGE_JS}</script></body></html>')
@@ -2448,6 +2585,7 @@ def fleet_payload() -> dict:
             "recent": recent_mod.rows(turns, owners, pages)[:RECENT_LIMIT],
             "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
             "histories": {a: len(journal_batches(a)) for a in arts},
+            "tree": load_tree(pages),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
 
@@ -2499,7 +2637,8 @@ def render_backend(b: dict, data: dict | None, err: str | None,
                         projs=data.get("projs") or {}, finished=data.get("finished") or {},
                         starting=data.get("starting") or {}, doing=data.get("doing") or {},
                         spent=data.get("spent") or {}, histories=data.get("histories") or {},
-                        own=own, returned=data.get("returned") or {})
+                        own=own, returned=data.get("returned") or {},
+                        tree=data.get("tree") or {})
     return head + backends_mod.point_at(body, b, same) + '</div>'
 
 
@@ -2766,12 +2905,12 @@ class Handler(BaseHTTPRequestHandler):
         # This project's section exactly as the fleet draws it, without the
         # finished count (the page lists finished work itself).
         doing = live_turns()
-        turns = load_costs()[0]
+        turns, _, pages = load_runs(titles=graph[2])
         rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
                                  projs={**mine, p["id"]: {**p, "group": None, "archived": False}},
                                  doing=doing, spent=costs_mod.per_task(turns),
-                                 returned=recent_mod.last_returned(turns)
-                                 ) if rows else ""
+                                 returned=recent_mod.last_returned(turns),
+                                 tree=load_tree(pages)) if rows else ""
         closed_all = closed_pages(projs)
         closed = sorted((m for k in mine for m in closed_all.get(k, [])),
                         key=lambda m: -(m.get("opened") or 0))
@@ -3104,6 +3243,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_html(render_history(sf, journal_batches(str(sf.get("artifact") or ""))))
 
+    def _serve_tree(self, task: str):
+        nodes = load_tree()
+        if task and task not in nodes:
+            self.send_error(404, "that session launched no others and was launched by none")
+            return
+        self._send_html(render_tree(task, nodes))
+
     def _same_origin(self) -> bool:
         """A POST that changes the world only comes from this page. There is no
         session to forge against, but the proxy is reachable on the tailnet, so
@@ -3224,6 +3370,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/stranded/") and self.command in ("GET", "HEAD"):
             self._serve_dead_letter(path.rsplit("/", 1)[-1])
+            return
+        if (path == TREE_PATH or path.startswith(TREE_PATH + "/")) \
+                and self.command in ("GET", "HEAD"):
+            self._serve_tree(urllib.parse.unquote(path[len(TREE_PATH):].strip("/")))
             return
         if path.startswith("/history/") and self.command in ("GET", "HEAD"):
             self._serve_history(path.rsplit("/", 1)[-1])
