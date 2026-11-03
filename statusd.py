@@ -787,6 +787,7 @@ def requested_tasks(data_dir) -> dict:
             continue
         out.setdefault(str(p["task"]), {
             "task": p["task"], "cwd": p.get("cwd") or "",
+            "title": str(p.get("title") or ""),
             "project": p.get("project") or "", "since": ts,
             "active_runs": {}, "failed": failed.get(eid, "")})
     return out
@@ -888,6 +889,82 @@ def live_turns(data_dir: Path | None = None, now: float | None = None) -> dict:
         if said:
             out[task_id] = said
     return out
+
+
+def running_agents(data_dir: Path | None = None, now: float | None = None,
+                   titles: dict | None = None, tree: dict | None = None) -> list[dict]:
+    """One card per agent the runner has in flight, newest launch first, for
+    the Running now strip — the old fleet status page said "Idle" while four
+    agents ran, so the home page answers "what is running" itself.
+
+    A card is JSON-shaped (a fleet on another machine renders it from the
+    API): task, title, doing (live_turns' clause), agents (subagents touched
+    lately), page and page_title (its newest page, "" before the first one is
+    written), item and item_title (the root of its session tree — the line of
+    work it belongs to), folder, started and deadline (epoch seconds), and
+    waiting (launched, no slot yet). No node names: which node runs a turn is
+    the runner's business, not the driver's.
+
+    `titles` is load_runs()' pages ({task: newest page meta with its title});
+    `tree` is load_tree(). Both default to empty, which only costs titles.
+    Read-only and best-effort, like every registry read here.
+    """
+    d = DATA_DIR if data_dir is None else data_dir
+    now = time.time() if now is None else now
+    try:
+        reg = json.loads((Path(d) / "registry.json").read_text(encoding="utf-8"))
+        tasks = dict(reg.get("tasks") or {})
+    except (OSError, ValueError):
+        tasks = {}
+    titles = titles or {}
+    nodes = tree_mod.clean(tree)
+    parents = tree_mod.parents_of(nodes)
+    asked = requested_tasks(d)
+
+    def _title(task: str) -> str:
+        return str((titles.get(task) or {}).get("title") or (nodes.get(task) or {}).get("title")
+                   or (asked.get(task) or {}).get("title") or _task_label(task))
+
+    def _item(task: str) -> tuple[str, str]:
+        root = (tree_mod.ancestors(task, parents) or [task])[0]
+        return root, _title(root)
+
+    cards = []
+    for task_id, rec in tasks.items():
+        if not isinstance(rec, dict) or not rec.get("active_runs"):
+            continue
+        run = next(iter(rec["active_runs"].values()), {}) or {}
+        cwd = run.get("worktree") or rec.get("cwd") or ""
+        sid = run.get("session_id") or rec.get("session_id") or ""
+        snap = activity_mod.snapshot(cwd, sid, now) if cwd and sid else None
+        page = titles.get(task_id) or {}
+        item, item_title = _item(task_id)
+        cards.append({"task": task_id, "title": _title(task_id),
+                      "doing": activity_mod.phrase(snap, now),
+                      "agents": int((snap or {}).get("agents") or 0),
+                      "page": str(page.get("path") or ""),
+                      "page_title": str(page.get("title") or ""),
+                      "item": item, "item_title": item_title, "folder": cwd,
+                      "started": float(run.get("started") or 0),
+                      "deadline": float(run.get("deadline") or 0), "waiting": False})
+    # A launch the runner has not given a slot yet is still something the
+    # driver set running: it gets a card, or pressing Launch looks like nothing.
+    for task_id, rec in asked.items():
+        held = tasks.get(task_id)
+        if rec.get("failed") or (isinstance(held, dict) and (
+                held.get("active_runs") or held.get("session_id") or held.get("last_result"))):
+            continue
+        # Unheld past the grace is lost, not waiting (starting_rows says so on
+        # its project); held by the registry with no run yet is waiting.
+        if not held and now - float(rec.get("since") or 0) > STARTUP_GRACE:
+            continue
+        item, item_title = _item(task_id)
+        cards.append({"task": task_id, "title": _title(task_id), "doing": "", "agents": 0,
+                      "page": "", "page_title": "", "item": item, "item_title": item_title,
+                      "folder": rec.get("cwd") or "", "started": float(rec.get("since") or 0),
+                      "deadline": 0.0, "waiting": True})
+    cards.sort(key=lambda c: -c["started"])
+    return cards
 
 
 def closed_pages(projs: dict, data_dir: Path | None = None) -> dict:
@@ -1020,6 +1097,13 @@ span.row.starting .title{flex:1 1 12rem;color:var(--fg);font-size:.9rem;
 .links a{font-size:.78rem;color:var(--accent);text-decoration:none;margin-right:.6rem}
 .links a:hover{text-decoration:underline}
 .empty{color:var(--muted);font-size:.88rem}
+.running-now .agentcard{border-top:1px solid var(--border);padding:.55rem 0}
+.running-now .agentcard:first-of-type{border-top:0}
+.running-now .rtitle{margin:0;display:flex;flex-wrap:wrap;gap:.35rem .6rem;align-items:baseline}
+.running-now .rmeta{margin:.15rem 0 0;color:var(--muted);font-size:.8rem}
+.running-now a{color:var(--accent);text-decoration:none}
+.running-now .rmeta.folder{font-family:var(--mono);font-size:.72rem}
+.running-now h2 .badge{margin-left:.6rem;text-transform:none;letter-spacing:0}
 .dirwrap{position:relative;display:block}
 .dirwrap .lbl{display:block;font-size:.78rem;color:var(--muted);margin:0 0 .2rem}
 #dir1{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
@@ -1686,6 +1770,45 @@ def render_fleet(snap: dict, now: float | None = None,
     return code_line(snap, own=own, now=now) + "".join(out)
 
 
+def render_running(cards: list[dict], now: float | None = None) -> str:
+    """The Running now strip: one card per running_agents() card, above the
+    work list. Says plainly when nothing runs — an absent strip reads the same
+    as a broken one."""
+    now = time.time() if now is None else now
+    if not cards:
+        return ('<section class="card running-now"><h2>Running now</h2>'
+                '<p class="empty">No agent is running.</p></section>')
+    out = []
+    for c in cards:
+        if not isinstance(c, dict) or not c.get("task"):
+            continue
+        if c.get("waiting"):
+            doing = "waiting for a slot"
+        else:
+            doing = str(c.get("doing") or "working")
+            n = int(c.get("agents") or 0)
+            if n and "agent" not in doing:
+                doing = f"{n} agent{'s' if n != 1 else ''} · {doing}"
+        page = (f'<a href="{escape(view_href(c["page"]))}">'
+                f'{escape(str(c.get("page_title") or "its page"))}</a>'
+                if c.get("page") else '<span class="empty">not written yet</span>')
+        item = ("" if c.get("item") == c.get("task") else
+                f'<p class="rmeta">part of <a href="{_tree_href(str(c["item"]))}">'
+                f'{escape(str(c.get("item_title") or c["item"]))}</a></p>')
+        started, deadline = float(c.get("started") or 0), float(c.get("deadline") or 0)
+        used = int(max(0.0, now - started) // 60) if started else 0
+        clock = (f"{used}m of {int((deadline - started) // 60)}m" if deadline > started
+                 else f"{used}m")
+        out.append(f'<div class="agentcard"><p class="rtitle">{escape(str(c.get("title") or c["task"]))}'
+                   f'<span class="badge running">{escape(doing)}</span>'
+                   f'<span class="badge" title="minutes this turn has used, against its deadline">'
+                   f'{escape(clock)}</span></p>'
+                   f'<p class="rmeta">page: {page}</p>{item}'
+                   f'<p class="rmeta folder">{escape(str(c.get("folder") or ""))}</p></div>')
+    return (f'<section class="card running-now"><h2>Running now'
+            f'<span class="badge">{len(out)}</span></h2>{"".join(out)}</section>')
+
+
 def code_line(snap: dict, own=None, now: float | None = None) -> str:
     """One line naming whichever process runs older code than the folder
     holds: the daemon (its snapshot's `code`) or this page server (`own`, its
@@ -1750,8 +1873,7 @@ def render_home(snap: dict, notice: str = "", now: float | None = None,
         f'<a href="{LIBRARY_PATH}">installed skills, agents and workflows</a> · '
         f'<a href="{RUNS_PATH}">every run, newest first</a> · '
         f'<a href="{TREE_PATH}">which session launched which</a> · '
-        f'<a href="{COSTS_PATH}">what each run cost</a> · '
-        '<a href="/index.html">legacy dashboard</a></footer>'
+        f'<a href="{COSTS_PATH}">what each run cost</a></footer>'
         f'</div><script>{_PAGE_JS}</script></body></html>')
 
 
@@ -2574,6 +2696,7 @@ def fleet_payload() -> dict:
     projs = load_projects()
     turns, owners, pages = load_runs(titles=graph[2])
     arts = {str(sf.get("artifact") or "") for sf in surfaces} - {""}
+    tree = load_tree(pages)
     return {**fleet_version(),
             "snap": snap, "graph": list(graph),
             "statuses": fetch_agent_statuses(surfaces),
@@ -2585,7 +2708,8 @@ def fleet_payload() -> dict:
             "recent": recent_mod.rows(turns, owners, pages)[:RECENT_LIMIT],
             "week_usd": costs_mod.summarize(turns, owners)["last_7d_usd"],
             "histories": {a: len(journal_batches(a)) for a in arts},
-            "tree": load_tree(pages),
+            "tree": tree,
+            "running": running_agents(titles=pages, tree=tree),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
 
@@ -2631,7 +2755,8 @@ def render_backend(b: dict, data: dict | None, err: str | None,
     code = data.get("fleet_page_code") or {}
     own = SimpleNamespace(stale=lambda: bool(code.get("stale")),
                           since=code.get("since"), head=code.get("head"))
-    body = render_recent(data.get("recent") or [], now) + render_fleet(
+    body = render_running(data.get("running") or [], now) + render_recent(
+        data.get("recent") or [], now) + render_fleet(
                         data.get("snap") or {}, now, statuses=data.get("statuses") or {},
                         graph=tuple(data.get("graph") or ([], {}, {})),
                         projs=data.get("projs") or {}, finished=data.get("finished") or {},
