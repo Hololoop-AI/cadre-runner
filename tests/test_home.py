@@ -188,6 +188,17 @@ def test_unopened_is_true_only_for_an_unseen_true_page():
     assert [it["key"] for it in items if items_mod.visible(it, "unopened")] == ["new"]
 
 
+def test_sorts():
+    items = [{"key": "a", "touched": 3, "returned": 1, "spent": 5, "needs": 1},
+             {"key": "b", "touched": 1, "returned": 3, "spent": 1, "needs": 0},
+             {"key": "c", "touched": 2, "returned": 2, "spent": 9, "needs": 1, "working": True}]
+    keys = lambda s: [it["key"] for it in items_mod.order(items, s)]
+    assert keys("needs") == ["b", "a", "c"]
+    assert keys("result") == ["b", "c", "a"]
+    assert keys("untouched") == ["b", "c", "a"]
+    assert keys("spent") == ["c", "a", "b"]
+
+
 def test_store_round_trip_and_refusals():
     with tempfile.TemporaryDirectory() as d:
         assert "Tagged" in items_mod.apply(d, "root", "tag", "cadre", now=NOW)

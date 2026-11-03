@@ -1958,9 +1958,9 @@ def _options(choices: dict, current: str) -> str:
                    f'{escape(v)}</option>' for k, v in choices.items())
 
 
-def _item_controls(show: str, tag: str, tags: list, limit: int,
+def _item_controls(sort: str, show: str, tag: str, tags: list, limit: int,
                    project_opts: str) -> str:
-    """Show and tag are the home page's query (a GET form, so a view
+    """Show, sort and tag are the home page's query (a GET form, so a view
     is a link); project filters in the browser."""
     tag_sel = ("" if not tags else
                f'<select name="tag" aria-label="tag">'
@@ -1969,6 +1969,7 @@ def _item_controls(show: str, tag: str, tags: list, limit: int,
             f'<input type="hidden" name="limit" value="{limit}">')
     return (f'<form class="itemctl" method="get" action="{HOME_PATH}">'
             f'<select name="show" aria-label="show">{_options(items_mod.SHOWS, show)}</select>'
+            f'<select name="sort" aria-label="sort">{_options(items_mod.SORTS, sort)}</select>'
             f'{tag_sel}<select class="projfilter" aria-label="project">'
             f'<option value="">every project</option>{project_opts}</select>{keep}'
             f'<noscript><button type="submit">apply</button></noscript></form>')
@@ -2010,8 +2011,10 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
     except ValueError:
         limit = items_mod.HOME_LIMIT
     items_mod.assign_states(items, store, limit)
+    sort = view.get("sort") if view.get("sort") in items_mod.SORTS else "needs"
     show = view.get("show") if view.get("show") in items_mod.SHOWS else ""
     tag = str(view.get("tag") or "")
+    items = items_mod.order(items, sort)
 
     def _prow(sf, cls):
         badge, hover = bits["opened"](sf)
@@ -2079,7 +2082,7 @@ def _items_html(snap, now, tree, kids, projs, starting, doing, statuses, returne
     fold = (f'<details class="fold idle" data-fold="idle"><summary>Idle: {len(idle)} more'
             f'</summary>{"".join(idle)}</details>') if idle else ""
     out += (f'<section class="card items"><h2>Work<span class="badge">{len(rows) + len(idle)}'
-            f'</span></h2>{_item_controls(show, tag, all_tags, limit, opts)}'
+            f'</span></h2>{_item_controls(sort, show, tag, all_tags, limit, opts)}'
             + ("".join(rows) or '<p class="empty">Nothing here. Change the filter, '
                'or start some work with New work.</p>')
             + fold + "".join(off) + '</section>')

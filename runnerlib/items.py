@@ -100,8 +100,24 @@ WORKING, YOUR_TURN, IDLE, DONE, HIDDEN = "working", "your-turn", "idle", "done",
 LABELS = {WORKING: "Agent working", YOUR_TURN: "Your turn", IDLE: "Idle",
           DONE: "Done", HIDDEN: "Hidden"}
 HOME_LIMIT = 15
+SORTS = {"needs": "needs me first", "result": "newest result",
+         "untouched": "longest untouched", "spent": "most spent"}
 SHOWS = {"": "on my home", "unopened": "unopened", "done": "done",
          "hidden": "hidden", "all": "everything"}
+
+
+def order(items: list[dict], sort: str = "needs") -> list[dict]:
+    """Items in the order the driver picked. Each item carries working,
+    needs (0 = it wants the driver now), touched, returned and spent."""
+    if sort == "result":
+        key = lambda it: -(it.get("returned") or 0)
+    elif sort == "untouched":
+        key = lambda it: it.get("touched") or 0
+    elif sort == "spent":
+        key = lambda it: -(it.get("spent") or 0)
+    else:
+        key = lambda it: (bool(it.get("working")), it.get("needs", 1), -(it.get("touched") or 0))
+    return sorted(items, key=key)
 
 
 def assign_states(items: list[dict], store: dict, limit: int = HOME_LIMIT) -> list[dict]:
