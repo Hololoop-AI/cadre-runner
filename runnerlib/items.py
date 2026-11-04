@@ -116,7 +116,11 @@ def order(items: list[dict], sort: str = "needs") -> list[dict]:
     elif sort == "spent":
         key = lambda it: -(it.get("spent") or 0)
     else:
-        key = lambda it: (bool(it.get("working")), it.get("needs", 1), -(it.get("touched") or 0))
+        # What wants the driver first, then newest result first. An agent
+        # working in an item does not push it down: a result that just came
+        # back in a busy item is still the newest thing on the page. Opening
+        # a page is not a result, so an item with one sorts by its result.
+        key = lambda it: (it.get("needs", 1), -(it.get("returned") or it.get("touched") or 0))
     return sorted(items, key=key)
 
 
