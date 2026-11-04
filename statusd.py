@@ -1490,6 +1490,12 @@ body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-
 .items .page a.hist{color:var(--label)}
 .items .page .k{font:11px var(--mono);color:var(--muted);width:70px;flex:none}
 .items .threads:empty{display:none}
+.items details.earlier{margin:2px 0 4px}
+.items details.earlier > summary{cursor:pointer;font:11px var(--mono);color:var(--label);
+ list-style:none;padding:2px 0}
+.items details.earlier > summary::-webkit-details-marker{display:none}
+.items details.earlier > summary::before{content:'▸ '}
+.items details.earlier[open] > summary::before{content:'▾ '}
 .items .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .items .acts form{margin:0}
 .items .acts input[name=tag]{padding:4px 8px;font-size:12px}
@@ -2430,10 +2436,11 @@ def _item_actions(key: str, it: dict) -> str:
 
 
 def _kid_rows(task: str, tree: dict, kids: dict, now: float, endings: dict,
-              bare: dict, seen=None) -> str:
+              bare: dict, seen=None) -> list[tuple[str, bool]]:
     """The agents started from `task`, all the way down, each with how it
     stands: running, ended, or ended with no page — the one that must never
-    pass unseen."""
+    pass unseen. One (html, live) pair per child: live when it, or anything
+    under it, is running or ended without a page."""
     seen = set(seen or ()) | {task}
     rows = []
     for child in kids.get(task) or ():
@@ -2442,6 +2449,7 @@ def _kid_rows(task: str, tree: dict, kids: dict, now: float, endings: dict,
         node = tree.get(child) or {}
         title = escape(str(node.get("title") or _task_label(child)))
         href = escape(view_href(node["page"])) if node.get("page") else _tree_href(child)
+        live = True
         if node.get("working"):
             state = '<span class="badge work">running</span>'
         elif child in endings:
@@ -2449,11 +2457,30 @@ def _kid_rows(task: str, tree: dict, kids: dict, now: float, endings: dict,
         elif child in bare and pageless_phrase(bare[child], now):
             state = f'<span class="badge q">{escape(pageless_phrase(bare[child], now))}</span>'
         else:
-            state = '<span class="badge">ended</span>'
+            state, live = '<span class="badge">ended</span>', False
         deeper = _kid_rows(child, tree, kids, now, endings, bare, seen)
-        rows.append(f'<div class="page"><a href="{href}">{title}</a>{state}</div>'
-                    + (f'<div class="pages">{deeper}</div>' if deeper else ""))
-    return "".join(rows)
+        inner = "".join(h for h, _ in deeper)
+        rows.append((f'<div class="page"><a href="{href}">{title}</a>{state}</div>'
+                     + (f'<div class="pages">{inner}</div>' if inner else ""),
+                     live or any(a for _, a in deeper)))
+    return rows
+
+
+def _earlier(rows: list[str], noun: str) -> str:
+    """Rows the driver rarely needs, one click away instead of in the way."""
+    if not rows:
+        return ""
+    return (f'<details class="earlier"><summary>{len(rows)} {noun}'
+            f'{"s" if len(rows) != 1 else ""}</summary>{"".join(rows)}</details>')
+
+
+def _when_title(it: dict, now: float) -> str:
+    """The row's time is when an agent last brought something back — what is
+    new — not when anything (you opening it included) last touched it."""
+    touched = escape(_rel_time(it["touched"], now))
+    if it.get("returned"):
+        return f"newest result {escape(_rel_time(it['returned'], now))}; touched {touched}"
+    return f"no result yet; touched {touched}"
 
 
 _STATE_BADGE = {items_mod.YOUR_TURN: "you", items_mod.IDLE: "idle",
@@ -2508,9 +2535,19 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
     rows, idle, off = [], [], []
     for it in items:
         key, state = it["key"], it["state"]
-        pages = ("".join(_prow(sf) for sf in it["pages"])
+        # The newest page, and any that still want the driver, stay in view;
+        # the pages already read and answered fold away, one click off.
+        def _current(n, sf):
+            st = statuses.get(conv_mod.key_of(sf) or "") or {}
+            return n == 0 or st.get("unseen") is True or _page_state(sf, statuses, now)[1] in (
+                "running", "needs")
+        cur = [_prow(sf) for n, sf in enumerate(it["pages"]) if _current(n, sf)]
+        old = [_prow(sf) for n, sf in enumerate(it["pages"]) if not _current(n, sf)]
+        pages = ("".join(cur) + _earlier(old, "earlier page")
                  or '<p class="empty">No page yet.</p>')
-        started = _kid_rows(key, tree, kids, now, endings, bare)
+        kid_rows = _kid_rows(key, tree, kids, now, endings, bare)
+        started = ("".join(h for h, live in kid_rows if live)
+                   + _earlier([h for h, live in kid_rows if not live], "finished agent"))
         dot = ('<span class="unseen" title="has a page you have not opened since the agent '
                'wrote it"></span>' if it["unopened"] else "")
         flag = (f'<span class="badge q" title="a run in this item stopped without leaving a '
@@ -2534,7 +2571,8 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
             f'<span class="title">{escape(it["title"])}</span>'
             f'<span class="stbadge">{_state_badge(it)}</span>{flag}{tags}'
             f'<span class="proj">{escape(pname)}</span>{cost}'
-            f'<span class="when" title="last touched">{escape(_rel_time(it["touched"], now))}'
+            f'<span class="when" title="{_when_title(it, now)}">'
+            f'{escape(_rel_time(it["returned"] or it["touched"], now))}'
             f'</span></summary><div class="inside">'
             f'<div class="grp">Pages</div><div class="pages">{pages}</div>'
             # Track B's message threads land here, under the item they are about.

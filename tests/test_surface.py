@@ -730,3 +730,28 @@ def test_the_quiet_open_asks_the_server_for_the_delivery_mode(monkeypatch):
     sent.clear()
     sf._create_session_quietly(Path("/tmp/x.html"), None)
     assert sent == {"file": "/tmp/x.html"}
+
+
+def test_a_new_page_for_a_task_tells_the_page_server_which_page_it_replaces(tmp_path, monkeypatch):
+    """A handoff writes a second page for the same task. The page server is
+    told it supersedes the task's newest earlier page, so that page can point
+    to the new one; reopening an existing page, or a page with no task,
+    claims nothing."""
+    from runnerlib import surface as sf
+    sent = []
+    monkeypatch.setattr(sf, "_create_session_quietly",
+                        lambda p, delivery="push", **kw: (sent.append((p.name, kw))
+                                                          or f"/session/{p.stem}"))
+    monkeypatch.setattr(sf.board_events, "emit", lambda *a, **k: None)
+
+    class Cfg:
+        data_dir = tmp_path
+    pages = {n: tmp_path / f"{n}.html" for n in ("r1", "impl", "other")}
+    for p in pages.values():
+        p.write_text("<!doctype html>")
+    sf.open_session(Cfg(), pages["r1"], "task", lambda m: None, task="t1")
+    sf.open_session(Cfg(), pages["impl"], "task", lambda m: None, task="t1", node="implement")
+    sf.open_session(Cfg(), pages["r1"], "task", lambda m: None, task="t1")       # a reopen
+    sf.open_session(Cfg(), pages["other"], "task", lambda m: None)                # no task
+    assert sent == [("r1.html", {}), ("impl.html", {"supersedes": "r1"}),
+                    ("r1.html", {}), ("other.html", {})]
