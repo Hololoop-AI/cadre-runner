@@ -302,7 +302,8 @@ def _run_cli(args: list[str], timeout: int = 25) -> str:
     return out
 
 
-def _create_session_quietly(path: Path, delivery: str | None = "push") -> str:
+def _create_session_quietly(path: Path, delivery: str | None = "push",
+                            supersedes: str = "") -> str:
     """POST the artifact straight to the running server and return the session
     URL path. No browser tab: the daemon works in the background, and the
     driver arrives from the fleet page when they choose — a tab stealing focus
@@ -314,11 +315,17 @@ def _create_session_quietly(path: Path, delivery: str | None = "push") -> str:
     open on this page: the daemon's tick collects sends from the outbox. The
     page then stops telling the driver "your agent is not listening", which
     was never true while the daemon ran. `None` leaves the mode out, so the
-    server keeps whatever the session already had."""
+    server keeps whatever the session already had.
+
+    `supersedes` is the session key of the page this one replaces; the page
+    server records the link (refusing a loop) and an older page then points
+    to the newest one."""
     import urllib.request
     body = {"file": str(path)}
     if delivery:
         body["delivery"] = delivery
+    if supersedes:
+        body["supersedes"] = supersedes
     req = urllib.request.Request(
         upstream() + "/api/sessions", method="POST",
         data=json.dumps(body).encode(),
@@ -326,6 +333,19 @@ def _create_session_quietly(path: Path, delivery: str | None = "push") -> str:
     with urllib.request.urlopen(req, timeout=10) as r:
         url = json.loads(r.read()).get("url") or ""
     return re.sub(r"^https?://[^/]+", "", url)
+
+
+def _replaced_page(store: dict, path: Path, task) -> str:
+    """The session key of the page a task's NEW page replaces: the task's
+    newest other page. A handoff writes a new page for the same task, and the
+    one the driver approved used to stay open looking current, with no way to
+    the newest. "" when the page is not new, has no task, or the task has no
+    earlier page with a session."""
+    if not task or str(path) in store:
+        return ""
+    prior = [m for p, m in store.items() if isinstance(m, dict)
+             and m.get("task") == task and m.get("key") and p != str(path)]
+    return max(prior, key=lambda m: m.get("opened") or 0)["key"] if prior else ""
 
 
 def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
@@ -337,14 +357,17 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
             # are push.
             # So may a study thread's, whose engine holds a real poll.
             delivery = None if kind in ("external", "study") else "push"
-            url_path = _create_session_quietly(path, delivery)
+            older = _replaced_page(sessions(cfg), path, meta.get("task"))
+            url_path = _create_session_quietly(
+                path, delivery, **({"supersedes": older} if older else {}))
         except Exception:
             out = _run_cli([str(path)])
             m = re.search(r'url: "([^"]+)"', out)
             url_path = re.sub(r"^https?://[^/]+", "", m.group(1)) if m else ""
             if delivery:
                 try:
-                    url_path = _create_session_quietly(path, delivery) or url_path
+                    url_path = _create_session_quietly(
+                        path, delivery, **({"supersedes": older} if older else {})) or url_path
                 except Exception:
                     pass
         key = url_path.rsplit("/", 1)[-1] if url_path else ""

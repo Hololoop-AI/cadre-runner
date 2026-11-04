@@ -410,3 +410,24 @@ def test_pageless_tasks_keep_launches_with_no_project():
         assert [(r["task"], r["project"], r["ran"]) for r in rows] == [
             ("t-proj", "p", False), ("t-none", "", True)]
         assert list(statusd.starting_tasks({}, data_dir=root)) == ["p"]   # project pages
+
+
+def test_answered_pages_and_finished_agents_fold_away_and_the_row_says_when_a_result_came():
+    tree = {"root": {"title": "Root", "parent": "", "since": 1},
+            "done1": {"title": "Finished helper", "parent": "root", "since": 2},
+            "busy": {"title": "Busy helper", "parent": "root", "since": 3, "working": True},
+            "u1": {"title": "Unread helper", "parent": "done1", "since": 4}}
+    surfaces = [_sf("r1", "done1", NOW - 500, title="Old round"),
+                _sf("r2", "root", NOW - 50, title="Newest round"),
+                _sf("r0", "u1", NOW - 900, title="Unread one")]
+    statuses = {"r0": {"unseen": True}}
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, tree=tree, by_item=True,
+                                statuses=statuses, returned={"root": NOW - 7200})
+    inside = html[html.index('<div class="inside">'):]
+    folded = inside[inside.index('<details class="earlier">'):]
+    assert inside.index("Newest round") < inside.index('<details class="earlier">')
+    assert "Unread one" not in folded.split("</details>")[0]          # still wants you: in view
+    assert "1 earlier page</summary>" in inside and "Old round" in folded
+    assert "1 finished agent</summary>" in inside                      # done1, with u1 under it
+    assert inside.index("Busy helper") < inside.index("1 finished agent")
+    assert '<span class="when" title="newest result 2h ago; touched 50s ago">2h ago</span>' in html
