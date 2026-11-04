@@ -146,9 +146,9 @@ def test_home_draws_items_with_pages_threads_slot_and_started_agents():
     assert html.count('<details class="item"') == 1
     assert 'data-item="root"' in html and 'data-project="cadre"' in html
     assert "Where to take Cadre next" in html and "Agent working" in html
-    assert html.count('href="/view/k1"') == 1 and html.count('href="/view/r1"') == 1
+    assert 'href="/view/k1"' in html and 'href="/view/r1"' in html   # heads and their paths
     assert 'class="threads" data-item="root"' in html               # track B's slot
-    assert "Agents started from this" in html and "Track A helper" in html
+    assert "Pages, as the tree that made them" in html and "Track A helper" in html
     assert '<span class="badge work">running</span>' in html        # Track A is working
     assert 'class="repo">cadre<' not in html                        # no project sections
     bar = statusd.work_toolbar({"cadre": {"id": "cadre", "name": "Cadre", "dirs": []}})
@@ -200,7 +200,7 @@ def test_sorts():
              {"key": "b", "touched": 1, "returned": 3, "spent": 1, "needs": 0},
              {"key": "c", "touched": 2, "returned": 2, "spent": 9, "needs": 1, "working": True}]
     keys = lambda s: [it["key"] for it in items_mod.order(items, s)]
-    assert keys("needs") == ["b", "a", "c"]
+    assert keys("needs") == ["b", "c", "a"]
     assert keys("result") == ["b", "c", "a"]
     assert keys("untouched") == ["b", "c", "a"]
     assert keys("spent") == ["c", "a", "b"]
@@ -412,22 +412,68 @@ def test_pageless_tasks_keep_launches_with_no_project():
         assert list(statusd.starting_tasks({}, data_dir=root)) == ["p"]   # project pages
 
 
-def test_answered_pages_and_finished_agents_fold_away_and_the_row_says_when_a_result_came():
-    tree = {"root": {"title": "Root", "parent": "", "since": 1},
-            "done1": {"title": "Finished helper", "parent": "root", "since": 2},
-            "busy": {"title": "Busy helper", "parent": "root", "since": 3, "working": True},
-            "u1": {"title": "Unread helper", "parent": "done1", "since": 4}}
-    surfaces = [_sf("r1", "done1", NOW - 500, title="Old round"),
-                _sf("r2", "root", NOW - 50, title="Newest round"),
-                _sf("r0", "u1", NOW - 900, title="Unread one")]
-    statuses = {"r0": {"unseen": True}}
-    html = statusd.render_fleet({"surfaces": surfaces}, NOW, tree=tree, by_item=True,
-                                statuses=statuses, returned={"root": NOW - 7200})
-    inside = html[html.index('<div class="inside">'):]
-    folded = inside[inside.index('<details class="earlier">'):]
-    assert inside.index("Newest round") < inside.index('<details class="earlier">')
-    assert "Unread one" not in folded.split("</details>")[0]          # still wants you: in view
-    assert "1 earlier page</summary>" in inside and "Old round" in folded
-    assert "1 finished agent</summary>" in inside                      # done1, with u1 under it
-    assert inside.index("Busy helper") < inside.index("1 finished agent")
-    assert '<span class="when" title="newest result 2h ago; touched 50s ago">2h ago</span>' in html
+def _graph_rows(html):
+    inside = html[html.index('<div class="graph">'):]
+    rows = inside.split('<div class="page grow')[1:]
+    title = lambda r: r.split('class="t"', 1)[1].split("</a>")[0].rsplit(">", 1)[-1]
+    dot = lambda r: r.split('<circle class="n ', 1)[1].split('"')[0]
+    return [(title(r), dot(r), r) for r in rows]
+
+
+GRAPH_TREE = {"root": {"title": "Root", "parent": "", "since": 1},
+              "a": {"title": "A", "parent": "root", "since": NOW - 950},
+              "b": {"title": "B", "parent": "root", "since": NOW - 700, "working": True},
+              "a1": {"title": "A1", "parent": "a", "since": NOW - 850}}
+GRAPH_PAGES = [_sf("r1", "root", NOW - 900, title="Root round 1"),
+               _sf("r2", "root", NOW - 600, title="Root round 2"),
+               _sf("a1p", "a", NOW - 800, title="A round 1"),
+               _sf("a2", "a", NOW - 100, title="A round 2"),
+               _sf("x", "a1", NOW - 300, title="A1 page")]
+
+
+def test_an_item_draws_its_tree_source_first_each_task_under_what_started_it():
+    html = statusd.render_fleet({"surfaces": GRAPH_PAGES}, NOW, tree=GRAPH_TREE, by_item=True,
+                                graph=([], {}, {}))
+    rows = _graph_rows(html)
+    # preorder, launch order: root, then a and everything a started, then b
+    assert [(t, d) for t, d, _ in rows] == [("Root round 2", "you"), ("A round 2", "you"),
+                                           ("A1 page", "you"), ("B", "work")]
+    assert '<span class="rn" title="2 rounds">r2</span>' in rows[0][2]
+    # the lines: root's lane runs from its dot down to b, its last child;
+    # a's lane runs from its dot to a1 and ends there
+    assert 'd="M7,12 V24"' in rows[0][2]                        # root: dot down
+    assert 'd="M7,0 V24"' in rows[2][2]                         # root's lane passes a1
+    assert 'd="M21,0 V7 Q21,12 26,12 H31"' in rows[2][2]         # a's elbow into a1
+    assert 'd="M7,0 V7 Q7,12 12,12 H17"' in rows[3][2]           # root's elbow into b
+    assert "M7,12 V24" not in rows[3][2]                         # b is the last: lane ends
+
+
+def test_a_branch_with_everything_answered_draws_as_one_row_and_its_pages_stay_in_it():
+    statuses = {k: {"status": "ended"} for k in ("a2", "x")}
+    html = statusd.render_fleet({"surfaces": GRAPH_PAGES}, NOW, tree=GRAPH_TREE, by_item=True,
+                                graph=([], {}, {}), statuses=statuses)
+    rows = _graph_rows(html)
+    assert [(t, d) for t, d, _ in rows] == [("Root round 2", "you"), ("A round 2", "done"),
+                                           ("B", "work")]
+    assert ">+1</span>" in rows[1][2] and rows[1][2].startswith(' done"')
+    assert html.count("A1 page") == 0                  # folded into a, not set loose on top
+
+
+def test_rows_never_wrap_the_title_gives_way():
+    css = statusd.render_home({"surfaces": []}, fleet_html=("", ""), now=NOW)
+    assert "flex-wrap:nowrap" in css and "text-overflow:ellipsis" in css
+    surfaces = [_sf("r", "root", NOW - 900, title="A long title")]
+    html = statusd.render_fleet({"surfaces": surfaces}, NOW, tree={}, by_item=True)
+    assert 'class="t"' in html and 'title="A long title"' in html     # full title on hover
+
+
+def test_needs_me_first_puts_a_fresh_result_on_top_even_while_an_agent_works_in_the_item():
+    items = [{"key": "opened", "touched": NOW - 60, "returned": NOW - 9 * 86400, "needs": 1},
+             {"key": "busy", "touched": NOW - 300, "returned": NOW - 120, "needs": 1,
+              "working": True},
+             {"key": "quiet", "touched": NOW - 3600, "returned": 0, "needs": 1},
+             {"key": "stuck", "touched": NOW - 30 * 86400, "returned": 0, "needs": 0}]
+    keys = [it["key"] for it in items_mod.order(items, "needs")]
+    # stuck wants the driver; busy just returned; opened was only opened
+    # recently, its result is nine days old; quiet has no result yet.
+    assert keys == ["stuck", "busy", "quiet", "opened"]

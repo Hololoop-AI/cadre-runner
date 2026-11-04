@@ -1485,8 +1485,22 @@ body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-
  margin:8px 0 2px}
 .items .pages{border-left:2px solid var(--border);padding-left:10px;margin:4px 0 8px}
 .items .pages .pages{margin:0 0 2px 6px}
-.items .page{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:13px;flex-wrap:wrap}
+.items .page{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:13px;
+ flex-wrap:nowrap;white-space:nowrap}
+.items .page > *{flex:none}
+.items .page > a.t{flex:1 1 auto;min-width:3em;overflow:hidden;text-overflow:ellipsis}
 .items .page a{color:var(--accent);text-decoration:none}
+.items .pages:has(> .graph){border-left:none;padding-left:0}
+.items .page.grow{height:24px;padding:0;gap:6px}
+.items .grow svg{flex:none;display:block}
+.items .grow .e{stroke:var(--muted);stroke-width:1.5;fill:none;opacity:.7}
+.items .grow .n{fill:var(--card);stroke:var(--muted);stroke-width:1.5}
+.items .grow .n.you{fill:var(--accent);stroke:var(--accent)}
+.items .grow .n.work{fill:var(--run);stroke:var(--run)}
+.items .grow .n.bad{fill:var(--hot);stroke:var(--hot)}
+.items .grow.done a.t{color:var(--muted)}
+.items .grow .rn{font:11px var(--mono);color:var(--muted)}
+@media (max-width:640px){.items .page .badge.cost,.items .page a.hist{display:none}}
 .items .page a.hist{color:var(--label)}
 .items .page .k{font:11px var(--mono);color:var(--muted);width:70px;flex:none}
 .items .threads:empty{display:none}
@@ -1612,8 +1626,8 @@ _PAGE_JS = """
   shown.sort(sort==='result'?function(a,b){return n(b,'returned')-n(a,'returned')}
    :sort==='untouched'?function(a,b){return n(a,'touched')-n(b,'touched')}
    :sort==='spent'?function(a,b){return n(b,'spent')-n(a,'spent')}
-   :function(a,b){return shelf(a)-shelf(b)||n(a,'working')-n(b,'working')||n(a,'needs')-n(b,'needs')
-    ||n(b,'touched')-n(a,'touched')});
+   :function(a,b){return shelf(a)-shelf(b)||n(a,'needs')-n(b,'needs')
+    ||(n(b,'returned')||n(b,'touched'))-(n(a,'returned')||n(a,'touched'))});
   var fold=list.querySelector('.idlefold'),box=fold.querySelector('.idlebox'),
       off=list.querySelector('.offbox'),none=list.querySelector('.noitems');
   items.forEach(function(e){if(shown.indexOf(e)<0){e.classList.add('offlist');off.appendChild(e);}});
@@ -1920,7 +1934,7 @@ def render_fleet(snap: dict, now: float | None = None,
 
     def _spent(sf) -> str:
         usd = spent.get(str(sf.get("task") or ""))
-        return (f'<span class="badge" title="what this task\'s finished turns cost">'
+        return (f'<span class="badge cost" title="what this task\'s finished turns cost">'
                 f'{escape(costs_mod.usd(usd))}</span>' if usd else "")
 
     def _history_link(sf) -> str:
@@ -1932,7 +1946,7 @@ def render_fleet(snap: dict, now: float | None = None,
         key = str(sf.get("path") or "").rsplit("/", 1)[-1]
         return f'<a class="hist" href="/history/{escape(key)}">history ({n})</a>'
 
-    def _page_link(sf) -> str:
+    def _page_link(sf, rounds_link: bool = True) -> str:
         # Earlier rounds are reachable from the row, never listed in the scan.
         # The ⋮ menu is the row's manage control: Archive (one click, back to
         # the fleet). The rarer repairs (move, mark replaced, attach) stay on
@@ -1940,7 +1954,7 @@ def render_fleet(snap: dict, now: float | None = None,
         key = escape(str(sf.get("path") or "").rsplit("/", 1)[-1])
         n = len(sf.get("earlier") or [])
         rounds = (f'<a class="hist" href="/page/{key}">'
-                  f'{n} earlier round{"s" if n != 1 else ""}</a>') if n else ""
+                  f'{n} earlier round{"s" if n != 1 else ""}</a>') if n and rounds_link else ""
         return (f'{rounds}<details class="rowmenu"><summary class="hist" title="More" '
                 f'aria-label="More actions">⋮</summary><div class="menu">'
                 f'<form method="post" action="{REPAIR_PATH}">'
@@ -2466,12 +2480,137 @@ def _kid_rows(task: str, tree: dict, kids: dict, now: float, endings: dict,
     return rows
 
 
+def _rounds(sf: dict) -> list[dict]:
+    """A page row's rounds, oldest first: its earlier rounds, then itself."""
+    head = {"title": sf.get("title"), "path": sf.get("path"), "opened": sf.get("opened")}
+    return list(reversed(sf.get("earlier") or [])) + [head]
+
+
+LANE, ROW = 14, 24     # the item graph: px between depth lanes, px per row
+
+
+def _graph(root: str, pages: list[dict], tree: dict, kids: dict, statuses: dict,
+           now: float, endings: dict, bare: dict, row) -> str:
+    """An item drawn as its tree: one row per task, source at the top, each
+    task under the one that started it, in launch order, joined by lines the
+    way `git log --graph` joins commits. Each row is ordinary HTML (one line,
+    its page linked) after a small SVG cell; the cells meet edge to edge, so
+    the lines read as one drawing.
+
+    The dot says where it stands: filled blue, a page you have not responded
+    to (a head); amber, an agent working; red, a run that failed or ended
+    without a page; hollow, answered or done. A branch where everything is
+    answered and nothing runs draws as one hollow row, "+N" for what it
+    holds; the root always draws."""
+    sf_of: dict[str, dict] = {}
+    for sf in pages:
+        t = str(sf.get("task") or "")
+        if float(sf.get("opened") or 0) >= float((sf_of.get(t) or {}).get("opened") or 0):
+            sf_of[t] = sf
+    working = lambda t: bool((tree.get(t) or {}).get("working"))
+
+    def state(t: str) -> str:
+        if working(t):
+            return "work"
+        if t in endings or (t in bare and pageless_phrase(bare[t], now)):
+            return "bad"
+        if t in sf_of and not _answered(sf_of[t], statuses):
+            return "you"
+        return "done"
+
+    seen: set = set()
+
+    def walk(t: str, depth: int) -> list[list]:
+        """Preorder rows [task, depth, children drawn, hidden count]."""
+        seen.add(t)
+        kin = [c for c in kids.get(t) or () if c not in seen]
+        rows, me = [], [t, depth, [], 0]
+        rows.append(me)
+        for c in kin:
+            sub = walk(c, depth + 1)
+            if len(sub) > 1 and all(state(r[0]) == "done" for r in sub):
+                sub[0][3] = sum(1 + r[3] for r in sub[1:])     # a settled branch: one row
+                sub[0][2] = []                                  # nothing under it is drawn
+                sub = sub[:1]
+            me[2].append(c)
+            rows += sub
+        return rows
+
+    rows = walk(root, 0)
+    at = {r[0]: i for i, r in enumerate(rows)}
+    width = (max(r[1] for r in rows) + 1) * LANE + 4
+    x = lambda d: 7 + d * LANE
+    cy, h = ROW // 2, ROW
+    lines: list[list[str]] = [[] for _ in rows]
+    for i, (t, d, drawn, _) in enumerate(rows):
+        if not drawn:
+            continue
+        xp, last = x(d), max(at[c] for c in drawn)
+        lines[i].append(f'<path class="e" d="M{xp},{cy} V{h}"/>')
+        for j in range(i + 1, last + 1):
+            if rows[j][0] in drawn:
+                xc = x(rows[j][1])
+                lines[j].append(f'<path class="e" d="M{xp},0 V{cy - 5} Q{xp},{cy} {xp + 5},{cy} '
+                                f'H{xc - 4}"/>')
+                if j < last:
+                    lines[j].append(f'<path class="e" d="M{xp},{cy} V{h}"/>')
+            else:
+                lines[j].append(f'<path class="e" d="M{xp},0 V{h}"/>')
+
+    out = []
+    for i, (t, d, _, hidden) in enumerate(rows):
+        st = state(t)
+        cell = (f'<svg width="{width}" height="{h}" aria-hidden="true">{"".join(lines[i])}'
+                f'<circle class="n {st}" cx="{x(d)}" cy="{cy}" r="4.5"/></svg>')
+        more = (f'<span class="badge" title="{hidden} more, all answered">+{hidden}</span>'
+                if hidden else "")
+        if t in sf_of:
+            html = row(sf_of[t])
+            k = html.split('<span class="k">', 1)[1].split("</span>", 1)[0]
+            n = len(_rounds(sf_of[t]))
+            html = html.replace(f'<span class="k">{k}</span>', cell, 1)
+            extra = ((f'<span class="rn" title="{n} rounds">r{n}</span>' if n > 1 else "")
+                     + ('<span class="badge work">running</span>'
+                        if st == "work" and "badge work" not in html else "") + more)
+            html = html.replace("</a>", "</a>" + extra, 1)
+        else:
+            info = tree.get(t) or {}
+            title = escape(str(info.get("title") or _task_label(t)))
+            href = escape(view_href(info["page"])) if info.get("page") else _tree_href(t)
+            if st == "work":
+                said = '<span class="badge work">running</span>'
+            elif t in endings:
+                said = f'<span class="badge q">{escape(ending_phrase(endings[t], now))}</span>'
+            elif st == "bad":
+                said = f'<span class="badge q">{escape(pageless_phrase(bare[t], now))}</span>'
+            else:
+                said = '<span class="badge">ended, no page</span>'
+            html = (f'<div class="page">{cell}<a class="t" href="{href}" title="{title}">'
+                    f'{title}</a>{said}{more}</div>')
+        out.append(html.replace('<div class="page">',
+                                f'<div class="page grow{" done" if st == "done" else ""}">', 1))
+    loose = [sf for t, sf in sf_of.items() if t not in seen]   # in no tree (folded ones are)
+    return "".join(row(sf) for sf in loose) + f'<div class="graph">{"".join(out)}</div>'
+
+
 def _earlier(rows: list[str], noun: str) -> str:
     """Rows the driver rarely needs, one click away instead of in the way."""
     if not rows:
         return ""
     return (f'<details class="earlier"><summary>{len(rows)} {noun}'
             f'{"s" if len(rows) != 1 else ""}</summary>{"".join(rows)}</details>')
+
+
+def _answered(sf: dict, statuses: dict) -> bool:
+    """The driver closed this page — approved it, or sent and ended — so the
+    page server reports its session ended, or it is titled DECIDED. Read or
+    not, a page still open is not answered; a page the page server says
+    nothing about is not known to be answered either. A strand is never
+    answered: its feedback reached no one."""
+    if sf.get("stranded"):
+        return False
+    st = statuses.get(conv_mod.key_of(sf) or "") or {}
+    return st.get("status") == "ended" or "DECIDED" in str(sf.get("title") or "")
 
 
 def _when_title(it: dict, now: float) -> str:
@@ -2519,7 +2658,7 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
     names = {p["id"]: p["name"] for p in projects_mod.live(projs)}
     bare = {str(r.get("task")): r for r in pageless or () if r.get("task")}
 
-    def _prow(sf):
+    def _prow(sf, when=False, head=False):
         label, cls = _page_state(sf, statuses, now)
         st = (f'<span class="badge {"work" if cls == "running" else "q"}">{escape(label)}</span>'
               if cls in ("running", "needs") else "")
@@ -2527,27 +2666,38 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
         k = f"round {n + 1}" if n else str(sf.get("kind") or "page")
         new = ('<span class="badge you">unopened</span>'
                if (statuses.get(conv_mod.key_of(sf) or "") or {}).get("unseen") is True else "")
+        name = escape(str(sf.get("title") or sf.get("kind") or "page"))
         return (f'<div class="page"><span class="k">{escape(k)}</span>'
-                f'<a href="{escape(view_href(sf["path"]))}">'
-                f'{escape(str(sf.get("title") or sf.get("kind") or "page"))}</a>'
-                f'{new}{st}{bits["spent"](sf)}{bits["history"](sf)}{bits["menu"](sf)}</div>')
+                f'<a class="t" href="{escape(view_href(sf["path"]))}" title="{name}">{name}</a>'
+                f'{new}{st}'
+                + (f'<span class="badge" title="when this page was written">'
+                   f'{escape(_rel_time(float(sf.get("opened") or 0), now))}</span>' if when else "")
+                + f'{bits["spent"](sf)}'
+                + ("" if head else bits["history"](sf))
+                + (bits["menu"](sf, False) if head else bits["menu"](sf)) + '</div>')
 
     rows, idle, off = [], [], []
     for it in items:
         key, state = it["key"], it["state"]
-        # The newest page, and any that still want the driver, stay in view;
-        # the pages already read and answered fold away, one click off.
-        def _current(n, sf):
-            st = statuses.get(conv_mod.key_of(sf) or "") or {}
-            return n == 0 or st.get("unseen") is True or _page_state(sf, statuses, now)[1] in (
-                "running", "needs")
-        cur = [_prow(sf) for n, sf in enumerate(it["pages"]) if _current(n, sf)]
-        old = [_prow(sf) for n, sf in enumerate(it["pages"]) if not _current(n, sf)]
-        pages = ("".join(cur) + _earlier(old, "earlier page")
+        # Only a page the driver answered folds away. Opening a page is not
+        # answering it: a page still open is the last word in its line of
+        # work, so it stays in view however long ago it was read. The newest
+        # page stays too, answered or not, so the item always shows its head.
+        cur = [_prow(sf) for n, sf in enumerate(it["pages"])
+               if n == 0 or not _answered(sf, statuses)]
+        old = [_prow(sf) for n, sf in enumerate(it["pages"])
+               if n and _answered(sf, statuses)]
+        pages = ("".join(cur) + _earlier(old, "answered page")
                  or '<p class="empty">No page yet.</p>')
         kid_rows = _kid_rows(key, tree, kids, now, endings, bare)
         started = ("".join(h for h, live in kid_rows if live)
                    + _earlier([h for h, live in kid_rows if not live], "finished agent"))
+        if kids.get(key):
+            # An item with a tree reads as one: each page under the page whose
+            # agent started it, oldest launch first, so who made what and in
+            # what order is the shape of the list rather than a lookup.
+            pages, started = _graph(key, it["pages"], tree, kids, statuses, now, endings,
+                                    bare, lambda sf: _prow(sf, when=True, head=True)), ""
         dot = ('<span class="unseen" title="has a page you have not opened since the agent '
                'wrote it"></span>' if it["unopened"] else "")
         flag = (f'<span class="badge q" title="a run in this item stopped without leaving a '
@@ -2574,7 +2724,8 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
             f'<span class="when" title="{_when_title(it, now)}">'
             f'{escape(_rel_time(it["returned"] or it["touched"], now))}'
             f'</span></summary><div class="inside">'
-            f'<div class="grp">Pages</div><div class="pages">{pages}</div>'
+            f'<div class="grp">{"Pages, as the tree that made them" if kids.get(key) else "Pages"}'
+            f'</div><div class="pages">{pages}</div>'
             # Track B's message threads land here, under the item they are about.
             f'<div class="threads" data-item="{escape(key)}"></div>'
             + (f'<div class="grp">Agents started from this</div>'
