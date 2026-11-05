@@ -29,7 +29,7 @@ effort = "high"
 # confined to the runner-owned checkout by convention (not enforcement). Anything else
 # is passed through as --permission-mode <value> (runs may then block on prompts).
 permission_mode = "bypass"
-timeout_seconds = 7200
+timeout_seconds = 0              # per-turn wall-clock ceiling in seconds; 0 = none
 # Models are ALWAYS passed explicitly (sessions must not inherit the laptop default).
 default_model = "opus"
 

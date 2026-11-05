@@ -123,7 +123,7 @@ status_port = 8181
 bin = "claude"
 effort = "high"
 permission_mode = "bypass"       # headless turns cannot answer a prompt
-timeout_seconds = 7200
+timeout_seconds = 0              # per-turn wall-clock ceiling in seconds; 0 = none
 default_model = "opus"
 
 [limits]
@@ -290,7 +290,7 @@ page); and backends are listed by hand in each config.
 |---|---|
 | Page says "queued — no agent listening" | Feedback is waiting with no owner. The daemon adopts these on its own within a poll and dispatches a dialogue; if it cannot, the batch is written verbatim under `<data_dir>/surfaces/stranded/` and the row badges it. Nothing is lost. |
 | You answered and nothing happened | You pressed "Queue answer", not "Send to Agent". Every delivery is recorded in `~/.review-surface/feedback-journal.jsonl` — that file is the receipt. |
-| A task never spawns | The daemon caps at 4 concurrent runs and currently drops a firing that arrives at the cap. Re-dispatch. |
+| A task never spawns | The daemon caps at `runner.max_concurrent_runs` (default 8); a firing that arrives at the cap waits and starts when a slot frees. If it never starts, check the daemon log. |
 | Editing a prompt in `prompts/` changed nothing | Seeding records a new version but does not promote it. `python3 pipeline.py promote task` (or `implement`) activates the text on disk; the daemon picks it up on its next pass. |
 | Editing `config/actions-*.json` changed nothing | The daemon re-reads the action files on its next pass after they change. If the log says `ACTIONS NOT RELOADED`, the edit did not load (bad JSON, unknown operator, duplicate name) and the previous set is still running — fix the file; no restart either way. |
 | A hand-off went nowhere | A node that is not registered to take a handoff is refused before anything is written: from a page, the batch is stranded and the row badges it; from the command, it exits non-zero naming the nodes that do. |

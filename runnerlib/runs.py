@@ -234,10 +234,11 @@ def _reap(pid: int) -> bool:
 KILL_GRACE = 30
 
 
-def deadline(timeout) -> float:
+def deadline(timeout) -> float | None:
     """When a run spawned now has gone on too long: the value to store as the
-    run record's `deadline`."""
-    return time.time() + int(timeout)
+    run record's `deadline`. A timeout of 0 (or unset) means no ceiling: None,
+    which `enforce_deadline` leaves alone."""
+    return time.time() + int(timeout) if timeout and int(timeout) > 0 else None
 
 
 def _signal_group(pgid: int, sig) -> None:

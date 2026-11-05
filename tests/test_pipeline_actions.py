@@ -1163,6 +1163,7 @@ def test_the_nodes_command_is_the_command_that_runs():
     reg = FakeReg({"nex-1": story})
     executed = []
     pipeline, cfg, restore = _spawn_harness(d, executed)
+    cfg.claude = {**cfg.claude, "timeout_seconds": 60}   # a ceiling set, so one is recorded
     try:
         engine_seam.run_spawn_spec(cfg, reg, None, b, lambda *a: None,
                                    pipeline._run_stage, spawns[0])

@@ -271,3 +271,9 @@ _child.returncode = -9  # tell Popen it was collected, silence GC warning
 assert runs._reap(1) is False
 
 print("runs smoke tests: all passed")
+
+# timeout 0 means no ceiling: the run carries no deadline and is never stopped
+assert runs.deadline(0) is None and runs.deadline(None) is None
+assert runs.enforce_deadline({"pid": 1, "run_dir": str(tmp), "started": 0,
+                              "deadline": runs.deadline(0)}, now=now + 10**9) is None
+assert runs.deadline(60) > now
