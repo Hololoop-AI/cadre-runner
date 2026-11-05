@@ -40,9 +40,8 @@ def read(path: Path) -> list[dict]:
 
 
 def task_projects(registry: dict, projects: dict | None = None) -> dict:
-    """{task or story id: project name} from the registry file's contents.
-    Dialogue tasks carry their project; pipeline stories carry their repo.
-    Tasks from before tasks recorded a project are filed by their working
+    """{task id: project name} from the registry file's contents. Dialogue
+    tasks carry their project. Tasks from before tasks recorded a project are filed by their working
     directory: the project whose directory holds it most closely."""
     dirs = sorted(((str(d).rstrip("/"), str(p.get("name") or pid))
                    for pid, p in (projects or {}).items() if isinstance(p, dict)
@@ -58,9 +57,6 @@ def task_projects(registry: dict, projects: dict | None = None) -> dict:
         name = next((n for d, n in dirs if cwd == d or cwd.startswith(d + "/")), None)
         if name:
             out[tid] = name
-    for sid, rec in (registry.get("stories") or {}).items():
-        if isinstance(rec, dict) and rec.get("repo"):
-            out[sid] = str(rec["repo"])
     return out
 
 

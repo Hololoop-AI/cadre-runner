@@ -77,8 +77,7 @@ class Listener:
         self._prev_wakeup = signal.set_wakeup_fd(sig_w)
         self._pidfds: dict[int, int] = {}
         # pids already reported as exited: a run the pass did not collect
-        # (stage runs are collected on the timed pass) must not ring again
-        # on every wait and spin the loop
+        # yet must not ring again on every wait and spin the loop
         self._reported: set[int] = set()
         _LOOP_THREAD = threading.get_ident()
 

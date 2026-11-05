@@ -131,7 +131,6 @@ if [ "$CHECK_ONLY" = 0 ]; then
   if [ -f "$CONFIG" ]; then
     ok "config.local.toml already exists — not overwriting it"
   else
-    actor=$(git config --get user.name 2>/dev/null || echo "$USER")
     cat > "$CONFIG" <<EOF
 # Written by deploy/install.sh. Edit freely; re-running the installer will not
 # overwrite this file.
@@ -139,7 +138,6 @@ if [ "$CHECK_ONLY" = 0 ]; then
 poll_interval = 15
 data_dir = "~/.local/state/cadre-local"
 skills_source = "$SKILLS_DIR/skills"
-require_skills = false
 status_bind = "127.0.0.1"          # 0.0.0.0 only on a network you trust
 status_port = 8181
 
@@ -149,9 +147,6 @@ effort = "high"
 permission_mode = "bypass"         # headless turns cannot answer a prompt
 timeout_seconds = 7200
 default_model = "opus"
-
-[limits]
-allowed_actors = ["$actor"]
 EOF
     ok "wrote $CONFIG"
   fi
@@ -210,18 +205,13 @@ if [ "$SERVICES" = 1 ] && { [ "$START" = 1 ] || [ "$CHECK_ONLY" = 1 ]; }; then
     [ "$state" = active ] && ok "$s is running" || warn "$s is $state — \`journalctl --user -u $s -n 30\`"
   done
 fi
-gh_flag=""
-if ! command -v gh >/dev/null; then
-  gh_flag=--no-gh
-  warn "gh is not installed: dialogues work, the PR pipeline does not"
-fi
 case ":$RUNTIME_PATH:" in
   *":$BIN_DIR:"*) ;;
   *) warn "$BIN_DIR is NOT on your PATH, so \`review-surface\` will not be found. Add it to your shell profile and open a new terminal." ;;
 esac
 # preflight is the real gate: the node registry, the action set, the board, and
 # that the surface CLI runs, all under the PATH the runtime will have.
-if CADRE_CONFIG="$CONFIG" PATH="$RUNTIME_PATH" "$PY" -m runnerlib.preflight $server_flag $gh_flag; then
+if CADRE_CONFIG="$CONFIG" PATH="$RUNTIME_PATH" "$PY" -m runnerlib.preflight $server_flag; then
   if [ "$SERVICES" = 1 ]; then
     say "Cadre is ready — open http://127.0.0.1:8181"
   else

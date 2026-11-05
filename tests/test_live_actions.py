@@ -61,7 +61,7 @@ def test_an_unchanged_set_is_not_reread(live):
 def test_an_added_action_runs_without_a_restart_and_does_not_replay_history(live):
     st, path = live
     b = st["board"]
-    engine_seam.heartbeat(b)                            # the daemon has been running
+    b.write("cadre", "runner", "daemon", "heartbeat", {})  # the board has history
     engine.tick(b, st["actions"], None, None)
     b.write("cadre", "probe", "k", "command", {"target": "probe", "x": "old"})
     add_action(path, watch(b, "probe-watch", "old"))

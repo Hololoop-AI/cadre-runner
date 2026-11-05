@@ -111,7 +111,7 @@ def load_actions(path) -> list[dict]:
 def load_action_set(paths) -> list[dict]:
     """Several action FILES, one action SET — which is what a tick consumes.
 
-    A workflow is a file (`actions-pipeline.json`, `actions-dialogue.json`);
+    A workflow is a file (`actions-dialogue.json`, `actions-handoff.json`);
     the engine runs all of them at once, because the board is the only coupling
     and an action does not know which file it came from. Concatenation, not a
     merge: nothing is combined, overridden or reordered, so the set is exactly

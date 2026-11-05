@@ -370,8 +370,8 @@ def do_import(records_path: Path) -> dict:
     # Board history goes in AFTER every consumer's cursor, so the engine must
     # not read it as new work: a moved `task` command would spawn a turn.
     # Every cursor is moved past the import. A consumer with unread work other
-    # than the runner's own heartbeats and reports (which the gh-watch action
-    # always trails by a tick or two) means the daemon was mid-flight, and
+    # than the runner's own heartbeats and reports (which a heartbeat-driven
+    # action trails by a tick or two) means the daemon was mid-flight, and
     # nothing is written.
     db = sqlite3.connect(DST_DATA / "board.db")
     top = db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]

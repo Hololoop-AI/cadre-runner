@@ -36,8 +36,8 @@ def test_a_tool_that_runs_passes_preflight(tmp_path, monkeypatch):
     assert c.ok and c.detail == str(tmp_path / "review-surface")
 
 
-def _checks(tool_ok=True, server_ok=True, gh_ok=True):
-    return [Check("board writable", True), Check("gh auth", gh_ok, "not logged in"),
+def _checks(tool_ok=True, server_ok=True, claude_ok=True):
+    return [Check("board writable", True), Check("claude on PATH", claude_ok, "not found"),
             Check("review-surface on PATH", tool_ok, "exits 127"),
             Check("review-surface server", server_ok, "nothing answering")]
 
@@ -77,9 +77,9 @@ def test_a_server_that_comes_up_in_time_lets_the_daemon_start(monkeypatch):
 
 def test_other_failures_are_printed_but_do_not_stop_the_daemon(monkeypatch, capsys):
     import pipeline
-    monkeypatch.setattr(preflight, "run", lambda *a, **k: _checks(gh_ok=False))
+    monkeypatch.setattr(preflight, "run", lambda *a, **k: _checks(claude_ok=False))
     pipeline._preflight_or_exit(Cfg())
-    assert "FAIL  gh auth" in capsys.readouterr().out
+    assert "FAIL  claude on PATH" in capsys.readouterr().out
 
 
 def test_a_missing_tool_is_logged_once_every_ten_minutes(monkeypatch):
@@ -88,9 +88,9 @@ def test_a_missing_tool_is_logged_once_every_ten_minutes(monkeypatch):
     now = [10_000.0]
     monkeypatch.setattr(surface.time, "time", lambda: now[0])
     logs = []
-    surface.tick(None, None, None, logs.append)
-    surface.tick(None, None, None, logs.append)
+    surface.tick(None, None, logs.append)
+    surface.tick(None, None, logs.append)
     assert len(logs) == 1 and "review-surface is not on PATH" in logs[0]
     now[0] += surface.UNAVAILABLE_LOG_EVERY
-    surface.tick(None, None, None, logs.append)
+    surface.tick(None, None, logs.append)
     assert len(logs) == 2

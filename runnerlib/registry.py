@@ -1,131 +1,35 @@
-"""Local story registry — the runner's operational state (which stories are
-active, what it has already processed, iteration counts).
+"""The runner's operational state: one JSON file (`registry.json`) holding the
+dialogue tasks (`tasks` section, runnerlib/tasks.py) — their session ids, the
+turn in flight, the page each one writes.
 
-v0 deviation from design.md: the daemon dispatches off this registry plus
-branch-name conventions, not off .pipeline/state.json. The in-repo state file
-is still written by sessions as the durable human/Actions-facing record, but
-the local runner treats git/PR reality + this registry as authoritative."""
+A registry file written before the PR pipeline was removed may still carry a
+`stories` section; it is left on disk untouched and nothing reads it."""
 
 import json
 import re
-import time
 from pathlib import Path
 
-BRANCH_ROLES = ("planning", "contract", "tests", "build")
 
-
-def slugify(story_id: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", story_id.lower()).strip("-")
+def slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "story"
-
-
-def feature_branch(slug: str) -> str:
-    return f"feat/{slug}"
-
-
-def stage_branch(slug: str, role: str, slice_name: str | None = None) -> str:
-    # NOTE: stage branches use the `pipe/` prefix, NOT nested under the feature
-    # branch — git forbids `feat/<slug>/x` while branch `feat/<slug>` exists
-    # (a ref can't be both a file and a directory).
-    return f"pipe/{slug}/{role}" + (f"-{slice_name}" if slice_name else "")
-
-
-def classify_branch(head: str, slug: str):
-    """Map a PR head branch to (role, slice) per the naming convention.
-    Returns (None, None) for branches the pipeline doesn't own."""
-    prefix = f"pipe/{slug}/"
-    if not head.startswith(prefix):
-        return None, None
-    rest = head[len(prefix):]
-    if rest == "planning":
-        return "planning", None
-    for role in ("contract", "tests", "build"):
-        if rest.startswith(role + "-"):
-            return role, rest[len(role) + 1:]
-    return None, None
 
 
 class Registry:
     def __init__(self, path: Path):
         self.path = path
-        self._deleted: set[str] = set()
         try:
             self.data = json.loads(path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
-            self.data = {"stories": {}}
-
-    def delete_story(self, slug: str) -> bool:
-        """The only way to remove a story: the merge-safe save resurrects
-        mere absence from disk (observed — a popped story came back), so
-        deletion is recorded and enforced at save time."""
-        self._deleted.add(slug)
-        return self.data["stories"].pop(slug, None) is not None
+            self.data = {}
 
     def save(self):
-        """Merge-safe write: stories on disk that this instance has never seen
-        survive (a `start` CLI registering mid-daemon-pass was erased by the
-        daemon's whole-file save — observed twice). Memory wins per-slug;
-        deleting a story therefore requires the daemon stopped, which is
-        already the surgery rule. flock serializes concurrent read-merge-write."""
+        """Atomic write, serialised across processes by a flock."""
         import fcntl
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock = self.path.with_suffix(".lock")
         with open(lock, "w") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
-            try:
-                disk = json.loads(self.path.read_text()).get("stories", {})
-            except (FileNotFoundError, json.JSONDecodeError):
-                disk = {}
-            merged = {**disk, **self.data["stories"]}
-            for slug in self._deleted:
-                merged.pop(slug, None)
-            self.data["stories"] = merged
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(self.data, indent=2))
             tmp.replace(self.path)
-
-    def add_story(self, slug: str, repo: str, story_id: str, title: str, variant: str):
-        self.data["stories"][slug] = {
-            "repo": repo,
-            "story_id": story_id,
-            "title": title,
-            "variant": variant,
-            "feature_branch": feature_branch(slug),
-            "tracking_issue": None,
-            "status": "active",          # active | escalated | done
-            "phase": "interrogate",            # interrogate | slices | assembly-pending | done
-            "iterations": {"interrogate": 0, "revise": {}},  # revise keyed by PR number
-            "slices": {},                # name -> {contract_pr, contract_merged, tests_pr, ...}
-            "seen": {"comments": [], "review_comments": [], "reviews": [], "merged": []},
-            "since": _now_iso(),
-        }
-        self.save()
-
-    def stories(self, status="active"):
-        return {s: st for s, st in self.data["stories"].items() if st["status"] == status}
-
-    def get(self, slug: str) -> dict:
-        return self.data["stories"][slug]
-
-    def seen(self, story: dict, kind: str, item_id: int) -> bool:
-        # setdefault twice over: event kinds grow over time (risk_hold,
-        # title_lint...) and older/re-registered records lack them — a missing
-        # kind is "never seen", not a crash (KeyError wedged nex-162's
-        # risk hold for hours).
-        return item_id in story.setdefault("seen", {}).setdefault(kind, [])
-
-    def mark_seen(self, story: dict, kind: str, item_id: int):
-        bucket = story.setdefault("seen", {}).setdefault(kind, [])
-        if item_id not in bucket:
-            bucket.append(item_id)
-
-    def slice_rec(self, story: dict, name: str) -> dict:
-        return story["slices"].setdefault(name, {
-            "contract_pr": None, "contract_merged": False,
-            "tests_pr": None, "tests_merged": False,
-            "build_pr": None, "build_merged": False,
-        })
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

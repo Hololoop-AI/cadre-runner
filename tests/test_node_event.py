@@ -92,7 +92,7 @@ def test_a_node_registered_after_the_actions_loaded_is_offered_started_and_resum
     page1 = str(d / "surfaces" / "task-task-demo.html")
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, page1, meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, page1, meta,
                              poll_json(decision("handoff:review", "check the edge cases")))
     ev = commands(cfg)[-1]
     assert (ev["target"], ev["node"], ev["from"]) == ("task:handoff", "review", "task")
@@ -131,7 +131,7 @@ def test_an_unregistered_node_is_refused_at_every_writer_and_at_the_engine():
     # the driver's form: nothing written, the batch stranded where the fleet
     # badges it, and the page left open so they can pick again
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(page), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(page), meta,
                              poll_json(decision("handoff:ghost", "send it on")))
     assert [c["target"] for c in commands(cfg)] == ["task"]
     sess = surface.sessions(cfg)[str(page)]
@@ -143,11 +143,12 @@ def test_an_unregistered_node_is_refused_at_every_writer_and_at_the_engine():
     # the function all writers share, and the command an agent runs
     with pytest.raises(tasks.UnknownNode, match="nodes that take a handoff: implement, task"):
         tasks.write_handoff(cfg, reg, "task-demo", "ghost", str(page), [])
-    # registered, but a pipeline stage: it does not listen for the event
-    from runnerlib import seed_nodes
-    seed_nodes.seed(d)
-    with pytest.raises(tasks.UnknownNode, match="'build' is registered but does not take"):
-        tasks.write_handoff(cfg, reg, "task-demo", "build", str(page), [])
+    # registered, but a node that does not listen for the event
+    from runnerlib import seed_eval_nodes
+    seed_eval_nodes.seed(d)
+    with pytest.raises(tasks.UnknownNode,
+                       match="'eval-judge-spec' is registered but does not take"):
+        tasks.write_handoff(cfg, reg, "task-demo", "eval-judge-spec", str(page), [])
     from runnerlib.registry import Registry
     real = Registry(d / "registry.json")
     tasks.record(real, "task-demo")["cwd"] = str(work)
@@ -222,7 +223,7 @@ def test_an_agent_writes_the_same_event_and_the_node_starts_when_its_turn_ends(
     import pipeline as pl
     from tests.test_dialogue_actions import no_real_spawn
     with no_real_spawn(calls):
-        assert engine_seam.run_deferred(cfg, reg, b, lambda *a: None, pl._run_stage) == 1
+        assert engine_seam.run_deferred(cfg, reg, b, lambda *a: None, pl._run_task) == 1
     assert calls[-1]["env"]["CADRE_SURFACE_OUT"].endswith("task-task-demo-implement.html")
     assert "build option B" in calls[-1]["prompt"] and str(page) in calls[-1]["prompt"]
     assert surface.sessions(cfg)[str(page)]["open"] is False
@@ -292,7 +293,7 @@ def test_a_page_written_before_the_rename_still_hands_off():
     surface._save_sessions(cfg, {str(page): meta})
 
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(page), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(page), meta,
                              poll_json(decision("route:review", "take this on")))
 
     handoffs = [c for c in commands(cfg) if c["target"] in tasks.TARGET_HANDOFFS]
@@ -333,19 +334,19 @@ def test_a_turn_that_finds_the_run_cap_full_waits_instead_of_being_dropped():
     request(b, cwd=str(work))
     calls, logged = [], []
     with no_real_spawn(calls):
-        engine_seam.run_spawn_spec(cfg, reg, None, b, logged.append, pl._run_stage,
+        engine_seam.run_spawn_spec(cfg, reg, b, logged.append, pl._run_task,
                                    engine.tick(b, LIVE, n, d).spawns[0])
         assert calls == []
         assert len(tasks.record(reg, "task-demo")["deferred"]) == 1
         assert any("waits" in m and "slot frees" in m for m in logged)
 
         # still full: it stays queued, nothing fails, no second log line
-        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_stage) == 0
+        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_task) == 0
         assert len(tasks.record(reg, "task-demo")["deferred"]) == 1
         assert sum("waits" in m for m in logged) == 1
 
         # a slot frees: the queued turn starts
         tasks.record(reg, "other-0")["active_runs"] = {}
-        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_stage) == 1
+        assert engine_seam.run_deferred(cfg, reg, b, logged.append, pl._run_task) == 1
     assert len(calls) == 1 and calls[0]["cwd"] == str(work)
     assert tasks.record(reg, "task-demo")["deferred"] == []

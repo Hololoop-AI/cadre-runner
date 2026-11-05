@@ -8,8 +8,8 @@ port on the tailnet; review-surface keeps its loopback default and every
 surface session is reached through this proxy.
 
 Routing rule: `/` is the fleet home page — server-rendered here from the
-daemon's status.json snapshot (project -> story -> stage sessions, sorted so
-the rows that want a human sit on top) with the new-task form at the top;
+daemon's status.json snapshot (one item per agent thread, the ones that want
+a human on top) with the new-task form at the top;
 `POST /tasks` submits that form. Any other path that resolves to a file in the
 status directory is served statically (the legacy dashboard is still at
 /index.html); everything else is forwarded verbatim to the Review Surface
@@ -164,22 +164,6 @@ FALLBACK_POLL_MS = 30000
 STREAM_TICK = 1.0
 STREAM_PING = 15.0
 
-# Surface session kinds that are a QUESTION to the driver (a verdict, an answer)
-# rather than a report. An open one of these is the strongest "this is waiting
-# on you" signal the runner has, stronger than any phase.
-VERDICT_KINDS = {"risk_hold", "spec_review", "final_review", "ask"}
-# Phases that mean the pipeline has handed the story back to a human.
-ATTENTION_PHASES = {"final-review"}
-DONE_PHASES = {"done"}
-
-# Sort buckets, ascending = higher on the page. The driver's rule: things that
-# want a human first, then things that finished and nobody has acknowledged,
-# then quiet work in progress.
-RANK_NEEDS_HUMAN, RANK_FINISHED, RANK_RUNNING = 0, 1, 2
-RANK_LABELS = {RANK_NEEDS_HUMAN: "needs you",
-               RANK_FINISHED: "finished",
-               RANK_RUNNING: "in progress"}
-
 
 # ---------------------------------------------------------------- surface view
 
@@ -292,119 +276,6 @@ def read_snapshot(status_dir: Path | None = None) -> dict:
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
     return snap if isinstance(snap, dict) else {}
-
-
-def _runs_for(snap: dict, story: dict) -> list[dict]:
-    """In-flight stage sessions belonging to a story. The daemon keys runs by
-    slug; intake runs (no story registered yet) key by the board card id, so
-    story_id is matched too."""
-    keys = {story.get("slug"), story.get("story_id")} - {None}
-    return [r for r in (snap.get("runs") or []) if r.get("story") in keys]
-
-
-def _questions_for(snap: dict, story: dict) -> list[dict]:
-    keys = {story.get("slug"), story.get("story_id")} - {None}
-    return [q for q in (snap.get("questions") or []) if q.get("story") in keys]
-
-
-def _last_activity(snap: dict, story: dict) -> float:
-    """Newest timestamp that touched this story, from any channel the snapshot
-    carries: a running stage, an open surface, a finished run in history."""
-    stamps = [0.0]
-    for r in _runs_for(snap, story):
-        stamps.append(float(r.get("started") or 0))
-    for sf in story.get("surfaces") or []:
-        stamps.append(float(sf.get("opened") or 0))
-    for q in _questions_for(snap, story):
-        stamps.append(float(q.get("asked_at") or 0) if
-                      isinstance(q.get("asked_at"), (int, float)) else 0.0)
-    keys = {story.get("slug"), story.get("story_id")} - {None}
-    for h in snap.get("recent") or []:
-        if h.get("story") in keys:
-            stamps.append(float(h.get("ended") or 0))
-    return max(stamps)
-
-
-def classify(snap: dict, story: dict) -> tuple[int, str]:
-    """(rank, why) for one story. Order of the checks IS the priority: an
-    escalation or an open verdict outranks 'done', which outranks running."""
-    if story.get("status") == "escalated":
-        return RANK_NEEDS_HUMAN, "escalated"
-    if any(sf.get("stranded") for sf in (story.get("surfaces") or [])):
-        return RANK_NEEDS_HUMAN, "feedback stranded"
-    open_kinds = [sf.get("kind") for sf in (story.get("surfaces") or [])]
-    waiting = [k for k in open_kinds if k in VERDICT_KINDS]
-    if waiting:
-        return RANK_NEEDS_HUMAN, f"awaiting {waiting[0].replace('_', ' ')}"
-    if _questions_for(snap, story):
-        return RANK_NEEDS_HUMAN, "question pending"
-    if story.get("phase") in ATTENTION_PHASES:
-        return RANK_NEEDS_HUMAN, "final review"
-    if story.get("phase") in DONE_PHASES or story.get("status") == "done":
-        return RANK_FINISHED, "done — unacknowledged"
-    if _runs_for(snap, story):
-        return RANK_RUNNING, "running"
-    return RANK_RUNNING, story.get("phase") or "idle"
-
-
-def _pr_links(story: dict) -> list[dict]:
-    repo = story.get("repo") or ""
-    out = []
-    for n in story.get("prs") or ([story["planning_pr"]] if story.get("planning_pr") else []):
-        try:
-            num = int(n)
-        except (TypeError, ValueError):
-            continue
-        out.append({"pr": num,
-                    "url": f"https://github.com/{repo}/pull/{num}" if repo else ""})
-    return out
-
-
-def story_view(snap: dict, story: dict) -> dict:
-    rank, why = classify(snap, story)
-    runs = _runs_for(snap, story)
-    return {
-        "slug": story.get("slug") or "",
-        "story_id": story.get("story_id") or story.get("slug") or "?",
-        "title": story.get("title") or "",
-        "repo": story.get("repo") or "(unassigned)",
-        "phase": story.get("phase") or "—",
-        "status": story.get("status") or "—",
-        "rank": rank,
-        "why": why,
-        "activity": _last_activity(snap, story),
-        # stage sessions: the agents themselves, deep-linked to their surface
-        # when one is open.
-        "runs": [{"stage": r.get("stage") or "stage", "slice": r.get("slice"),
-                  "pr": r.get("pr"), "started": r.get("started")} for r in runs],
-        "surfaces": [{"kind": sf.get("kind") or "surface", "path": sf.get("path") or "",
-                      "pr": sf.get("pr"), "opened": sf.get("opened"),
-                      "stranded": sf.get("stranded") or []}
-                     for sf in (story.get("surfaces") or [])],
-        "questions": _questions_for(snap, story),
-        "prs": _pr_links(story),
-    }
-
-
-def fleet(snap: dict) -> list[dict]:
-    """The whole hierarchy, sorted. Projects inherit the urgency of their most
-    urgent story, so a repo with an escalation cannot hide below a quiet one."""
-    groups: dict[str, list[dict]] = {}
-    for st in snap.get("stories") or []:
-        view = story_view(snap, st)
-        groups.setdefault(view["repo"], []).append(view)
-    projects = []
-    for repo, stories in groups.items():
-        stories.sort(key=lambda s: (s["rank"], -s["activity"], s["story_id"]))
-        projects.append({
-            "repo": repo,
-            "stories": stories,
-            "rank": min(s["rank"] for s in stories),
-            "activity": max(s["activity"] for s in stories),
-            "attention": sum(1 for s in stories if s["rank"] == RANK_NEEDS_HUMAN),
-        })
-    projects.sort(key=lambda p: (p["rank"], -p["activity"], p["repo"]))
-    return projects
 
 
 def fetch_agent_statuses(surfaces: list[dict], base: str | None = None) -> dict:
@@ -720,9 +591,9 @@ def render_tree(task: str, nodes: dict, now: float | None = None) -> str:
 
 
 def orphan_surfaces(snap: dict) -> list[dict]:
-    """Open sessions with no story to live under (ad-hoc notices, asks from a
-    story that has since been closed). They still want a human, so they render
-    above the fleet rather than being dropped."""
+    """Open sessions with no project to live under (ad-hoc notices, loose
+    pages). They still want a human, so they render rather than being
+    dropped."""
     return [sf for sf in (snap.get("surfaces") or [])
             if sf.get("path") and not sf.get("project")]
 
@@ -1802,47 +1673,6 @@ def _rel_time(ts: float, now: float | None = None) -> str:
     return f"{delta // 86400}d ago"
 
 
-def _links_html(view: dict) -> str:
-    bits = []
-    for sf in view["surfaces"]:
-        label = sf["kind"].replace("_", " ")
-        bits.append(f'<a href="{escape(view_href(sf["path"]))}">surface: {escape(label)}</a>')
-        for name in sf.get("stranded") or []:
-            bits.append(f'<a href="/stranded/{escape(name)}">stranded feedback</a>')
-    for pr in view["prs"]:
-        if pr["url"]:
-            bits.append(f'<a href="{escape(pr["url"])}" rel="noreferrer">PR #{pr["pr"]}</a>')
-        else:
-            bits.append(f'<span>PR #{pr["pr"]}</span>')
-    return f'<div class="links">{"".join(bits)}</div>' if bits else ""
-
-
-def _story_html(view: dict, now: float) -> str:
-    cls = {RANK_NEEDS_HUMAN: "needs", RANK_FINISHED: "finished",
-           RANK_RUNNING: "running"}[view["rank"]]
-    agents = []
-    for r in view["runs"]:
-        where = " ".join(x for x in [r.get("slice"),
-                                     f'PR #{r["pr"]}' if r.get("pr") else ""] if x)
-        agents.append(
-            f'<li><span class="stage">{escape(str(r["stage"]))}</span>'
-            f'<span>{escape(where)}</span>'
-            f'<span>{escape(_rel_time(r.get("started") or 0, now))}</span></li>')
-    for q in view["questions"]:
-        agents.append(f'<li><span class="stage">question</span>'
-                      f'<span>{escape(str(q.get("question") or ""))[:160]}</span></li>')
-    agent_html = f'<ul class="agents">{"".join(agents)}</ul>' if agents else ""
-    return (
-        f'<div class="story">'
-        f'<div class="line">'
-        f'<span class="id">{escape(view["story_id"])}</span>'
-        f'<span class="title">{escape(view["title"])}</span>'
-        f'<span class="badge {cls}">{escape(view["why"])}</span>'
-        f'<span class="badge">{escape(view["phase"])}</span>'
-        f'<span class="badge">{escape(_rel_time(view["activity"], now))}</span>'
-        f'</div>{agent_html}{_links_html(view)}</div>')
-
-
 def load_graph() -> tuple[list, dict, dict]:
     """(link records, holders, pages) from disk, for the live page. Tests
     pass their own; every read here degrades to empty, never to an error."""
@@ -1898,7 +1728,6 @@ def render_fleet(snap: dict, now: float | None = None,
     records, holders, pages = graph or ([], {}, {})
     snap = {**snap, "surfaces": conv_mod.collapse(snap.get("surfaces") or [],
                                                   records, holders, pages)}
-    projects = fleet(snap)
     out = []
 
     def _live(sf) -> str:
@@ -2120,15 +1949,9 @@ def render_fleet(snap: dict, now: float | None = None,
         rows = "".join(_orow(sf, str(sf.get("title") or sf.get("task") or sf.get("story")
                                      or sf.get("kind") or "surface")) for sf in orphans)
         out.append(f'<section class="card"><h2>Loose sessions</h2>{rows}</section>')
-    if not projects and not out:
-        out.append('<section class="card"><p class="empty">No stories in flight. '
-                   'Start one with the box above.</p></section>')
-    for p in projects:
-        flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
-                if p["attention"] else "")
-        rows = "".join(_story_html(s, now) for s in p["stories"])
-        out.append(f'<section class="card project"><h2>'
-                   f'<span class="repo">{escape(p["repo"])}</span>{flag}</h2>{rows}</section>')
+    if not out:
+        out.append('<section class="card"><p class="empty">Nothing in flight. '
+                   'Start something with the box above.</p></section>')
     return code_line(snap, own=own, now=now) + "".join(out)
 
 
@@ -2750,12 +2573,6 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
            f'<p class="empty noitems"{"" if not rows and not idle else " hidden"}>'
            'Nothing matches. Clear a filter above.</p>'
            f'{fold}<div class="offbox">{"".join(off)}</div></div>')
-    # Pipeline stories (the PR pipeline's own work) keep their sections.
-    for p in fleet(snap):
-        flag = (f'<span class="badge needs">{p["attention"]} need you</span>'
-                if p["attention"] else "")
-        out += (f'<section class="card project"><h2><span class="repo">{escape(p["repo"])}'
-                f'</span>{flag}</h2>{"".join(_story_html(s, now) for s in p["stories"])}</section>')
     return out
 
 

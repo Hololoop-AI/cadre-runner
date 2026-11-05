@@ -34,7 +34,7 @@ class Cfg:
 
 
 def _checks(**failing):
-    names = ("board writable", "claude on PATH", "gh auth",
+    names = ("board writable", "claude on PATH",
              "review-surface on PATH", "review-surface server")
     return [Check(n, n not in failing, failing.get(n, "")) for n in names]
 
@@ -58,9 +58,8 @@ def test_up_refuses_to_start_when_preflight_fails(monkeypatch, capsys):
     assert ran == {}, "nothing starts after a failed preflight"
 
 
-def test_up_starts_the_server_itself_and_tolerates_a_missing_gh_login(monkeypatch):
-    ran, exit_ = _up(monkeypatch, _checks(**{"gh auth": "not logged in",
-                                             "review-surface server": "nothing answering"}),
+def test_up_starts_the_server_itself(monkeypatch):
+    ran, exit_ = _up(monkeypatch, _checks(**{"review-surface server": "nothing answering"}),
                      config="/tmp/c.toml")
     assert exit_.code == 0
     names = [n for n, _ in ran["children"]]

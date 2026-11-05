@@ -39,9 +39,9 @@ def test_an_old_prompt_version_still_gets_the_form_lines_under_their_old_name():
 def test_a_known_variable_nobody_filled_is_logged_with_both_versions(capsys):
     d, work = scratch(), scratch()
     seeded(d)
-    # a task prompt asking for a pipeline variable a dialogue turn never has
+    # a task prompt asking for a study thread's variable a turn never has
     n = _promote_text(d, "task", tasks.prompt_text(node="task")
-                      + "\nbranch: $feature_branch, home: $HOME\n")
+                      + "\npassage: $passage, home: $HOME\n")
     active = n.active("task")["version"]
     # ...and the prompt file moved on after it: a newer version recorded, unpromoted
     latest = n.new_version("task", "a newer prompt $task", produced_by="seed")
@@ -51,7 +51,7 @@ def test_a_known_variable_nobody_filled_is_logged_with_both_versions(capsys):
     calls = []
     drive(FakeCfg(d), FakeReg(), b, engine.tick(b, actions(), n, d).spawns[0], calls)
     out = capsys.readouterr().out
-    assert (f"prompt for task left $feature_branch unfilled — active version "
+    assert (f"prompt for task left $passage unfilled — active version "
             f"{active[:12]}, latest {latest[:12]}") in out
     # shell in a prompt is not a hole
     assert "$HOME" not in out

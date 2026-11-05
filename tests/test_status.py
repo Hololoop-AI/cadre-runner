@@ -26,35 +26,15 @@ class FakeCfg:
         self.runner = {"poll_interval": 45}
 
 
-class FakeReg:
-    def stories(self):
-        return {
-            "nex-126": {
-                "story_id": "NEX-126", "title": "Assembly stage", "repo": "o/r",
-                "status": "active", "phase": "slices", "planning_pr": 31,
-                "board": {"url": "https://linear.app/x"},
-                "slices": {"draft-pr-gate": {"contract_merged": True, "tests_pr": 43}},
-            },
-        }
-
-
 def test_write_and_shape():
     with tempfile.TemporaryDirectory() as root:
         cfg = FakeCfg(root)
-        run = {"stage": "build", "story": "NEX-126", "slice": "draft-pr-gate",
-               "pr": 50, "started": 1000.0}
-        status.write_status(cfg, FakeReg(), run=run)
+        status.write_status(cfg)
         snap = json.loads((cfg.data_dir / "status" / "status.json").read_text())
-        assert snap["run"] == run
         assert snap["poll_interval"] == 45 and snap["ts"] > 0
-        st = snap["stories"][0]
-        assert st["story_id"] == "NEX-126" and st["phase"] == "slices"
-        assert st["slices"]["draft-pr-gate"] == {"contract": True, "tests": False, "build": False}
-
-        # idle write clears the run marker
-        status.write_status(cfg, FakeReg())
-        snap = json.loads((cfg.data_dir / "status" / "status.json").read_text())
-        assert snap["run"] is None
+        # the PR pipeline's story rows and stage runs are gone from the snapshot
+        assert not {"stories", "run", "runs"} & set(snap)
+        assert snap["surfaces"] == [] and snap["questions"] == []
 
 
 def test_log_tail_bounded():
@@ -68,11 +48,13 @@ def test_log_tail_bounded():
 
 
 def test_never_raises():
-    class BrokenReg:
-        def stories(self):
+    class BrokenCfg:
+        data_dir = Path("/nonexistent")
+
+        @property
+        def runner(self):
             raise RuntimeError("boom")
-    with tempfile.TemporaryDirectory() as root:
-        status.write_status(FakeCfg(root), BrokenReg())  # must not raise
+    status.write_status(BrokenCfg())  # must not raise
 
 
 # ------------------------------------------------------------- fleet page
@@ -80,100 +62,31 @@ def test_never_raises():
 NOW = 1_700_000_000.0
 
 
-class FleetReg:
-    """Synthetic registry: two repos, one of them holding the work that wants a
-    human. Mirrors Registry.stories(status=...) so the escalated story is only
-    visible to a caller that asks for it."""
-
-    ALL = {
-        "esc": {"story_id": "NEX-1", "title": "Escalated thing", "repo": "o/hot",
-                "status": "escalated", "phase": "slices", "planning_pr": 11,
-                "slices": {}},
-        "verdict": {"story_id": "NEX-2", "title": "Awaiting a verdict", "repo": "o/hot",
-                    "status": "active", "phase": "slices", "planning_pr": 12,
-                    "slices": {"a": {"build_pr": 99, "build_merged": False}}},
-        "fin": {"story_id": "NEX-3", "title": "Finished, unacknowledged", "repo": "o/hot",
-                "status": "active", "phase": "done", "slices": {}},
-        "busy": {"story_id": "NEX-4", "title": "Building right now", "repo": "o/hot",
-                 "status": "active", "phase": "slices", "slices": {}},
-        "quiet": {"story_id": "NEX-5", "title": "Nothing happening", "repo": "o/calm",
-                  "status": "active", "phase": "slices", "slices": {}},
-    }
-
-    def stories(self, status="active"):
-        return {k: v for k, v in self.ALL.items() if v["status"] == status}
-
-
 def _fleet_snapshot(root):
-    """A real snapshot: written by status.write_status off the synthetic
-    registry, with a surface session, a question and an in-flight run seeded
-    into the data dir the way the daemon seeds them."""
+    """A real snapshot: written by status.write_status, with surface sessions
+    and a question seeded into the data dir the way the daemon seeds them."""
     cfg = FakeCfg(root)
     surf_dir = cfg.data_dir / "surfaces"
     surf_dir.mkdir(parents=True, exist_ok=True)
     (surf_dir / "sessions.json").write_text(json.dumps({
-        "/a.html": {"kind": "final_review", "story": "verdict", "pr": 99,
-                    "path": "/s/abc", "key": "abc", "open": True, "opened": NOW - 30},
         "/b.html": {"kind": "notice", "story": "busy", "path": "/s/zzz",
                     "key": "zzz", "open": True, "opened": NOW - 10},
         "/c.html": {"kind": "ask", "story": "gone", "path": "/s/orph",
                     "key": "orph", "open": True, "opened": NOW - 5},
     }))
     messages.ask(cfg.data_dir, "esc", "Which way?")
-    runs = [{"stage": "build", "story": "busy", "slice": "a", "pr": 77,
-             "started": NOW - 5}]
-    status.write_status(cfg, FleetReg(), run=runs[0], runs=runs)
+    status.write_status(cfg)
     return json.loads((cfg.data_dir / "status" / "status.json").read_text())
 
 
-def test_escalated_stories_reach_the_snapshot():
+def test_rendering_links_surfaces():
     with tempfile.TemporaryDirectory() as root:
         snap = _fleet_snapshot(root)
-        assert {s["slug"] for s in snap["stories"]} == set(FleetReg.ALL)
-        verdict = next(s for s in snap["stories"] if s["slug"] == "verdict")
-        assert verdict["prs"] == [12, 99]          # planning + slice PRs, flattened
-
-
-def test_hierarchy_groups_and_sorts():
-    with tempfile.TemporaryDirectory() as root:
-        projects = statusd.fleet(_fleet_snapshot(root))
-        assert [p["repo"] for p in projects] == ["o/hot", "o/calm"]
-        hot = projects[0]
-        assert hot["attention"] == 2               # escalated + awaiting a verdict
-        # needs-human first (escalated / open verdict / pending question),
-        # then finished-but-unacknowledged, then quiet in-progress.
-        assert [s["rank"] for s in hot["stories"]] == [0, 0, 1, 2]
-        assert {s["slug"] for s in hot["stories"][:2]} == {"esc", "verdict"}
-        assert [s["slug"] for s in hot["stories"][2:]] == ["fin", "busy"]
-        assert [s["slug"] for s in projects[1]["stories"]] == ["quiet"]
-
-
-def test_finished_outranks_running_and_activity_breaks_ties():
-    with tempfile.TemporaryDirectory() as root:
-        snap = _fleet_snapshot(root)
-        by_slug = {s["slug"]: s for p in statusd.fleet(snap) for s in p["stories"]}
-        assert by_slug["esc"]["rank"] == statusd.RANK_NEEDS_HUMAN
-        assert by_slug["verdict"]["why"] == "awaiting final review"
-        assert by_slug["fin"]["rank"] == statusd.RANK_FINISHED
-        # "busy" is the most recently active story and still sorts below "fin"
-        assert by_slug["busy"]["rank"] == statusd.RANK_RUNNING
-        assert by_slug["busy"]["activity"] > by_slug["fin"]["activity"]
-        hot = statusd.fleet(snap)[0]["stories"]
-        assert hot.index(by_slug["fin"]) < hot.index(by_slug["busy"])
-        # within the needs-human bucket, most recent first
-        needs = [s for s in hot if s["rank"] == statusd.RANK_NEEDS_HUMAN]
-        assert [s["activity"] for s in needs] == sorted(
-            (s["activity"] for s in needs), reverse=True)
-
-
-def test_rendering_links_surfaces_and_prs():
-    with tempfile.TemporaryDirectory() as root:
-        html = statusd.render_home(_fleet_snapshot(root), now=NOW)
-        assert 'href="/s/abc"' in html                 # deep link to the live surface
-        assert 'https://github.com/o/hot/pull/99' in html
-        assert 'href="/s/orph"' in html                # orphan session still reachable
+        assert [q["story"] for q in snap["questions"]] == ["esc"]
+        html = statusd.render_home(snap, now=NOW)
+        assert 'href="/s/orph"' in html                # every open session reachable
         assert 'data-item="page:' in html             # a page with no task is its own item
-        assert "o/hot" in html and "o/calm" in html
+        assert "github.com" not in html
         # New work on the home page (the redesign) — its folder completes
         # from this machine, so no absolute path is typed by hand.
         assert f'action="{statusd.TASKS_PATH}"' in html and 'aria-controls="worksug"' in html
@@ -279,9 +192,9 @@ def test_home_and_partial_are_served():
         srv = _Server(Path(root) / "status")
         try:
             code, body = srv.get("/")
-            assert code == 200 and "+ New work" in body and "o/hot" in body
+            assert code == 200 and "+ New work" in body and "/s/orph" in body
             code, frag = srv.get("/?partial=1")
-            assert code == 200 and "<html" not in frag and "o/hot" in frag
+            assert code == 200 and "<html" not in frag and "/s/orph" in frag
             assert frag.index("Running now") < frag.index(statusd.PARTIAL_SPLIT)
         finally:
             srv.close()
@@ -447,14 +360,13 @@ def test_tick_never_consumes_an_external_session(monkeypatch=None):
         orig_outbox = surface_mod._read_outbox
         orig_sweep = surface_mod._sweep_stale
         orig_server = surface_mod._ensure_server
-        surface_mod._consume = lambda *a: consumed.append(a[4])
+        surface_mod._consume = lambda *a: consumed.append(a[3])
         surface_mod._read_outbox = lambda cfg: [{"key": "extkey"},
                                                 {"key": "taskkey"}]
         surface_mod._sweep_stale = lambda *a: None
         surface_mod._ensure_server = lambda *a: None
         try:
-            surface_mod._tick(cfg, types.SimpleNamespace(data={"stories": {}}),
-                              None, lambda *a: None)
+            surface_mod._tick(cfg, types.SimpleNamespace(data={}), lambda *a: None)
         finally:
             surface_mod._consume = orig_consume
             surface_mod._read_outbox = orig_outbox
@@ -695,13 +607,9 @@ def test_stranded_rows_carry_a_loud_badge_and_the_dead_letter_link():
     assert "decided — nothing needs you" not in html
 
 
-def test_a_stranded_story_surface_ranks_the_story_as_needing_you():
-    story = {"slug": "nex-9", "repo": "o/r", "status": "active", "phase": "slices",
-             "surfaces": [{"kind": "notice", "path": "/session/n1",
-                           "stranded": ["20260921-5-n.json"]}]}
-    snap = {"stories": [story]}
-    assert statusd.classify(snap, story) == (statusd.RANK_NEEDS_HUMAN,
-                                             "feedback stranded")
+def test_a_stranded_loose_page_links_its_dead_letter():
+    snap = {"surfaces": [{"kind": "notice", "path": "/session/n1", "key": "n1",
+                          "open": True, "stranded": ["20260921-5-n.json"]}]}
     html = statusd.render_fleet(snap, now=0)
     assert 'href="/stranded/20260921-5-n.json"' in html
 
@@ -714,7 +622,7 @@ def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
         long_answer = "keep the fold per project " + "y" * 2500
         (sdir / "20260921-1-d7.json").write_text(json.dumps({
             "at": 0, "artifact": "/x/hitl-d7.html",
-            "reason": "external session with no task id and no PR to mirror to",
+            "reason": "external session with no task id",
             "session": {"title": "d7 — workspace", "path": "/session/d7"},
             "prompts": [{"prompt": long_answer, "tag": "p", "text": "Which grouping?"}],
             "raw": '{"prompts": []}'}))
@@ -725,7 +633,7 @@ def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
         try:
             code, body = srv.get("/stranded/20260921-1-d7.json")
             assert code == 200 and long_answer in body       # nothing truncated
-            assert "Which grouping?" in body and "no PR to mirror to" in body
+            assert "Which grouping?" in body and "no task id" in body
             assert 'href="/view/d7"' in body
             for bad in ("/stranded/..%2Fsecret.json", "/stranded/nope.json",
                         "/stranded/.hidden.json", "/stranded/x.txt"):
