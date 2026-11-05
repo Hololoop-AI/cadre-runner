@@ -38,7 +38,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from . import engine_seam, library, projects, seed_nodes
+from . import engine_seam, library, projects, seed_nodes, wake
 from .blackboard import Board
 from .nodes import Nodes, version_id
 from .registry import slugify
@@ -234,6 +234,7 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
                      **picked})
     finally:
         board.close()
+    wake.notify(cfg, "task")
     return task_id
 
 
@@ -539,6 +540,8 @@ def write_handoff(cfg, reg, task_id: str, node: str, page: str, notes: list[dict
 def _command(cfg, task_id: str, payload: dict) -> dict:
     board = Board(engine_seam.board_path(cfg))
     try:
-        return board.write(NAMESPACE, TOPIC, key_for(task_id), "command", payload)
+        written = board.write(NAMESPACE, TOPIC, key_for(task_id), "command", payload)
     finally:
         board.close()
+    wake.notify(cfg, "command")
+    return written

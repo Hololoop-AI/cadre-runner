@@ -57,6 +57,7 @@ from runnerlib import projects as projects_mod
 from runnerlib import recent as recent_mod
 from runnerlib import session_tree as tree_mod
 from runnerlib import surface as surface_mod
+from runnerlib import wake as wake_mod
 from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
 
 
@@ -113,6 +114,9 @@ MACHINE = backends_mod.machine_name(_CFG.runner if _CFG else {})
 # request from the socket the request came in on (Handler._backends).
 BACKENDS = backends_mod.configured(_CFG.raw if _CFG else {})
 BLOCKED = {"/shutdown"}
+# The page server's "send" endpoint: a verdict or annotations queued for the
+# session — the one proxied request the daemon has to act on.
+SEND_RE = re.compile(r"^/api/[^/]+/prompts$")
 HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "host",
                "proxy-authenticate", "proxy-authorization", "te", "trailers",
                "upgrade"}
@@ -3958,8 +3962,12 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.send_error(502, "review-surface is not running")
             return
-        self.send_response(resp.status)
         upstream_path = self.path.split("?", 1)[0]
+        if self.command == "POST" and resp.status < 300 and SEND_RE.match(upstream_path):
+            # the driver's send is now queued in the page server; ring the
+            # daemon so it consumes it now, not on its next timed pass
+            wake_mod.notify(_CFG, "send")
+        self.send_response(resp.status)
         for k, v in resp.headers.items():
             if k.lower() not in HOP_HEADERS:
                 v = framable_header(upstream_path, k, v)
@@ -4597,19 +4605,32 @@ class Handler(BaseHTTPRequestHandler):
     do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = _route
 
 
-def main():
-    # One server per bind address: loopback for this machine, the tailnet
-    # address for fleets on other machines. Any that fails to bind stops the whole process —
-    # half-listening would look like a problem on the other machine.
-    servers = [ThreadingHTTPServer((addr, PORT), Handler) for addr in BIND]
-    print(f"statusd: serving {STATUS_DIR} on {', '.join(BIND)} port {PORT}, "
+def start_servers(bind=None, port=None) -> list:
+    """Bind every listen address and serve each on its own thread; return the
+    servers. One server per bind address: loopback for this machine, the
+    tailnet address for fleets on other machines. Any that fails to bind
+    stops the whole process — half-listening would look like a problem on the
+    other machine.
+
+    `pipeline.py serve` calls this and then runs the engine loop on the main
+    thread: one process is both the API and the thing that starts sessions,
+    so a request is acted on in the same process that took it."""
+    servers = [ThreadingHTTPServer((addr, port or PORT), Handler) for addr in (bind or BIND)]
+    print(f"statusd: serving {STATUS_DIR} on {', '.join(bind or BIND)} port {port or PORT}, "
           f"proxying the rest to {SURFACE}"
           + f"; machine {MACHINE}; other backends: "
           + (", ".join(b["url"] for b in BACKENDS[1:]) or "none"),
           file=sys.stderr)
-    for srv in servers[1:]:
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-    servers[0].serve_forever()
+    for srv in servers:
+        threading.Thread(target=srv.serve_forever, daemon=True,
+                         name=f"api {srv.server_address[0]}").start()
+    return servers
+
+
+def main():
+    """The API alone, as `cadre-statusd.service` ran it before `serve`."""
+    start_servers()
+    threading.Event().wait()
 
 
 if __name__ == "__main__":

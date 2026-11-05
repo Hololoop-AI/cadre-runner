@@ -1,4 +1,4 @@
-"""`pipeline.py up`: the page server, the fleet page and the daemon, in the
+"""`pipeline.py up`: the page server and the backend (fleet page, API and engine loop), in the
 foreground of one terminal, started from the shell preflight just checked.
 
 No claude, no network, no real review-surface.
@@ -64,18 +64,19 @@ def test_up_starts_the_server_itself_and_tolerates_a_missing_gh_login(monkeypatc
                      config="/tmp/c.toml")
     assert exit_.code == 0
     names = [n for n, _ in ran["children"]]
-    assert names == ["surface", "statusd", "daemon"]
+    # the API and the engine loop are one process now (`pipeline.py serve`)
+    assert names == ["surface", "backend"]
     surface_argv = ran["children"][0][1]
     assert surface_argv[1:] == ["server", "--port", "4387"]
-    daemon = ran["children"][2][1]
-    assert daemon[0] == sys.executable and daemon[-3:] == ["--config", "/tmp/c.toml", "run"]
+    backend = ran["children"][1][1]
+    assert backend[0] == sys.executable and backend[-3:] == ["--config", "/tmp/c.toml", "serve"]
     assert ran["env"]["CADRE_CONFIG"] == "/tmp/c.toml"
     assert ran["env"]["REVIEW_SURFACE_NO_OPEN"] == "1"
 
 
 def test_up_uses_a_page_server_that_is_already_running(monkeypatch):
     ran, _ = _up(monkeypatch, _checks(), server_running=True)
-    assert [n for n, _ in ran["children"]] == ["statusd", "daemon"]
+    assert [n for n, _ in ran["children"]] == ["backend"]
 
 
 def test_up_gives_the_page_server_the_study_button_the_service_unit_does(monkeypatch):
