@@ -10,7 +10,7 @@ DEFAULTS = {
         "data_dir": "~/.local/state/pipeline-runner",
         "skills_source": "~/dev-config/ai-workflow-config/skills",
         "workflows_source": "",   # cadre-workflows/workflows dir; empty = spec-writer node not used
-        "max_concurrent_runs": 4,  # detached stage sessions; beyond it, events requeue (backpressure)
+        "max_concurrent_runs": 8,  # detached stage sessions; beyond it, events requeue (backpressure)
         # The handle a driver types to summon the agent. It is the BOT's name,
         # not a product name — a corporate deployment runs under its own
         # account and would otherwise be unsummonable.
@@ -39,7 +39,10 @@ DEFAULTS = {
         "bin": "claude",
         "effort": "high",
         "permission_mode": "bypass",
-        "timeout_seconds": 7200,
+        # Wall-clock ceiling per session turn; 0 = none. Overnight loops are
+        # normal work, and a hung session is stopped by hand or by another
+        # session, not by an arbitrary clock.
+        "timeout_seconds": 0,
         "default_model": "opus",
     },
     "limits": {
