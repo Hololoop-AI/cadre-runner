@@ -122,7 +122,7 @@ HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "host",
                "upgrade"}
 TYPES = {".html": "text/html; charset=utf-8", ".json": "application/json",
          ".css": "text/css", ".js": "text/javascript", ".png": "image/png",
-         ".svg": "image/svg+xml"}
+         ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
 
 HOME_PATH = "/"
 TASKS_PATH = "/tasks"
@@ -137,6 +137,11 @@ ITEMS_PATH = "/items"
 # rows on the fleet's "Recently returned" card, and all the API ships of them
 RECENT_LIMIT = 6
 STREAM_PATH = "/fleet/events"
+# The React fleet UI (web/): its build output, served under /app/. Any path
+# under it that is not a built file gets index.html, so the app's own routes
+# survive a reload.
+APP_PATH = "/app"
+APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
 # driver with nothing to click but the browser's back button.
@@ -3743,6 +3748,19 @@ class Handler(BaseHTTPRequestHandler):
             return p
         return None
 
+    def _serve_app(self, rel: str):
+        root = APP_DIR.resolve()
+        target = (root / rel).resolve() if rel else root / "index.html"
+        if not target.is_relative_to(root):
+            self.send_error(404)
+            return
+        if not target.is_file():
+            target = root / "index.html"
+        if not target.is_file():
+            self.send_error(404, "the React UI is not built — cd web && npm run build")
+            return
+        self._serve_static(target)
+
     def _serve_static(self, p: Path):
         data = p.read_bytes()
         self.send_response(200)
@@ -4346,6 +4364,10 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(raw_query)
         if path == TASKS_PATH and self.command == "POST":
             self._new_task()
+            return
+        if (path == APP_PATH or path.startswith(APP_PATH + "/")) \
+                and self.command in ("GET", "HEAD"):
+            self._serve_app(path[len(APP_PATH):].lstrip("/"))
             return
         if path == REPAIR_PATH and self.command == "POST":
             self._repair()
