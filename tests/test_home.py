@@ -448,6 +448,17 @@ def test_an_item_draws_its_tree_source_first_each_task_under_what_started_it():
     assert "M7,12 V24" not in rows[3][2]                         # b is the last: lane ends
 
 
+def test_an_unopened_page_gets_its_own_dot_and_an_opened_head_stays_blue():
+    statuses = {"x": {"unseen": True}, "a2": {"unseen": False}}
+    html = statusd.render_fleet({"surfaces": GRAPH_PAGES}, NOW, tree=GRAPH_TREE, by_item=True,
+                                graph=([], {}, {}), statuses=statuses)
+    dots = {t: d for t, d, _ in _graph_rows(html)}
+    assert dots["A1 page"] == "new"                  # never opened: the green dot
+    assert dots["A round 2"] == "you"                # opened, not answered: still blue
+    assert dots["B"] == "work"                       # a working agent keeps amber
+    assert ".n.new{fill:var(--ok)" in statusd._HOME_CSS
+
+
 def test_a_branch_with_everything_answered_draws_as_one_row_and_its_pages_stay_in_it():
     statuses = {k: {"status": "ended"} for k in ("a2", "x")}
     html = statusd.render_fleet({"surfaces": GRAPH_PAGES}, NOW, tree=GRAPH_TREE, by_item=True,
