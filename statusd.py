@@ -1496,6 +1496,7 @@ body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-
 .items .grow .e{stroke:var(--muted);stroke-width:1.5;fill:none;opacity:.7}
 .items .grow .n{fill:var(--card);stroke:var(--muted);stroke-width:1.5}
 .items .grow .n.you{fill:var(--accent);stroke:var(--accent)}
+.items .grow .n.new{fill:var(--ok);stroke:var(--ok)}
 .items .grow .n.work{fill:var(--run);stroke:var(--run)}
 .items .grow .n.bad{fill:var(--hot);stroke:var(--hot)}
 .items .grow.done a.t{color:var(--muted)}
@@ -2497,9 +2498,10 @@ def _graph(root: str, pages: list[dict], tree: dict, kids: dict, statuses: dict,
     its page linked) after a small SVG cell; the cells meet edge to edge, so
     the lines read as one drawing.
 
-    The dot says where it stands: filled blue, a page you have not responded
-    to (a head); amber, an agent working; red, a run that failed or ended
-    without a page; hollow, answered or done. A branch where everything is
+    The dot says where it stands: filled green, a page you have not opened
+    yet; filled blue, a page you have opened but not responded to (a head);
+    amber, an agent working; red, a run that failed or ended without a page;
+    hollow, answered or done. A branch where everything is
     answered and nothing runs draws as one hollow row, "+N" for what it
     holds; the root always draws."""
     sf_of: dict[str, dict] = {}
@@ -2514,6 +2516,9 @@ def _graph(root: str, pages: list[dict], tree: dict, kids: dict, statuses: dict,
             return "work"
         if t in endings or (t in bare and pageless_phrase(bare[t], now)):
             return "bad"
+        if t in sf_of and (statuses.get(conv_mod.key_of(sf_of[t]) or "") or {}).get(
+                "unseen") is True:
+            return "new"
         if t in sf_of and not _answered(sf_of[t], statuses):
             return "you"
         return "done"
