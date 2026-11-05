@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -31,6 +32,7 @@ from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib import tasks as tasks_mod
+from runnerlib import wake as wake_mod
 from runnerlib.dispatcher import AGENT_MARKER
 from runnerlib import gh
 from runnerlib.gh import NOT_MODIFIED, GitHub
@@ -244,8 +246,7 @@ def _up_children(cfg, args, start_server: bool) -> list[tuple[str, list[str]]]:
         port = urlparse(surface_mod.upstream()).port or 4387
         out.append(("surface", [shutil.which(surface_mod.CLI) or surface_mod.CLI,
                                 "server", "--port", str(port)]))
-    out.append(("statusd", [sys.executable, str(here / "statusd.py")]))
-    out.append(("daemon", [sys.executable, str(here / "pipeline.py"), *conf, "run"]))
+    out.append(("backend", [sys.executable, str(here / "pipeline.py"), *conf, "serve"]))
     return out
 
 
@@ -347,6 +348,56 @@ def cmd_up(cfg, args):
     sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))
 
 
+def _run_pids(reg) -> list[int]:
+    """The wrapper pid of every run in flight — stage runs and task turns."""
+    runs = [r for _s, _id, r in runs_mod.all_active(reg)]
+    runs += [r for rec in tasks_mod.records(reg).values()
+             for r in (rec.get("active_runs") or {}).values()]
+    return [r["pid"] for r in runs if r.get("pid")]
+
+
+def _wait_for_work(listener, until: float, stopping) -> bool:
+    """The gap between passes. True as soon as work is pushed
+    (runnerlib/wake.py: the API or CLI rang, a run exited, a stop signal
+    landed); False when `until` arrives with nothing pushed. Without a
+    listener (the socket could not be bound) it is the plain timed sleep."""
+    if listener is None:
+        while not stopping and time.time() < until:
+            time.sleep(min(1.0, max(0.0, until - time.time())))
+        return False
+    while not stopping and time.time() < until:
+        if listener.wait(until - time.time()):
+            return True
+    return False
+
+
+def cmd_serve(cfg, args):
+    """The backend as one process: the API's request threads (statusd.py)
+    beside the engine loop on the main thread. A request that hands over
+    work rings the loop through the same socket an outside process would,
+    so the loop needs no second way in; it just no longer waits on a
+    separate service to exist.
+
+    The loop keeps the main thread because Python delivers signals only
+    there: a stop still finishes the pass in hand. The API threads are
+    daemon threads and end with it."""
+    if args.config:
+        # statusd reads its config once, at import
+        os.environ["CADRE_CONFIG"] = str(Path(args.config).resolve())
+    import statusd
+    statusd.start_servers()
+    try:
+        cmd_run(cfg, args)
+    except SystemExit as e:
+        if e.code in (None, 0):
+            raise
+        # The API has always come up whatever state the engine is in, so the
+        # fleet can still be read (and show what is wrong) from another
+        # machine. An engine that refuses to start leaves it serving.
+        log(f"engine not running ({e.code}) — the API stays up; fix and restart")
+        threading.Event().wait()
+
+
 def cmd_run(cfg, args, single_pass=False):
     ghc = GitHub(cfg.data_dir / "etags.json")
     board = board_mod.make_board(cfg.intake)
@@ -367,7 +418,7 @@ def cmd_run(cfg, args, single_pass=False):
     # A stop (systemctl stop/restart, `up` shutting down, a closed terminal)
     # finishes the pass in hand: killed mid-pass, a turn's reap or a registry
     # save is lost. The handler only raises a flag; the loop reads it at the
-    # top of the next pass and between the 1 s steps of its sleep.
+    # top of the next pass; the wait between passes ends on the signal itself.
     stopping = []
 
     def _stop(signum, _frame):
@@ -375,20 +426,36 @@ def cmd_run(cfg, args, single_pass=False):
 
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _stop)
+    listener = None
+    if not single_pass:
+        try:
+            listener = wake_mod.Listener(cfg)
+        except OSError as e:
+            log(f"wake socket unavailable ({e}) — timed passes only")
+    # Only GitHub and the tracker are polled, so only they run on the timer.
+    # A pass that work was pushed for does everything local at once and
+    # leaves them for when the timer is due — they are the reason a pass
+    # cannot simply run on every push.
+    remote_due = 0.0
     while True:
         if stopping:
             log(f"stopped ({signal.Signals(stopping[0]).name}) — the last pass finished")
+            listener and listener.close()
             return
         # reload each pass so stories registered by `start` mid-run are picked
         # up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
         _consume_requests(cfg, reg, ghc)
-        if board and board.enabled:
+        remote = time.time() >= remote_due
+        if remote:
+            remote_due = time.time() + cfg.runner["poll_interval"]
+        if remote and board and board.enabled:
             try:
                 _board_intake(cfg, reg, board)
             except Exception as e:  # tracker trouble must not stall the pipeline
                 log(f"ERROR board intake: {e}")
-        for slug, story in list({**reg.stories("intaking"), **reg.stories()}.items()):
+        for slug, story in list({**reg.stories("intaking"), **reg.stories()}.items()
+                                if remote else ()):
             try:
                 _poll_story(cfg, reg, ghc, slug, story)
             except Exception as e:  # keep the daemon alive; surface in logs
@@ -431,11 +498,14 @@ def cmd_run(cfg, args, single_pass=False):
         if single_pass:
             return
         try:
-            wake = time.time() + cfg.runner["poll_interval"]
-            while not stopping and time.time() < wake:
-                time.sleep(min(1.0, max(0.0, wake - time.time())))
+            if listener:
+                # Rings from during the pass stay queued on purpose: the pass
+                # may have read the board before that work landed.
+                listener.watch(_run_pids(reg))
+            _wait_for_work(listener, remote_due, stopping)
         except KeyboardInterrupt:
             log("stopped")
+            listener and listener.close()
             return
 
 
@@ -2038,7 +2108,9 @@ def main():
     p.add_argument("--variant", choices=["change-spec", "spec-as-source"])
     sub.add_parser("up", help="start the page server, the fleet page and the daemon "
                               "in this terminal; Ctrl-C stops all three")
-    sub.add_parser("run", help="the daemon: poll and dispatch until stopped")
+    sub.add_parser("run", help="the engine loop alone, without the API (see `serve`)")
+    sub.add_parser("serve", help="the backend: the API and fleet page plus the engine "
+                                 "loop, in one process")
     sub.add_parser("once", help="one daemon pass, then exit — it dispatches for real")
     sub.add_parser("status", help="print registered dialogue tasks and pipeline stories")
     sub.add_parser("board-check", help="validate board-intake config against the live tracker")
@@ -2168,6 +2240,7 @@ def main():
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
+     "serve": cmd_serve,
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
 
 
