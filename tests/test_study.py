@@ -112,7 +112,7 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
     tasks.record(reg, "task-parent").update(cwd=str(work), session_id="sess-parent")
     replies, started = [], []
     monkeypatch.setattr(surface, "agent_reply",
-                        lambda cfg, reg, ghc, log, path, msg: replies.append(msg))
+                        lambda cfg, reg, log, path, msg: replies.append(msg))
     monkeypatch.setattr(study_thread, "start",
                         lambda cfg, reg, topic, task, page, passage="", cwd="", log=None:
                         started.append((topic, task, page, passage)) or {"id": "thread-x"})
@@ -120,7 +120,7 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
     meta = {"kind": "task", "task": "task-parent", "cwd": str(work), "open": True}
 
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
             note("Study: why is the lock taken here?", "with reg.lock(): reg.save()")))
     assert started == [("why is the lock taken here?", "task-parent", art,
                         "with reg.lock(): reg.save()")]
@@ -129,7 +129,7 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
 
     # beside an ordinary annotation: the thread opens, the round gets only the rest
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
             note("study: the board", "Board"), note("drop the second table")))
     assert [c["feedback"] for c in commands(cfg)] == ["drop the second table"]
     assert len(started) == 2
@@ -138,7 +138,7 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
     monkeypatch.setattr(study_thread, "start", lambda *a, **k: (_ for _ in ()).throw(
         ValueError("task 'task-parent' has no working directory to study in")))
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta,
                              poll_json(note("study: x")))
     assert replies[-1].startswith("Study not started: task 'task-parent' has no working")
 

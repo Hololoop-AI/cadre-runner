@@ -7,7 +7,7 @@ import json
 import unittest
 from pathlib import Path
 
-from runnerlib import dispatcher, surface
+from runnerlib import surface
 from runnerlib.surface import _classify_prompts, _parse_feedback
 
 
@@ -19,15 +19,15 @@ def poll_line(status, prompts):
 class ParseTest(unittest.TestCase):
     def test_decision_and_free_text(self):
         raw = poll_line("feedback", [
-            {"uid": "1", "prompt": "CADRE_DECISION gate=risk_hold story=nex-158 "
-                                   "pr=124 verdict=approve", "tag": "choice"},
+            {"uid": "1", "prompt": "CADRE_DECISION gate=task story=t-1 task=t-1 "
+                                   "verdict=approve", "tag": "choice"},
             {"uid": "2", "prompt": "this section worries me a little", "tag": "div"},
         ])
         payload, structured, free = _parse_feedback(raw)
         self.assertEqual(payload["status"], "feedback")
-        self.assertEqual(structured, [{"type": "decision", "gate": "risk_hold",
-                                       "story": "nex-158", "pr": 124,
-                                       "verdict": "approve", "uid": "1",
+        self.assertEqual(structured, [{"type": "task_decision", "gate": "task",
+                                       "story": "t-1", "task": "t-1",
+                                       "verdict": "approve", "text": "", "uid": "1",
                                        "selector": "", "tag": "choice",
                                        "anchor": ""}])
         self.assertEqual(free, [{"text": "this section worries me a little",
@@ -79,27 +79,8 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(structured[0]["selector"], "form")
 
 
-class QuoteTest(unittest.TestCase):
-    """The anchor rides the PR mirror as a blockquote, on its own budget."""
-
-    def test_quote_is_a_blockquote_on_every_line(self):
-        self.assertEqual(surface._quote("one\ntwo"), "> one\n> two\n\n")
-
-    def test_no_anchor_means_no_quote(self):
-        self.assertEqual(surface._quote(""), "")
-
-    def test_anchor_truncates_separately_from_the_driver_text(self):
-        long_anchor = "x" * 900
-        driver_text = "y" * 1400
-        quoted = surface._quote(long_anchor)
-        self.assertLessEqual(len(quoted), surface.ANCHOR_LIMIT + 8)
-        # the driver's own 1500-char budget is untouched by a huge anchor
-        body = f"{quoted}{driver_text[:1500]}"
-        self.assertIn("y" * 1400, body)
-
-
 class MirrorTest(unittest.TestCase):
-    """What actually reaches the board and the PR for one annotated note."""
+    """What actually reaches the board for one annotated note."""
 
     def _consume(self, prompts, meta):
         import tempfile
@@ -117,14 +98,14 @@ class MirrorTest(unittest.TestCase):
             surface.board_events.emit = lambda kind, **kw: events.append((kind, kw))
             surface._run_cli = lambda *a, **kw: poll_line("feedback", prompts)
             try:
-                surface._consume(cfg, None, FakeGH(), lambda m: None,
+                surface._consume(cfg, None, lambda m: None,
                                  str(Path(td) / "a.html"), meta)
             finally:
                 surface.board_events.emit = orig_emit
                 surface._run_cli = orig_cli
         return events, comments
 
-    def test_board_event_and_pr_comment_carry_the_anchor(self):
+    def test_board_event_carries_the_anchor_and_nothing_reaches_github(self):
         events, comments = self._consume(
             [{"uid": "9", "prompt": "narrow this", "tag": "p", "selector": "p#x",
               "text": "any well-formed row is accepted"}],
@@ -133,11 +114,8 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(kinds["surface_feedback"]["anchor"],
                          "any well-formed row is accepted")
         self.assertEqual(kinds["surface_feedback"]["selector"], "p#x")
-        body = comments[0][2]
-        self.assertTrue(body.startswith(dispatcher.DRIVER_PREFIX),
-                        "the mirror must still read as a driver summon")
-        self.assertIn("> any well-formed row is accepted", body)
-        self.assertIn("narrow this", body)
+        # a page that still names a PR is not mirrored to it any more
+        self.assertEqual(comments, [])
 
 
 class AgentReplyTest(unittest.TestCase):
@@ -148,9 +126,9 @@ class AgentReplyTest(unittest.TestCase):
         import types
         from pathlib import Path
         cfg = types.SimpleNamespace(data_dir=Path(td))
-        art = surface._dir(cfg) / "spec-nex-1.html"
+        art = surface._dir(cfg) / "notice-nex-1.html"
         art.write_text("<html></html>")
-        surface._save_sessions(cfg, {str(art): {"kind": "spec_review",
+        surface._save_sessions(cfg, {str(art): {"kind": "notice",
                                                 "open": open_session,
                                                 "story": "nex-1"}})
         return cfg, art
@@ -172,7 +150,7 @@ class AgentReplyTest(unittest.TestCase):
             surface.available = lambda: True
             surface.board_events.emit = lambda kind, **kw: events.append((kind, kw))
             try:
-                sent = surface.agent_reply(cfg, None, None, lambda m: None,
+                sent = surface.agent_reply(cfg, None, lambda m: None,
                                            art, "round 2 done")
             finally:
                 surface._run_cli, surface.available = orig_cli, orig_avail
@@ -191,10 +169,10 @@ class AgentReplyTest(unittest.TestCase):
             orig_avail = surface.available
             surface.available = lambda: True
             try:
-                self.assertFalse(surface.agent_reply(cfg, None, None,
+                self.assertFalse(surface.agent_reply(cfg, None,
                                                      lambda m: None, art, "hi"))
                 surface.available = lambda: False
-                self.assertFalse(surface.agent_reply(cfg, None, None,
+                self.assertFalse(surface.agent_reply(cfg, None,
                                                      lambda m: None, art, "hi"))
             finally:
                 surface.available = orig_avail
@@ -210,7 +188,7 @@ class AgentReplyTest(unittest.TestCase):
             orig_cli, orig_avail = surface._run_cli, surface.available
             surface._run_cli, surface.available = boom, lambda: True
             try:
-                self.assertFalse(surface.agent_reply(cfg, None, None,
+                self.assertFalse(surface.agent_reply(cfg, None,
                                                      lambda m: None, art, "hi"))
             finally:
                 surface._run_cli, surface.available = orig_cli, orig_avail
@@ -225,15 +203,9 @@ class TemplateTest(unittest.TestCase):
         import types
         from runnerlib import surface
         cfg = types.SimpleNamespace(data_dir=tmp)
-        hold = surface.author_risk_hold(
-            cfg, "nex-158", 123, {"title": "t", "body": "Risk: high\nbecause"},
-            "contracts", files=[{"filename": "a.py", "additions": 1, "deletions": 2}])
         ask = surface.author_question(cfg, {"ticket": "nex-1-abc", "story": "nex-1",
                                             "question": "q?", "recommendation": "r"})
-        spec = surface.author_spec_review(
-            cfg, "nex-158", 78, {"title": "plan", "body": "narrative"},
-            [{"path": "spec/a.md", "text": "# slice a\ncontract"}])
-        return hold.read_text(), ask.read_text(), spec.read_text()
+        return (ask.read_text(),)
 
     def test_onsubmit_attributes_have_no_double_quotes(self):
         import re
@@ -292,7 +264,7 @@ def _strand_consume(tmp_path, monkeypatch, meta, prompts, status="feedback"):
     art = tmp_path / "hitl-d7-workspace.html"
     art.write_text("<!doctype html>")
     sf._save_sessions(Cfg(), {str(art): {"open": True, **meta}})
-    sf._consume(Cfg(), None, None, lambda m: None, str(art), meta)
+    sf._consume(Cfg(), None, lambda m: None, str(art), meta)
     return events, Cfg(), str(art)
 
 
@@ -314,7 +286,7 @@ def test_feedback_with_no_task_and_no_pr_is_dead_lettered_verbatim(tmp_path, mon
     assert dead.parent == sf.stranded_dir(cfg) and dead.exists()
     rec = json.loads(dead.read_text())
     assert rec["prompts"] == prompts          # verbatim — the 3000-char tail too
-    assert rec["artifact"] == art and "no PR" in rec["reason"]
+    assert rec["artifact"] == art and "no task id" in rec["reason"]
     assert rec["raw"].startswith("{")
     # the existing board record still fires; the guard adds, never replaces
     assert "surface_feedback" in [k for k, _ in events]
@@ -323,37 +295,24 @@ def test_feedback_with_no_task_and_no_pr_is_dead_lettered_verbatim(tmp_path, mon
     assert row["stranded"] == [dead.name]
 
 
-def test_routed_feedback_is_not_stranded(tmp_path, monkeypatch):
-    """A PR-mirrored page and a token-only batch both have an owner."""
+def test_routed_feedback_is_not_stranded():
+    """A task page and a token-only batch both have an owner; a page that
+    only names a PR does not any more — nothing mirrors to GitHub."""
     from runnerlib import surface as sf
-
-    class GH:
-        def comment(self, *a):
-            pass
-    events = []
-    monkeypatch.setattr(sf.board_events, "emit",
-                        lambda kind, **kw: events.append(kind))
-    monkeypatch.setattr(sf, "_run_cli", lambda *a, **kw: poll_line(
-        "feedback", [{"prompt": "narrow this"}]))
-
-    class Cfg:
-        data_dir = tmp_path
-    sf._consume(Cfg(), None, GH(), lambda m: None, str(tmp_path / "a.html"),
-                {"kind": "spec_review", "story": "s", "pr": 3, "repo": "o/r"})
-    assert "surface_stranded" not in events
-    assert not sf.stranded_dir(Cfg()).exists() or not any(sf.stranded_dir(Cfg()).iterdir())
-
+    assert sf._strand_reason({"kind": "task", "task": "t-1"}, [{"text": "x"}]) == ""
     # decision/answer tokens carry their own routing, so no strand either
     assert sf._strand_reason({"kind": "ask"}, []) == ""
     assert sf._strand_reason({"kind": "external"}, [{"text": "  "}]) == ""
+    assert sf._strand_reason({"kind": "notice", "pr": 3, "repo": "o/r"},
+                             [{"text": "narrow this"}])
 
 
 def test_task_pages_strand_only_without_a_task_id():
     from runnerlib import surface as sf
     assert sf._strand_reason({"kind": "task", "task": "t-1"}, [{"text": "x"}]) == ""
     assert "no task id" in sf._strand_reason({"kind": "task"}, [])
-    # a notice has a story but nothing mirrors its notes — the ask's rule
-    # (no task id, no PR) calls that stranded too
+    # a notice has a story but nothing routes its notes — no task id, so
+    # stranded too
     assert sf._strand_reason({"kind": "notice", "story": "s"}, [{"text": "x"}])
 
 
@@ -546,7 +505,7 @@ def test_attach_refuses_a_page_that_already_has_an_owner(tmp_path, monkeypatch):
     import pytest
     for meta, status, why in (
             ({"kind": "task", "task": "t-9"}, None, "dialogue t-9"),
-            ({"kind": "risk_hold"}, None, "pipeline"),
+            ({"kind": "notice"}, None, "pipeline"),
             ({"kind": "external"}, {"status": "open", "presence": "working"},
              "outside the runner")):
         sf, cfg, _, art, _, _ = _attach_env(tmp_path, monkeypatch, meta, status)
@@ -634,7 +593,7 @@ def test_a_tool_that_cannot_start_is_logged_not_read_as_an_empty_reply(tmp_path,
     sf._save_sessions(cfg, {str(art): {"open": True}})
     logs = []
 
-    sf._consume(cfg, None, None, logs.append, str(art), {"open": True})
+    sf._consume(cfg, None, logs.append, str(art), {"open": True})
     sf.end_session(cfg, str(art), logs.append)
 
     assert any("consume poll failed for page.html" in m and "exited 127" in m
@@ -653,7 +612,7 @@ def test_a_session_that_is_over_is_an_answer_even_on_a_non_zero_exit(tmp_path, m
     sf._save_sessions(cfg, {str(art): {"open": True}})
 
     assert "No active Review Surface session" in sf._run_cli(["poll", str(art)])
-    sf._consume(cfg, None, None, lambda m: None, str(art), {"open": True})
+    sf._consume(cfg, None, lambda m: None, str(art), {"open": True})
     assert sf.sessions(cfg)[str(art)]["open"] is False
 
 

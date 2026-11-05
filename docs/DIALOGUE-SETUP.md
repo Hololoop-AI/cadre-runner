@@ -5,9 +5,7 @@ something, an agent does it and writes you a page, you answer on the page, and
 the same session continues from your answer.** It needs no GitHub, no PRs and
 no tracker — the whole loop is local.
 
-The PR-gated pipeline in the main [README](../README.md) is a different mode of
-the same runner. Nothing here requires it, and none of it touches your repos
-unless a task you dispatch does.
+None of it touches your repos unless a task you dispatch does.
 
 Tested on Fedora (laptop and one server). macOS is supported by the installer
 and the launcher but has not been run on a Mac yet; the first run there is the
@@ -42,8 +40,7 @@ different interpreter (a Mac's `python3` is 3.9), start `up` with that one.
 | Claude Code CLI, signed in | every turn is a headless `claude -p` run | `claude --version` |
 | `git`, and read access to the two repos below | | `gh auth status` |
 
-`gh` is only for the PR pipeline. Without it the installer warns and dialogues
-work.
+`gh` is only a convenient way to clone the two repos; Cadre itself never runs it.
 
 ### On a Mac, without admin rights
 
@@ -103,8 +100,8 @@ Skills reach a session two different ways, and you want both:
   which `setup-claude.sh` fills with symlinks into the same clone. Skip it and a
   session that reaches for one of those silently does without.
 
-If you skip step 4 entirely, set `require_skills = false` (below) and pages
-still get written — they just lose the authoring contract.
+If you skip step 4 entirely, pages still get written — sessions just do
+without the skills they would have invoked by name.
 
 ## Configure
 
@@ -115,7 +112,6 @@ Write `~/Projects/cadre/cadre-runner/config.local.toml`:
 poll_interval = 15
 data_dir = "~/.local/state/cadre-local"
 skills_source = "~/dev-config/ai-workflow-config/skills"
-require_skills = false
 status_bind = "127.0.0.1"        # 0.0.0.0 only on a network you trust
 status_port = 8181
 
@@ -125,15 +121,10 @@ effort = "high"
 permission_mode = "bypass"       # headless turns cannot answer a prompt
 timeout_seconds = 0              # per-turn wall-clock ceiling in seconds; 0 = none
 default_model = "opus"
-
-[limits]
-allowed_actors = ["your-github-handle"]
 ```
 
-No `[[repos]]` and no `[intake]`: this instance exists for dialogue tasks and
-the fleet page. `permission_mode = "bypass"` means a turn can edit files in the
-directory you point it at — point tasks at directories you would let an agent
-change.
+`permission_mode = "bypass"` means a turn can edit files in the directory you
+point it at — point tasks at directories you would let an agent change.
 
 ## Run
 
@@ -148,7 +139,7 @@ REVIEW_SURFACE_NO_OPEN=1 \
 REVIEW_SURFACE_ANNOTATION_ACTIONS="$(python3 -c 'from runnerlib.surface import ANNOTATION_ACTIONS; print(ANNOTATION_ACTIONS)')" \
 review-surface server --port 4387
 
-# 2. the daemon (engine-only: it runs dialogue tasks, no PR polling)
+# 2. the daemon (engine-only: it runs dialogue tasks)
 cd ~/Projects/cadre/cadre-runner
 CADRE_CONFIG=$PWD/config.local.toml CADRE_ENGINE=only python3 pipeline.py run
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Cadre local runner: dialogue tasks (ask, read the answer on a page) and the
-PR-gated pipeline. `pipeline.py <command> --help` for any command's options.
+"""Cadre local runner: dialogue tasks (ask, read the answer on a page).
+`pipeline.py <command> --help` for any command's options.
 """
 
 import argparse
@@ -12,14 +12,12 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from pathlib import Path
 from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from runnerlib import automerge, board as board_mod, claude_run, config as config_mod, dispatcher, poller
-from runnerlib import board_events
+from runnerlib import claude_run, config as config_mod
 from runnerlib import codestamp
 from runnerlib import conversations
 from runnerlib import engine_seam
@@ -33,165 +31,11 @@ from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib import tasks as tasks_mod
 from runnerlib import wake as wake_mod
-from runnerlib.dispatcher import AGENT_MARKER
-from runnerlib import gh
-from runnerlib.gh import NOT_MODIFIED, GitHub
 from runnerlib.nodes import NodeError, Nodes
-from runnerlib.registry import Registry, classify_branch, feature_branch, slugify, stage_branch
-
-VARIANT_DESC = {
-    "change-spec": ("change-level spec: planning artifacts live in changes/<story>/ "
-                    "(change-spec.md + contracts/<slice>.md); nothing durable is required of the repo"),
-    "spec-as-source": ("spec-as-source: planning artifacts are edits to the durable spec/*.md "
-                       "and context/*.md layers"),
-}
-
+from runnerlib.registry import Registry
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-
-# --------------------------------------------------------------------------- setup
-
-
-def cmd_install(cfg, args):
-    repo_cfg = cfg.repo(args.repo)
-    checkout = cfg.checkout_dir(repo_cfg)
-    claude_run.ensure_checkout(args.repo, checkout, repo_cfg["default_branch"], cfg.commit_identity)
-    linked, missing = claude_run.install_skills(
-        checkout, cfg.skills_source,
-        extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else (),
-        required=cfg.runner["require_skills"], log=log)
-    log(f"checkout ready: {checkout}")
-    log(f"skills linked: {len(linked)} new; missing from source: {missing or 'none'}")
-
-
-# --------------------------------------------------------------------------- intake
-
-
-def cmd_start(cfg, args):
-    story_text = Path(args.story_file).read_text() if args.story_file else args.story
-    if not story_text:
-        sys.exit("start: provide --story or --story-file")
-    story_id = args.story_id or f"story-{time.strftime('%Y%m%d-%H%M')}"
-    reg = Registry(cfg.data_dir / "registry.json")
-    if slugify(story_id) in reg.data["stories"]:
-        sys.exit(f"start: story {slugify(story_id)!r} already registered (see `status`)")
-    variant = args.variant or cfg.repo(args.repo).get("variant", "change-spec")
-    slug, story, planning = _intake_story(cfg, reg, args.repo, story_id,
-                                          args.title, story_text, variant)
-    if engine_seam.mode() == "only":
-        log(f"story {slug} registered — its intake command (with the story text) is on "
-            f"the board; the daemon's engine pass spawns S0. Watch `pipeline.py status`.")
-    elif planning:
-        log(f"story {slug} registered — planning PR #{planning}")
-        log("review the planning PR on GitHub; summon with @claude; merge it to start contracts")
-    else:
-        log("WARNING: intake ran but no planning PR found — inspect the run log and the repo, "
-            "then re-run start (the intake prompt is written to resume partial work)")
-
-
-def _intake_story(cfg, reg, repo_name, story_id, title, story_text, variant,
-                  story_url=""):
-    """S0 for one story, synchronous (CLI path): register, spawn, wait, finish.
-    The board path uses _begin_intake alone and finishes at reap — the daemon
-    never blocks on an intake. Raises RuntimeError on failure."""
-    slug, story = _begin_intake(cfg, reg, repo_name, story_id, title, story_text,
-                                variant, story_url=story_url)
-    if engine_seam.mode() == "only":
-        # Engine-only: _begin_intake registered the story and put its intake
-        # command on the board, but did NOT spawn. There is nothing to wait for
-        # here — the daemon's engine pass owns the spawn and the reap.
-        return slug, story, None
-    ghc = GitHub(cfg.data_dir / "etags.json")
-    while any(not runs_mod.finished(r) for r in story["active_runs"].values()):
-        for r in story["active_runs"].values():
-            runs_mod.enforce_deadline(r)
-        time.sleep(10)
-    _reap_runs(cfg, reg, ghc, slug, story)
-    reg.save()
-    if story["status"] == "intake-failed":
-        raise RuntimeError(f"intake run failed — see log in {cfg.data_dir / 'logs' / slug}")
-    return slug, story, story.get("planning_pr")
-
-
-def _begin_intake(cfg, reg, repo_name, story_id, title, story_text, variant, story_url=""):
-    """Register the story stub and spawn the intake run detached. Intake
-    bypasses the concurrency cap — it's rare, and a queued intake with its
-    board card already moved would never re-trigger."""
-    repo_cfg = cfg.repo(repo_name)
-    slug = slugify(story_id)
-    title = title or story_text.strip().splitlines()[0][:80]
-    reg.add_story(slug, repo_name, story_id, title, variant)
-    story = reg.get(slug)
-    story["status"] = "intaking"
-    # ---- ENGINE SEAM: the story text enters the board here, with the story.
-    # `adopt_story` reconstructs an intake command from the registry, which has
-    # never held the story text — so S0's prompt would render with an empty
-    # $story_text. This is the write that carries it. No-op with the flag off.
-    try:
-        engine_seam.intake_command(cfg, slug, story, story_text, story_url)
-    except Exception as e:
-        log(f"{slug}: engine intake command write failed: {e}")
-    if engine_seam.mode() == "only":
-        # The engine's story-to-intake action owns the spawn; spawning here too
-        # would be the shadow-mode duplicate, which only key_active saves us from.
-        reg.save()
-        log(f"{slug}: registered — engine-only, S0 spawns on the next daemon pass")
-        return slug, story
-    # ---- end engine seam
-    _run_stage(cfg, reg, GitHub(cfg.data_dir / "etags.json"), slug, story,
-               {"stage": "intake", "slice": None, "pr": None,
-                "extra_vars": {"story_text": story_text, "story_url": story_url}},
-               skip_cap=True)
-    reg.save()
-    return slug, story
-
-
-def _finish_intake(cfg, reg, ghc, slug, story, ok):
-    """Reap-side of intake: discover what the run created (PR list is the
-    source of truth), seed the cache, activate the story."""
-    if not ok:
-        story["status"] = "intake-failed"
-        log(f"{slug}: intake FAILED")
-        board = board_mod.make_board(cfg.intake)
-        if story.get("board") and board and board.enabled:
-            try:
-                body = ("⚠️ Cadre intake failed — fix the cause, then move the card "
-                        "back to the trigger column to retry.")
-                cid = story["board"].get("status_comment_id")
-                if cid:
-                    board.edit_comment(cid, body)
-                else:
-                    board.comment(story["board"]["issue_id"], body)
-            except Exception as e:
-                log(f"{slug}: board failure-notice failed: {e}")
-        return
-    pulls = ghc.pulls(story["repo"], base=feature_branch(slug))
-    pulls = [] if pulls is NOT_MODIFIED else pulls
-    planning = next((p for p in pulls if p["head"]["ref"] == stage_branch(slug, "planning")), None)
-    story["planning_pr"] = planning["number"] if planning else None
-    # seed the PR cache so a first-poll 304 on the pulls ETag can't hide the planning PR
-    story["prs_cache"] = {
-        str(p["number"]): {
-            "role": role, "slice": slice_name, "state": p["state"],
-            "merged": bool(p.get("merged_at")), "head": p["head"]["ref"],
-        }
-        for p in pulls
-        for role, slice_name in [classify_branch(p["head"]["ref"], slug)]
-        if role is not None
-    }
-    story["status"] = "active"
-    board = board_mod.make_board(cfg.intake)
-    if story.get("board") and board and board.enabled:
-        try:
-            if planning:
-                board.attach(story["board"]["issue_id"],
-                             gh.web_url(story['repo'], planning['number']),
-                             f"Planning PR #{planning['number']}")
-        except Exception as e:
-            log(f"{slug}: board attach failed: {e}")
-    log(f"{slug}: intake done — planning PR #{story['planning_pr']}")
 
 
 # --------------------------------------------------------------------------- daemon
@@ -208,8 +52,7 @@ def _preflight_or_exit(cfg):
 
     Without the tool or its server the daemon still starts agents, but no page
     they write ever opens and no annotation comes back — a loop that looks
-    alive and never closes. Every other failed check is printed and tolerated
-    (a dialogue-only machine has no business with `gh auth`)."""
+    alive and never closes. Every other failed check is printed and tolerated."""
     from runnerlib import preflight
     checks = preflight.run(cfg.data_dir, cfg, seed=False)
     server = next(i for i, c in enumerate(checks) if c.name == "review-surface server")
@@ -229,9 +72,8 @@ def _preflight_or_exit(cfg):
 
 # --------------------------------------------------------------------------- up
 
-# What `up` tolerates failing: the PR pipeline's GitHub login (a machine that
-# only runs dialogues never needs it) and the page server, which `up` starts.
-UP_TOLERATED = ("gh auth", "review-surface server")
+# What `up` tolerates failing: the page server, which `up` starts.
+UP_TOLERATED = ("review-surface server",)
 
 
 def _up_children(cfg, args, start_server: bool) -> list[tuple[str, list[str]]]:
@@ -349,10 +191,9 @@ def cmd_up(cfg, args):
 
 
 def _run_pids(reg) -> list[int]:
-    """The wrapper pid of every run in flight — stage runs and task turns."""
-    runs = [r for _s, _id, r in runs_mod.all_active(reg)]
-    runs += [r for rec in tasks_mod.records(reg).values()
-             for r in (rec.get("active_runs") or {}).values()]
+    """The wrapper pid of every dialogue turn in flight."""
+    runs = [r for rec in tasks_mod.records(reg).values()
+            for r in (rec.get("active_runs") or {}).values()]
     return [r["pid"] for r in runs if r.get("pid")]
 
 
@@ -399,12 +240,9 @@ def cmd_serve(cfg, args):
 
 
 def cmd_run(cfg, args, single_pass=False):
-    ghc = GitHub(cfg.data_dir / "etags.json")
-    board = board_mod.make_board(cfg.intake)
     _preflight_or_exit(cfg)
-    log(f"runner up — poll every {cfg.runner['poll_interval']}s"
-        f" · max {cfg.runner['max_concurrent_runs']} concurrent runs"
-        + (f" · board intake: {cfg.intake['provider']}" if board and board.enabled else ""))
+    log(f"runner up — pass every {cfg.runner['poll_interval']}s at the latest"
+        f" · max {cfg.runner['max_concurrent_runs']} concurrent runs")
     status_mod.install_page(cfg)
     status_mod.CODE = codestamp.Stamp()
     _log_stale_nodes(cfg)
@@ -432,69 +270,37 @@ def cmd_run(cfg, args, single_pass=False):
             listener = wake_mod.Listener(cfg)
         except OSError as e:
             log(f"wake socket unavailable ({e}) — timed passes only")
-    # Only GitHub and the tracker are polled, so only they run on the timer.
-    # A pass that work was pushed for does everything local at once and
-    # leaves them for when the timer is due — they are the reason a pass
-    # cannot simply run on every push.
-    remote_due = 0.0
+    # Work is pushed (runnerlib/wake.py); the timer is only the fallback that
+    # still enforces turn deadlines when nothing rings.
+    next_due = 0.0
     while True:
         if stopping:
             log(f"stopped ({signal.Signals(stopping[0]).name}) — the last pass finished")
             listener and listener.close()
             return
-        # reload each pass so stories registered by `start` mid-run are picked
-        # up (and never clobbered by this process's saves)
+        # reload each pass so tasks registered by another process mid-run are
+        # picked up (and never clobbered by this process's saves)
         reg = Registry(cfg.data_dir / "registry.json")
-        _consume_requests(cfg, reg, ghc)
-        remote = time.time() >= remote_due
-        if remote:
-            remote_due = time.time() + cfg.runner["poll_interval"]
-        if remote and board and board.enabled:
-            try:
-                _board_intake(cfg, reg, board)
-            except Exception as e:  # tracker trouble must not stall the pipeline
-                log(f"ERROR board intake: {e}")
-        for slug, story in list({**reg.stories("intaking"), **reg.stories()}.items()
-                                if remote else ()):
-            try:
-                _poll_story(cfg, reg, ghc, slug, story)
-            except Exception as e:  # keep the daemon alive; surface in logs
-                log(f"ERROR polling {slug}: {e}")
-            board_mod.mirror_status(board, story, cfg.limits["max_rounds_per_stage"], log,
-                                    phase_states=cfg.intake["phase_states"])
-            reg.save()
-        # Workflow #3's reap — before the surface tick, so a turn that finished
-        # this pass has its page open in the same pass the driver could reply on.
+        next_due = time.time() + cfg.runner["poll_interval"]
+        # The reap comes before the surface tick, so a turn that finished this
+        # pass has its page open in the same pass the driver could reply on.
         try:
             _reap_tasks(cfg, reg)
             reg.save()
         except Exception as e:
             log(f"ERROR reaping task turns: {e}")
-        surface_mod.tick(cfg, reg, ghc, log)
-        try:
-            surface_mod.reconcile_merged_holds(cfg, reg, log)
-        except Exception as e:
-            log(f"surface: reconcile error: {e}")
+        surface_mod.tick(cfg, reg, log)
         # ---- ENGINE SEAM (CADRE_ENGINE=1 | only) ----------------------------
-        # The whole board-driven path, in one block: heartbeat, engine.tick,
-        # and spawns executed through THIS module's _run_stage. In `shadow` it
-        # runs AFTER the legacy dispatch on purpose — the legacy spawn wins the
-        # (stage, slice, pr) key and the engine's duplicate drops silently in
-        # _run_stage. In `only`, _poll_story spawned nothing and this block is
-        # the only thing that starts a stage. Unset the flag: none of it runs.
+        # engine.tick, and spawns executed through THIS module's _run_task.
+        # Unset the flag: none of it runs, and nothing starts a turn.
         if engine_seam.enabled():
             try:
-                engine_seam.tick_pass(cfg, reg, ghc, log, _run_stage)
+                engine_seam.tick_pass(cfg, reg, log, _run_task)
             except Exception as e:      # the engine must not take the daemon down
                 log(f"ERROR engine tick: {e}")
             reg.save()
         # ---- end engine seam -------------------------------------------------
-        act = [{"stage": r["stage"], "story": s, "slice": r.get("slice"),
-                "pr": r.get("pr"), "started": r["started"]}
-               for s, _rid, r in runs_mod.all_active(reg)]
-        status_mod.write_status(cfg, reg,
-                                run=(min(act, key=lambda r: r["started"]) if act else None),
-                                runs=act)
+        status_mod.write_status(cfg)
         if single_pass:
             return
         try:
@@ -502,543 +308,11 @@ def cmd_run(cfg, args, single_pass=False):
                 # Rings from during the pass stay queued on purpose: the pass
                 # may have read the board before that work landed.
                 listener.watch(_run_pids(reg))
-            _wait_for_work(listener, remote_due, stopping)
+            _wait_for_work(listener, next_due, stopping)
         except KeyboardInterrupt:
             log("stopped")
             listener and listener.close()
             return
-
-
-def _board_intake(cfg, reg, board):
-    """Start a story for each new card in the trigger column."""
-    known = board_mod.known_issue_ids(reg)
-    for issue in board.candidates():
-        # Neutral issue record (board.issue_record) — no tracker's field names
-        # appear here, which is what lets a second provider drop in unchanged.
-        if issue["id"] in known or slugify(issue["key"]) in reg.data["stories"]:
-            continue
-        story_text = issue["title"] + ("\n\n" + issue["body"] if issue["body"] else "")
-        log(f"board: new card {issue['key']} — {issue['title']!r}; running intake")
-        status_mod.write_status(cfg, reg, run={"stage": "intake", "story": issue["key"],
-                                               "slice": None, "pr": None, "started": time.time()})
-        # Acknowledge on the card BEFORE the (many-minute) intake run — silence
-        # reads as failure. Moving the card out of the trigger column here also
-        # prevents a failed intake from re-triggering every poll pass.
-        ack_comment = None
-        try:
-            board.move(issue["id"], cfg.intake["pickup_state"])
-            ack_comment = board.comment(
-                issue["id"], "⏳ Cadre picked this up — intake is running "
-                             "(10–30 min). The planning PR lands here when it's done.")
-        except Exception as e:
-            log(f"board: pickup ack failed for {issue['key']}: {e}")
-        try:
-            slug, story = _begin_intake(
-                cfg, reg, cfg.intake["repo"], issue["key"], issue["title"],
-                story_text, cfg.intake.get("variant") or cfg.repo(cfg.intake["repo"]).get("variant", "change-spec"),
-                story_url=issue["url"])
-        except Exception as e:
-            log(f"board: intake spawn FAILED for {issue['key']}: {e}")
-            body = f"⚠️ Cadre intake failed to start: {e} — fix the cause, then move the card back to the trigger column to retry."
-            if ack_comment:
-                board.edit_comment(ack_comment, body)
-            else:
-                board.comment(issue["id"], body)
-            continue
-        story["board"] = {"provider": cfg.intake["provider"], "issue_id": issue["id"],
-                          "identifier": issue["key"], "url": issue["url"],
-                          "status_comment_id": ack_comment,
-                          "last_state": cfg.intake["pickup_state"]}
-        reg.save()
-        log(f"board: {issue['key']} intake spawned — finishes at reap")
-
-
-def _poll_story(cfg, reg, ghc, slug, story):
-    # ---- ENGINE SEAM (CADRE_ENGINE=only): the engine owns stage SPAWNING.
-    # Everything else in this function is kept, because the engine has no
-    # equivalent for any of it: reaping, the registry effects that ride on a
-    # reap, ask/park/revive, the surface, and auto-merge. What is skipped below
-    # is exactly the four places this function forks an agent — the dispatcher's
-    # run_stage actions, the flow-aware ready set, the all-built assembly spawn,
-    # and auto-merge's risk-triage/reconcile spawns. The non-spawn dispatch
-    # effects (phase_slices, story_done, escalate, post_status) still run: they
-    # are registry mutations, not spawns, and nothing on the board performs them.
-    engine_only = engine_seam.mode() == "only"
-    _reap_runs(cfg, reg, ghc, slug, story)
-    if story["status"] == "intaking":
-        return  # nothing to poll until the intake run reaps
-    _resume_paused(cfg, reg, ghc, slug, story)
-    _resume_parked(cfg, reg, ghc, slug, story)
-    events, open_prs = poller.collect_events(ghc, reg, slug, story)
-    _seed_manifest(reg, ghc, slug, story)
-    _ensure_spec_surface(cfg, reg, ghc, slug, story)
-    _try_automerge(cfg, reg, ghc, slug, story, engine_only=engine_only)
-    # Events are seen-marked at collection, so a crash between collection and
-    # execution would lose them forever (the since-window never re-collects).
-    # Failed events persist in a retry queue instead: re-dispatched next pass,
-    # dead-lettered loudly after 3 attempts. The system must work to build the
-    # system.
-    retries = story.get("retry_events", [])
-    story["retry_events"] = []
-    pairs = [(dispatcher.dispatch(story, ev, cfg.limits), ev) for ev in retries + events]
-    for action, event in poller.coalesce(pairs):
-        if engine_only and action["type"] == "run_stage":
-            # The same merge/summon is on the board as a gh_watch event; the
-            # engine's action fires the stage. Dropping it here rather than at
-            # collection keeps the event's seen-marking and retry accounting
-            # identical between modes.
-            log(f"{slug}: engine-only — legacy dispatch of {action['stage']} skipped "
-                f"(the board drives it)")
-            continue
-        try:
-            _execute(cfg, reg, ghc, slug, story, action, event, open_prs)
-        except runs_mod.RunsBusy as e:
-            # backpressure, not failure — requeue WITHOUT an attempt bump so a
-            # crowded machine can never dead-letter a legitimate event
-            story["retry_events"].append(event)
-            log(f"{slug}: busy ({e}) — event requeued")
-        except Exception as e:
-            attempts = event.get("_attempts", 0) + 1
-            if attempts >= 3:
-                clean = {k: v for k, v in event.items() if k != "_attempts"}
-                story.setdefault("dead_letter", []).append({"event": clean, "error": str(e)[:300]})
-                log(f"{slug}: EVENT DEAD-LETTERED after {attempts} attempts: "
-                    f"{event.get('kind')} on #{event.get('pr')} — {e}")
-                _comment(ghc, story,
-                         f"⚠️ A pipeline event failed {attempts}× and was parked: "
-                         f"`{event.get('kind')}` on #{event.get('pr')} — `{e}`. "
-                         f"After fixing the cause, re-fire with `pipeline.py trigger`. {AGENT_MARKER}")
-            else:
-                event["_attempts"] = attempts
-                story["retry_events"].append(event)
-                log(f"{slug}: event failed (attempt {attempts}/3), queued for retry: {e}")
-    if engine_only:
-        return      # the ready set and the assembly check below are both spawns
-    # Flow-aware ready-set: the guarantee behind the event fast path — exempt
-    # stages, dependency unblocks, and missed events all dispatch from here.
-    for action in dispatcher.ready_actions(story):
-        rec = story["slices"][action["slice"]]
-        spawns = rec.setdefault("ready_spawns", {})
-        if spawns.get(action["stage"], 0) >= 2:
-            continue  # two silent failures = wait for a human summon, don't loop
-        try:
-            _run_stage(cfg, reg, ghc, slug, story, action)
-            spawns[action["stage"]] = spawns.get(action["stage"], 0) + 1
-        except runs_mod.RunsBusy:
-            pass  # recomputed fresh next pass — no queue needed
-    if (dispatcher.all_built(story, open_prs) and story["phase"] == "slices"
-            and not runs_mod.key_active(story, "assembly", None, story.get("planning_pr"))):
-        try:
-            _run_stage(cfg, reg, ghc, slug, story,
-                       {"stage": "assembly", "slice": None, "pr": story.get("planning_pr")})
-        except runs_mod.RunsBusy as e:
-            log(f"{slug}: assembly deferred ({e}) — retried next pass")
-
-
-def _seed_manifest(reg, ghc, slug, story):
-    """Fetch the planning PR's manifest once and seed slice records with flow
-    exemptions (a slice whose flow lacks contract/tests has those stages
-    pre-marked merged). Stories without a manifest stay legacy after a few
-    checks — nothing changes for them."""
-    if story.get("plan_slices") is not None or story.get("manifest_absent"):
-        return
-    if not story.get("planning_pr") or story["phase"] not in ("interrogate", "slices"):
-        return
-    try:
-        detail = ghc.pr(story["repo"], story["planning_pr"])
-    except Exception:
-        return
-    slices = poller.parse_manifest(detail.get("body"))
-    if not slices:
-        checks = story.get("manifest_checks", 0) + 1
-        story["manifest_checks"] = checks
-        if story["phase"] == "slices" and checks >= 3:
-            story["manifest_absent"] = True  # legacy story — stop looking
-        return
-    for s in slices:
-        rec = reg.slice_rec(story, s["name"])
-        nodes = s.get("nodes") or ["contract", "tests", "build"]
-        for role in ("contract", "tests", "build"):
-            if role not in nodes:
-                rec[f"{role}_merged"] = True  # exempt by flow, not actually run
-    story["plan_slices"] = slices
-    log(f"{slug}: manifest seeded — {len(slices)} slice(s), flow-aware dispatch active")
-
-
-def _spec_files_for_pr(ghc, repo: str, pr_detail: dict, pr: int) -> list[dict]:
-    """Markdown documents the planning branch adds/changes — the unified spec
-    content. Full file contents from the head ref, falling back to the diff
-    patch when a blob fetch fails."""
-    import base64
-    out = []
-    try:
-        files = ghc.get(f"/repos/{repo}/pulls/{pr}/files")
-    except Exception:
-        return out
-    ref = (pr_detail.get("head") or {}).get("ref") or ""
-    for f in files:
-        path = f.get("filename") or ""
-        if not path.endswith(".md") or f.get("status") == "removed":
-            continue
-        text = ""
-        try:
-            blob = ghc.get(f"/repos/{repo}/contents/{path}", params={"ref": ref})
-            text = base64.b64decode(blob.get("content") or "").decode(errors="replace")
-        except Exception:
-            text = f.get("patch") or ""
-        if text:
-            out.append({"path": path, "text": text[:30000]})
-        if len(out) >= 10:
-            break
-    return out
-
-
-# intake/interrogate/revise all write the ONE spec surface path, so they share
-# its round counter and its freshness clock.
-SPEC_STAGES = ("intake", "interrogate", "revise")
-
-
-def _spec_surface_fresh(artifact: Path, story: dict) -> bool:
-    """False when the spec artifact predates the newest finished spec-stage run
-    — the same mtime test the risk-hold path makes before reopening a hold
-    brief. Stories with no recorded spec run (legacy, or a hand-authored
-    artifact) have no clock to fail against and stay fresh."""
-    try:
-        return artifact.stat().st_mtime >= (story.get("spec_surface_run") or 0)
-    except OSError:
-        return False
-
-
-def _archive_spec_round(cfg, slug, story, run):
-    """Keep each round's briefing instead of letting the next one overwrite it.
-    Round N−1 is what "what changed since your feedback" is checked against, and
-    a single shared path made that unverifiable (audit 2026-09-15). Only a run
-    that actually WROTE the surface advances the counter; a stage that authored
-    nothing leaves the previous round standing as the previous round."""
-    artifact = surface_mod._dir(cfg) / f"spec-{slug}.html"
-    story["spec_surface_run"] = max(story.get("spec_surface_run") or 0, run["started"])
-    try:
-        if artifact.stat().st_mtime < run["started"]:
-            return None
-    except OSError:
-        return None
-    n = (story.get("spec_surface_round") or 0) + 1
-    archived = artifact.with_name(f"spec-{slug}-r{n}.html")
-    try:
-        shutil.copy2(artifact, archived)
-    except OSError as e:
-        log(f"{slug}: round {n} surface archive failed: {e}")
-        return None
-    story["spec_surface_round"] = n
-    # The NEXT spec session reads this one as $surface_prev.
-    story["spec_surface_prev"] = str(archived)
-    log(f"{slug}: archived spec surface round {n} -> {archived.name}")
-    return archived
-
-
-def _ensure_spec_surface(cfg, reg, ghc, slug, story):
-    """The unified spec gate lives on the surface: every open planning PR gets
-    a spec-review artifact, re-authored when the branch head moves (a revise
-    round produced a new spec version). Driver-closed sessions are not nagged
-    for the same version; a NEW version reopens."""
-    if not surface_mod.available() or story["status"] != "active":
-        return
-    for num_s, p in list(story.get("prs_cache", {}).items()):
-        if p.get("role") != "planning" or p.get("state") != "open":
-            continue
-        # Session-authored briefing wins outright: the spec session wrote its
-        # own review surface (stable path, live-reloads on revise rewrites) —
-        # but only while it is CURRENT. intake/interrogate/revise all share the
-        # one path, so an artifact older than the latest spec-stage run is
-        # round N−1's briefing being re-shown as today's (audit 2026-09-15).
-        # The templated fallback below is at least about the PR as it stands.
-        authored = surface_mod._dir(cfg) / f"spec-{slug}.html"
-        if authored.exists() and _spec_surface_fresh(authored, story):
-            asess = surface_mod.sessions(cfg).get(str(authored))
-            if not (asess and asess.get("open")):
-                surface_mod.open_session(cfg, authored, "spec_review", log,
-                                         story=slug, pr=int(num_s),
-                                         repo=story["repo"])
-            continue
-        # Fallback: daemon-templated rendering (legacy planning PRs only).
-        art = surface_mod._dir(cfg) / f"spec-{slug}-pr{num_s}.html"
-        sess = surface_mod.sessions(cfg).get(str(art))
-        try:
-            detail = ghc.pr(story["repo"], int(num_s))
-        except Exception as e:
-            log(f"{slug}: spec surface skipped (PR fetch failed: {e})")
-            continue
-        if detail.get("state") != "open":
-            continue
-        sha = (detail.get("head") or {}).get("sha") or ""
-        if sess and sess.get("sha") == sha:
-            continue  # current version already surfaced (open or driver-closed)
-        spec_files = _spec_files_for_pr(ghc, story["repo"], detail, int(num_s))
-        art = surface_mod.author_spec_review(cfg, slug, int(num_s), detail, spec_files)
-        surface_mod.open_session(cfg, art, "spec_review", log, story=slug,
-                                 pr=int(num_s), repo=story["repo"], sha=sha)
-
-
-def _try_automerge(cfg, reg, ghc, slug, story, engine_only=False):
-    """NEX-150: merge green stage PRs so the pipeline advances without a human,
-    except contract PRs below high confidence. Merge events dispatch the next
-    stage on the following pass — auto-merge IS the handoff. Conflicted PRs
-    spawn a reconcile run instead of waiting for a human untangle.
-
-    The merge DECISION is kept in every mode — nothing on the board makes it.
-    `engine_only` suppresses only the two spawns this function makes
-    (risk-triage, reconcile); gh_watch reports the same risk grade and the same
-    conflict, and the engine's risk-high-to-triage / conflict-to-reconcile
-    actions fire them."""
-    if story["status"] != "active":
-        return
-    for num_s, p in list(story.get("prs_cache", {}).items()):
-        if p["state"] != "open" or p["role"] not in ("contract", "tests", "build", "final"):
-            continue
-        try:
-            detail = ghc.pr(story["repo"], int(num_s))
-            if detail.get("state") != "open" or detail.get("merged"):
-                continue
-            if detail.get("mergeable") is False:
-                if not engine_only:
-                    _maybe_reconcile(cfg, reg, ghc, slug, story, int(num_s), p)
-                continue
-            if p["role"] == "final":
-                continue  # never auto-merged; only watched for conflicts
-            checks = ghc.check_runs(story["repo"], detail["head"]["sha"])
-            bodies = _pr_conversation_latest_is_human(ghc, story["repo"], int(num_s))
-            ok, reason = automerge.decide(p["role"], detail, checks, cfg.automerge, bodies,
-                                          slug=slug)
-            if ok:
-                ghc.merge_pr(story["repo"], int(num_s))
-                log(f"{slug}: auto-merged {p['role']} PR #{num_s} ({reason})")
-            elif reason.startswith("risk high") and not reg.seen(story, "risk_hold", int(num_s)):
-                # The hold is a decision to make, not a PR to read: emit the
-                # review-requested event the artifact surface consumes.
-                reg.mark_seen(story, "risk_hold", int(num_s))
-                board_events.emit("review-requested",
-                                  story=slug, pr=int(num_s), stage=p["role"],
-                                  slice=p.get("slice"), risk="high",
-                                  title=detail.get("title"),
-                                  status="awaiting-review",
-                                  url=gh.web_url(story['repo'], num_s))
-                log(f"{slug}: risk HIGH on {p['role']} PR #{num_s} — held as a driver decision, review-requested event emitted")
-                # Risk triage (driver decision 2026-08-30): a hold spawns a
-                # second independent assessor that audits the grade — it may
-                # re-grade a mechanical over-flag (justified, on the PR) or
-                # author the decision surface for the driver. Every Cadre →
-                # driver communication rides the surface; GitHub mirrors.
-                try:
-                    if not engine_only:
-                        _run_stage(cfg, reg, ghc, slug, story,
-                                   {"type": "run_stage", "stage": "risk-triage",
-                                    "slice": p.get("slice"), "pr": int(num_s)})
-                except runs_mod.RunsBusy:
-                    log(f"{slug}: risk-triage deferred for PR #{num_s} (run cap); use `surface hold` if urgent")
-                except Exception as e:
-                    log(f"{slug}: risk-triage spawn failed for PR #{num_s}: {e}")
-            elif reason.startswith("malformed title") and not reg.seen(story, "title_lint", int(num_s)):
-                # once per PR: a silent block here would be an invisible wedge
-                reg.mark_seen(story, "title_lint", int(num_s))
-                stage = "contracts" if p["role"] == "contract" else p["role"]
-                ghc.comment(story["repo"], int(num_s),
-                            f"⚠️ Title doesn't follow the pipeline grammar "
-                            f"`[{slug}][{stage}][k/N] <slice>` — auto-merge is blocked "
-                            f"until it's fixed (edit the title, or summon @claude). {AGENT_MARKER}")
-                log(f"{slug}: title lint blocked auto-merge on PR #{num_s}: {detail.get('title')!r}")
-            elif "driver gate" in reason or "human" in reason:
-                pass  # expected waits — don't spam the log
-            elif not reg.seen(story, "merge_block", f"{num_s}:{reason}"):
-                # Any OTHER hold logs once per (PR, reason). A tests PR with no
-                # Risk line and a by-design-red suite blocked here for 13 hours
-                # with zero output (first engine e2e run, 2026-09-12) — a merge
-                # gate that says nothing is an invisible wedge.
-                reg.mark_seen(story, "merge_block", f"{num_s}:{reason}")
-                log(f"{slug}: auto-merge blocked on {p['role']} PR #{num_s}: {reason}")
-        except runs_mod.RunsBusy as e:
-            log(f"{slug}: reconcile deferred for PR #{num_s} ({e})")
-        except Exception as e:
-            log(f"{slug}: auto-merge check failed for PR #{num_s}: {e}")
-
-
-def _maybe_reconcile(cfg, reg, ghc, slug, story, pr, p):
-    """A conflicted pipeline PR gets a reconcile run — rounds-capped so a
-    conflict that keeps coming back escalates to the driver instead of looping."""
-    rounds = story["iterations"].setdefault("reconcile", {})
-    key = str(pr)
-    cap = cfg.limits["max_rounds_per_stage"]
-    if rounds.get(key, 0) == cap:
-        rounds[key] = cap + 1
-        _comment(ghc, story,
-                 f"⚠️ PR #{pr} still has merge conflicts after {cap} reconcile rounds — "
-                 f"needs a human untangle. {AGENT_MARKER}")
-        log(f"{slug}: reconcile ESCALATED for PR #{pr} after {cap} rounds")
-        return
-    if rounds.get(key, 0) > cap or runs_mod.key_active(story, "reconcile", p.get("slice"), pr):
-        return
-    base = (cfg.repo(story["repo"])["default_branch"] if p["role"] == "final"
-            else story["feature_branch"])
-    _run_stage(cfg, reg, ghc, slug, story,
-               {"stage": "reconcile", "slice": p.get("slice"), "pr": pr, "role": p["role"],
-                "extra_vars": {"reconcile_base": base}})
-
-
-def _pr_conversation_latest_is_human(ghc, repo, number):
-    """True when the newest conversation item on the PR is marker-free (a human
-    had the last word) — auto-merge must not close a PR mid-review."""
-    items = []
-    for c in ghc.get(f"/repos/{repo}/issues/{number}/comments", {"per_page": 100}) or []:
-        items.append((c["created_at"], c.get("body") or ""))
-    for c in ghc.get(f"/repos/{repo}/pulls/{number}/comments", {"per_page": 100}) or []:
-        items.append((c["created_at"], c.get("body") or ""))
-    for r in ghc.get(f"/repos/{repo}/pulls/{number}/reviews", {"per_page": 100}) or []:
-        if r.get("body"):
-            items.append((r["submitted_at"], r["body"]))
-    if not items:
-        return False
-    items.sort()
-    return dispatcher.AGENT_MARKER not in items[-1][1]
-
-
-def _execute(cfg, reg, ghc, slug, story, action, event, open_prs):
-    kind = action["type"]
-    if kind == "noop":
-        if "built" in action:
-            log(f"{slug}: slice {action['built']!r} built ✓")
-        else:
-            log(f"{slug}: noop — {action['reason']}")
-        return
-    if kind == "post_status":
-        _post_status(cfg, ghc, slug, story, open_prs)
-        return
-    if kind == "phase_slices":
-        story["phase"] = "slices"
-        log(f"{slug}: spec approved (contract-less flow) — phase -> slices; "
-            f"tests dispatch from the manifest")
-        return
-    if kind == "story_done":
-        story["status"] = "done"
-        story["phase"] = "done"
-        _comment(ghc, story, f"✅ Story shipped — final PR #{action['pr']} merged. {AGENT_MARKER}")
-        log(f"{slug}: DONE — final PR #{action['pr']} merged")
-        return
-    if kind == "escalate":
-        story["status"] = "escalated"
-        _comment(ghc, story, f"⚠️ Pipeline escalated: {action['reason']}. "
-                             f"The runner will ignore this story until re-activated. {AGENT_MARKER}")
-        log(f"{slug}: ESCALATED — {action['reason']}")
-        return
-    if kind == "run_stage":
-        _run_stage(cfg, reg, ghc, slug, story, action)
-
-
-def _run_stage(cfg, reg, ghc, slug, story, action, skip_cap=False, wait=False):
-    """Spawn a stage session detached in its own worktree. Raises RunsBusy on
-    cap/branch contention (callers requeue); duplicate targets drop silently.
-    wait=True (CLI paths: start, trigger) blocks until the run reaps."""
-    if action.get("type") == "run_task":
-        # Workflow #3 has no repo, so none of what follows applies to it. The
-        # branch is here rather than at the caller because this stays the one
-        # spawn door: the cap, the run record and the surface out-path are
-        # decided in one place for both workflows.
-        return _run_task(cfg, reg, slug, action, skip_cap=skip_cap)
-    stage, slice_name, pr = action["stage"], action.get("slice"), action.get("pr")
-    # Engine seam: a spawn spec carries the node registry's pins, and the
-    # registry is authoritative at runtime. Legacy actions carry none of these
-    # and fall through to config exactly as before.
-    model = action.get("model") or cfg.model_for(stage)
-    effort = action.get("effort") or cfg.effort_for(stage)
-    if runs_mod.key_active(story, stage, slice_name, pr):
-        log(f"{slug}: {stage}"
-            + (f" (slice {slice_name})" if slice_name else "")
-            + (f" on PR #{pr}" if pr else "") + " already running — skipped")
-        return
-    if not skip_cap and len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
-        raise runs_mod.RunsBusy(f"{cfg.runner['max_concurrent_runs']} concurrent runs")
-    repo_cfg = cfg.repo(story["repo"])
-    checkout = cfg.checkout_dir(repo_cfg)
-    claude_run.ensure_checkout(story["repo"], checkout, repo_cfg["default_branch"], cfg.commit_identity)
-
-    branch, start_ref = _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg)
-    if runs_mod.branch_held(reg, story["repo"], branch):
-        raise runs_mod.RunsBusy(f"branch {branch} held by an active run")
-
-    rid = (f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}"
-           + (f"-{slice_name}" if slice_name else "") + (f"-pr{pr}" if pr else ""))
-    wt = cfg.data_dir / "worktrees" / slug / rid
-    runs_mod.add_worktree(checkout, wt, branch, start_ref)
-    try:
-        claude_run.install_skills(
-            wt, cfg.skills_source,
-            extra_sources=(cfg.workflow_skills_dir,) if cfg.workflow_skills_dir else (),
-            required=cfg.runner["require_skills"], log=log)
-    except Exception:
-        # never leak a worktree on a failed spawn — the event retries with a
-        # fresh one, and nobody has shell access to sweep by hand
-        runs_mod.remove_worktree(checkout, wt)
-        raise
-
-    v = _vars(story["repo"], repo_cfg, story["story_id"], slug, story["title"],
-              story["variant"], story_url=(story.get("board") or {}).get("url", ""),
-              workflows_dir=cfg.workflows_dir)
-    v |= {
-        "planning_pr": story.get("planning_pr") or pr or "",
-        "pr": pr or "", "slice": slice_name or "", "role": action.get("role", ""),
-        "slice_suffix": f", slice {slice_name}" if slice_name else "",
-        "iteration": story["iterations"]["interrogate"] + 1 if stage == "interrogate"
-        else story["iterations"]["revise"].get(str(pr), 0) + 1,
-        "max_rounds": cfg.limits["max_rounds_per_stage"],
-        # Last round's archived briefing — what this session diffs itself
-        # against when it writes "what changed in round N".
-        "surface_prev": (story.get("spec_surface_prev") or "") if stage in SPEC_STAGES else "",
-        "tests_branch": stage_branch(slug, "tests", slice_name) if slice_name else "",
-        "build_branch": stage_branch(slug, "build", slice_name) if slice_name else "",
-    }
-    v |= action.get("extra_vars", {})
-    # The node registry's ACTIVE prompt version when the engine drove this
-    # spawn; prompts/*.md when the legacy path did. Same $var substitution
-    # either way — the registry stores the template, not a rendered prompt.
-    template = action.get("prompt_template") or claude_run.template(stage)
-    prompt = Template(template).safe_substitute(v)
-    _log_unfilled(cfg, stage, template, v,
-                  action.get("node_version") or f"prompts/{stage}.md")
-    run_dir = cfg.data_dir / "runs" / slug / rid
-    session_id = str(uuid.uuid4())
-    pid = runs_mod.spawn(cfg.claude["bin"], prompt, wt, model,
-                         effort, cfg.claude["permission_mode"],
-                         cfg.claude["timeout_seconds"], run_dir, session_id=session_id,
-                         # The node registry's command when the engine drove
-                         # this spawn; None (compose the Claude Code flags) when
-                         # the legacy path did.
-                         argv=action.get("argv"),
-                         # identity for `pipeline.py ask` — links a question to
-                         # this session so an answer can revive it after exit.
-                         # Spec-shaping stages also get the surface out-path:
-                         # the SESSION authors the driver's review briefing
-                         # (2026-08-27 driver feedback — never a PR copy).
-                         extra_env={"CADRE_STORY": slug, "CADRE_STAGE": stage,
-                                    "CADRE_SESSION_ID": session_id, "CADRE_RUN_ID": rid,
-                                    # Workflow #3's page: one path per task, the
-                                    # session rewrites it every round (the same
-                                    # one-page-replaces-itself rule the spec
-                                    # stages follow).
-                                    **_surface_env(cfg, stage, slug, pr)})
-    story.setdefault("active_runs", {})[rid] = {
-        "stage": stage, "slice": slice_name, "pr": pr, "pid": pid,
-        "repo": story["repo"], "branch": branch, "model": model,
-        "effort": effort,
-        "worktree": str(wt), "run_dir": str(run_dir), "started": time.time(),
-        "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
-        "session_id": session_id, "action": action,
-    }
-    log(f"{slug}: spawned stage {stage}"
-        + (f" (slice {slice_name})" if slice_name else "")
-        + (f" on PR #{pr}" if pr else "") + f" — pid {pid}")
-    if wait:
-        while not runs_mod.finished(story["active_runs"][rid]):
-            runs_mod.enforce_deadline(story["active_runs"][rid])
-            time.sleep(10)
-        _reap_runs(cfg, reg, ghc, slug, story)
 
 
 def _log_unfilled(cfg, node, template, variables, active):
@@ -1068,35 +342,17 @@ def _log_stale_nodes(cfg):
             f"recorded {n['latest'][:12]} — run `pipeline.py promote {n['name']}`")
 
 
-def surface_out(cfg, stage, slug, pr=None, page=None) -> Path | None:
-    """Where THIS stage's session writes the driver's page, or None when the
-    stage authors none. One page per touchpoint, rewritten in place every round
-    (the session authors the briefing — never a PR copy; driver decision
-    2026-08-27)."""
-    d = surface_mod._dir(cfg)
-    if stage == tasks_mod.NODE:
-        # An adopted dialogue takes over the page it adopted: that page is the
-        # driver's bookmark, and authoring a second one for the same
-        # conversation would put two rows on the fleet for one thread.
-        return Path(page) if page else d / f"task-{slug}.html"
-    if stage in SPEC_STAGES:
-        return d / f"spec-{slug}.html"
-    if stage == "assembly":
-        return d / f"final-{slug}.html"
-    if stage == "risk-triage":
-        return d / f"hold-{slug}-pr{pr}.html"
-    return None
-
-
-def _surface_env(cfg, stage, slug, pr=None, page=None) -> dict:
-    path = surface_out(cfg, stage, slug, pr, page)
-    return {"CADRE_SURFACE_OUT": str(path)} if path else {}
+def task_page(cfg, task_id, page=None) -> Path:
+    """Where a dialogue turn writes the driver's page: one page per task,
+    rewritten in place every round. An adopted dialogue takes over the page it
+    adopted: that page is the driver's bookmark, and authoring a second one
+    for the same conversation would put two rows on the fleet for one thread."""
+    return Path(page) if page else surface_mod._dir(cfg) / f"task-{task_id}.html"
 
 
 def _run_task(cfg, reg, task_id, action, skip_cap=False):
     """Spawn one turn of a dialogue (workflow #3), in the driver's own tree.
-
-    The three things that make this not a stage run:
+    The one spawn door: engine_seam hands every spawn spec here.
 
       cwd        the ask's directory IS the working directory. No checkout, no
                  branch, no worktree — so also nothing to tear down, and no
@@ -1105,8 +361,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
       session    `action["session_id"]` was minted or recovered by the spawn
                  seam. resume=True turns it into `--resume`, which is how the
                  driver's annotation reaches the session that wrote the page.
-      record     the run lands in the registry's `tasks` section, not in a
-                 story's `active_runs`, because a task is not a story.
+      record     the run lands in the task's record in the registry's `tasks`
+                 section.
     """
     stage = action["stage"]
     rec = tasks_mod.record(reg, task_id)
@@ -1120,8 +376,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     cwd = Path(action["cwd"])
     if not cwd.is_dir():
         raise RuntimeError(f"{task_id}: working directory {cwd} does not exist")
-    running = len(runs_mod.all_active(reg)) + tasks_mod.active_count(reg)
-    if not skip_cap and running >= cfg.runner["max_concurrent_runs"]:
+    if not skip_cap and tasks_mod.active_count(reg) >= cfg.runner["max_concurrent_runs"]:
         raise runs_mod.RunsBusy(f"{cfg.runner['max_concurrent_runs']} concurrent runs")
 
     rid = f"{time.strftime('%Y%m%d-%H%M%S')}-{stage}"
@@ -1158,8 +413,8 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                                     "CADRE_RUN_ID": rid,
                                     # the task's page, whichever node a handoff
                                     # handed it to
-                                    **_surface_env(cfg, tasks_mod.NODE, task_id,
-                                                   page=rec.get("page"))})
+                                    "CADRE_SURFACE_OUT": str(task_page(cfg, task_id,
+                                                                       rec.get("page")))})
     active[rid] = {
         "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
         "repo": "", "branch": "", "model": model, "effort": effort,
@@ -1203,7 +458,7 @@ def _reap_tasks(cfg, reg):
             rec["last_result"] = (result or "")[:500]
             log(f"{task_id}: turn {run.get('iteration')} "
                 f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
-            art = surface_out(cfg, tasks_mod.NODE, task_id, page=rec.get("page"))
+            art = task_page(cfg, task_id, rec.get("page"))
             if rec.pop("closing", False):
                 # The driver approved AND annotated: this turn existed only to
                 # act on those last words and write the decision onto the page.
@@ -1280,393 +535,18 @@ def _link_handoff_page(cfg, rec, art, task_id):
     rec.pop("routed_from", None)
 
 
-def _run_branch(checkout, story, slug, stage, slice_name, pr, repo_cfg):
-    """(branch, start_ref) for a stage run's worktree. Every run owns exactly
-    one branch — uniqueness is what makes concurrent runs safe."""
-    fb = story["feature_branch"]
-    if stage in ("revise", "reconcile"):
-        b = story["prs_cache"][str(pr)]["head"]
-        return b, f"origin/{b}"
-    if stage == "interrogate":
-        b = stage_branch(slug, "planning")
-        return b, f"origin/{b}"
-    if stage == "intake":
-        return stage_branch(slug, "planning"), f"origin/{repo_cfg['default_branch']}"
-    if stage in ("tests", "build"):
-        b = stage_branch(slug, stage, slice_name)
-        # resume from the remote branch when a prior run pushed it, else base off feature
-        probe = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"origin/{b}"],
-                               cwd=checkout, capture_output=True)
-        return b, (f"origin/{b}" if probe.returncode == 0 else f"origin/{fb}")
-    return fb, f"origin/{fb}"  # contracts, assembly
-
-
-def _reap_runs(cfg, reg, ghc, slug, story):
-    """Collect finished runs: write the log record, tear down the worktree,
-    apply the stage's registry effects. Runs in every pass before events, so
-    completions register before anything new dispatches."""
-    for rid, run in list((story.get("active_runs") or {}).items()):
-        if note := runs_mod.enforce_deadline(run):
-            log(f"{slug}: stage {run['stage']} {note}")
-        if not runs_mod.finished(run):
-            continue
-        ok, result, usage, record = runs_mod.outcome(run)
-        log_path = cfg.data_dir / "logs" / slug / f"{rid}.json"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(json.dumps(record, indent=2))
-        if (record.get("rate_limited") or record.get("transient")) and run.get("session_id"):
-            # Out of inference, not a failed run. The session's transcript holds
-            # everything it did; keep the worktree it was working in and resume
-            # that same session once the limit lifts, instead of paying for the
-            # work twice.
-            # A brief outage is worth retrying in minutes; an exhausted account
-            # is not worth retrying until it refills.
-            until = (runs_mod.retry_after(result or "") if record.get("rate_limited")
-                     else time.time() + 180)
-            story.setdefault("paused_runs", {})[rid] = {
-                **run, "resume_after": until, "attempts": run.get("attempts", 0) + 1,
-            }
-            del story["active_runs"][rid]
-            status_mod.append_history(cfg, {
-                "ended": time.time(), "story": slug, "stage": run["stage"],
-                "slice": run.get("slice"), "pr": run.get("pr"), "ok": False,
-                "seconds": round(time.time() - run["started"], 1),
-                "model": run.get("model"), "paused": True,
-            })
-            why = "hit the usage limit" if record.get("rate_limited") else "hit a transient API error"
-            log(f"{slug}: stage {run['stage']} {why} after "
-                f"{round((time.time() - run['started']) / 60)} min — session kept, "
-                f"resuming after {time.strftime('%H:%M', time.localtime(until))}")
-            continue
-        status_mod.append_history(cfg, {
-            "ended": time.time(), "story": slug, "stage": run["stage"],
-            "slice": run.get("slice"), "pr": run.get("pr"), "ok": ok,
-            "seconds": round(time.time() - run["started"], 1),
-            "model": run.get("model"),
-            "cost_usd": (usage or {}).get("total_cost_usd"),
-        })
-        del story["active_runs"][rid]
-        # Question-park (2026-08-27): a session that asked the driver something
-        # and exited is waiting, not finished. Keep its worktree and session id;
-        # the daemon revives the same conversation when the answer lands
-        # (surface artifact or CLI — either channel). Mirrors paused_runs.
-        open_q = [m["ticket"] for m in messages.pending(cfg.data_dir, slug)
-                  if m.get("session_id") == run.get("session_id")]
-        if open_q and run.get("session_id"):
-            story.setdefault("parked_runs", {})[rid] = {
-                **run, "parked_for": open_q, "parked_at": time.time(),
-            }
-            log(f"{slug}: stage {run['stage']} parked on question(s) "
-                f"{', '.join(open_q)} — session kept for revival")
-            continue
-        ok_rm, rm_detail = runs_mod.remove_worktree(
-            cfg.checkout_dir(cfg.repo(story["repo"])), Path(run["worktree"]))
-        if not ok_rm:
-            log(f"{slug}: worktree removal failed for {rid} — {rm_detail}")
-        stage, pr = run["stage"], run.get("pr")
-        log(f"{slug}: stage {stage}"
-            + (f" (slice {run.get('slice')})" if run.get("slice") else "")
-            + f" {'done' if ok else 'FAILED'} — {result[:200]}")
-        # ---- ENGINE SEAM: stage completion is the event the graph hangs off.
-        # Written for both outcomes (the stage-failed action reads `failed`),
-        # and a no-op with the flag unset.
-        try:
-            engine_seam.stage_finished(cfg, slug, run, ok)
-        except Exception as e:
-            log(f"{slug}: engine completion write failed: {e}")
-        # ---- end engine seam
-        if stage in SPEC_STAGES:
-            _archive_spec_round(cfg, slug, story, run)
-            if ok and stage in ("interrogate", "revise"):
-                # The driver's own question deserves an answer where they asked
-                # it. The run's closing summary is that answer; the surface,
-                # not GitHub, is the primary channel (audit 2026-09-15).
-                surface_mod.agent_reply(
-                    cfg, reg, ghc, log, surface_mod._dir(cfg) / f"spec-{slug}.html",
-                    f"Round complete — {stage}: {result[:600]}")
-        if stage == "intake":
-            _finish_intake(cfg, reg, ghc, slug, story, ok)
-            continue
-        if stage == "interrogate":
-            story["iterations"]["interrogate"] += 1
-        elif stage == "revise":
-            story["iterations"]["revise"][str(pr)] = story["iterations"]["revise"].get(str(pr), 0) + 1
-        elif stage == "reconcile":
-            rec = story["iterations"].setdefault("reconcile", {})
-            rec[str(pr)] = rec.get(str(pr), 0) + 1
-        elif stage == "contracts" and ok:
-            story["phase"] = "slices"
-        elif stage == "assembly":
-            # ok -> awaiting the human merge of the final PR; fail -> parked for
-            # a manual re-trigger (pipeline.py trigger --stage assembly)
-            story["phase"] = "final-review" if ok else "assembly-pending"
-            # Final review is the second legitimate surface (driver decision
-            # 2026-08-30): the assembly session authored its own briefing.
-            final_art = surface_mod._dir(cfg) / f"final-{slug}.html"
-            if ok and surface_mod.available() and final_art.exists():
-                surface_mod.open_session(cfg, final_art, "final_review", log,
-                                         story=slug, repo=story["repo"])
-        elif stage == "risk-triage" and ok:
-            # The triage agent either re-graded (no surface — the hold is
-            # resolved and auto-merge proceeds on its grade) or authored the
-            # decision brief. Open it ONLY if this run wrote it: a stale
-            # artifact from an earlier manual hold predates the run and must
-            # not resurface (observed: re-opened a template for a merged PR).
-            hold_art = surface_mod._dir(cfg) / f"hold-{slug}-pr{pr}.html"
-            if (surface_mod.available() and hold_art.exists()
-                    and hold_art.stat().st_mtime >= run["started"]):
-                surface_mod.open_session(cfg, hold_art, "risk_hold", log,
-                                         story=slug, pr=pr, repo=story["repo"])
-        if not ok:
-            _comment(ghc, story, f"⚠️ Stage `{stage}` run failed (see runner logs). "
-                                 f"Re-summon with @claude after checking. {AGENT_MARKER}")
-    _sweep_worktrees(cfg, story, slug)
-
-
-def _resume_parked(cfg, reg, ghc, slug, story):
-    """Revive sessions that exited waiting on a driver question, once every
-    ticket they parked on has an answer. The answer arrives in the resumed
-    conversation itself — no re-reading a message file mid-run."""
-    for rid, run in list((story.get("parked_runs") or {}).items()):
-        answers = []
-        for ticket in run.get("parked_for", []):
-            m = messages.get(cfg.data_dir, ticket)
-            if m is None:
-                continue  # deleted ticket: treat as answered-by-absence
-            if m.get("answer") is None:
-                answers = None
-                break
-            answers.append((ticket, m.get("question") or "", m["answer"]))
-        if answers is None:
-            continue
-        if len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
-            return
-        wt = Path(run["worktree"])
-        if not (wt / ".git").exists():
-            del story["parked_runs"][rid]
-            log(f"{slug}: cannot revive {rid} — worktree gone; question answers "
-                f"remain on the tickets")
-            continue
-        run_dir = Path(run["run_dir"])
-        for stale in ("exit", "out.json", "err.txt"):
-            (run_dir / stale).unlink(missing_ok=True)
-        qa = "\n\n".join(f"Question ({t}): {q}\nDriver's answer: {a}"
-                         for t, q, a in answers)
-        pid = runs_mod.spawn(
-            cfg.claude["bin"],
-            "The driver has answered the question(s) you asked before you stopped. "
-            "Continue the stage from where you left off, applying the answers below "
-            "as decisions — they are authoritative.\n\n" + qa,
-            wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
-            cfg.claude["permission_mode"], cfg.claude["timeout_seconds"], run_dir,
-            session_id=run["session_id"], resume=True,
-            # Revive through the same command that started the session: the
-            # `{session}` placeholder becomes `--resume <id>` here. A run from
-            # before the node carried a command has none, and takes the legacy
-            # path exactly as it used to.
-            argv=(run.get("action") or {}).get("argv"),
-            extra_env={"CADRE_STORY": slug, "CADRE_STAGE": run["stage"],
-                       "CADRE_SESSION_ID": run["session_id"], "CADRE_RUN_ID": rid})
-        del story["parked_runs"][rid]
-        story.setdefault("active_runs", {})[rid] = {
-            # a parked run can be one that hit its deadline; the revival is a
-            # new process with a new ceiling, not the old one still stopping
-            **{k: v for k, v in run.items() if k not in (
-                "parked_for", "parked_at", "term_sent", "kill_sent", "timed_out_after")},
-            "pid": pid, "started": time.time(), "resumed": True,
-            "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
-        }
-        board_events.emit("session_revived", story=slug, stage=run["stage"],
-                          tickets=[t for t, _, _ in answers])
-        log(f"{slug}: revived stage {run['stage']} session "
-            f"{run['session_id'][:8]} with {len(answers)} answer(s) — pid {pid}")
-
-
-def _resume_paused(cfg, reg, ghc, slug, story):
-    """Re-enter sessions that stopped for want of inference. The worktree and
-    the session id both survived, so this continues the same conversation
-    rather than restarting the stage from nothing."""
-    for rid, run in list((story.get("paused_runs") or {}).items()):
-        if time.time() < run.get("resume_after", 0):
-            continue
-        if len(runs_mod.all_active(reg)) >= cfg.runner["max_concurrent_runs"]:
-            return  # cap reached; the rest keep waiting
-        wt = Path(run["worktree"])
-        if not (wt / ".git").exists():
-            del story["paused_runs"][rid]
-            action = run.get("action") or {"type": "run_stage", "stage": run["stage"],
-                                           "slice": run.get("slice"), "pr": run.get("pr")}
-            log(f"{slug}: cannot resume {rid} — its worktree is gone; running the stage fresh")
-            try:
-                _run_stage(cfg, reg, ghc, slug, story, action)
-            except runs_mod.RunsBusy:
-                pass  # ready-set / next pass picks it up
-            continue
-        run_dir = Path(run["run_dir"])
-        for stale in ("exit", "out.json", "err.txt"):
-            (run_dir / stale).unlink(missing_ok=True)
-        pid = runs_mod.spawn(
-            cfg.claude["bin"],
-            "Your previous session in this worktree stopped partway through because the "
-            "account ran out of inference — nothing was wrong with your work. Re-read the "
-            "stage instructions you were given, check what you had already done on disk and "
-            "on GitHub, and carry on from there to finish the stage.",
-            wt, run["model"], run.get("effort") or cfg.effort_for(run["stage"]),
-            cfg.claude["permission_mode"],
-            cfg.claude["timeout_seconds"], run_dir,
-            session_id=run["session_id"], resume=True,
-            argv=(run.get("action") or {}).get("argv"))
-        del story["paused_runs"][rid]
-        story.setdefault("active_runs", {})[rid] = {
-            **run, "pid": pid, "started": time.time(), "resumed": True,
-            "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
-        }
-        log(f"{slug}: resumed stage {run['stage']} session {run['session_id'][:8]} — pid {pid}")
-
-
-
-def _sweep_worktrees(cfg, story, slug):
-    """Remove worktree dirs no active run owns — crash litter from failed
-    spawns. Runs every reap pass; the daemon is its own janitor because the
-    box won't always have a human with shell access."""
-    base = cfg.data_dir / "worktrees" / slug
-    if not base.is_dir():
-        return
-    live = {Path(r["worktree"]).name for r in (story.get("active_runs") or {}).values()}
-    live |= {Path(r["worktree"]).name for r in (story.get("paused_runs") or {}).values()}
-    live |= {Path(r["worktree"]).name for r in (story.get("parked_runs") or {}).values()}
-    for d in base.iterdir():
-        if d.is_dir() and d.name not in live:
-            ok, detail = runs_mod.remove_worktree(cfg.checkout_dir(cfg.repo(story["repo"])), d)
-            if ok:
-                log(f"{slug}: swept stale worktree {d.name}")
-            else:
-                log(f"{slug}: SWEEP FAILED for {d.name} — {detail}")
-
-
-def _post_status(cfg, ghc, slug, story, open_prs):
-    lines = [f"**Pipeline status — {story['story_id']}** (phase: `{story['phase']}`,"
-             f" status: `{story['status']}`)", ""]
-    lines.append(f"- Planning PR: #{story.get('planning_pr')} — interrogate rounds: "
-                 f"{story['iterations']['interrogate']}/{cfg.limits['max_rounds_per_stage']}")
-    for name, s in story["slices"].items():
-        prog = [f"{r} {'✅' if s.get(f'{r}_merged') else ('#' + str(s[f'{r}_pr']) if s.get(f'{r}_pr') else '—')}"
-                for r in ("contract", "tests", "build")]
-        lines.append(f"- `{name}`: " + " · ".join(prog))
-    lines.append(f"\nOpen pipeline PRs: {open_prs} {AGENT_MARKER}")
-    _comment(ghc, story, "\n".join(lines))
-    log(f"{slug}: status posted")
-
-
-def _comment(ghc, story, body):
-    if story.get("tracking_issue"):
-        ghc.comment(story["repo"], story["tracking_issue"], body)
-
-
 # --------------------------------------------------------------------------- misc
-
-
-def cmd_trigger(cfg, args):
-    """Queue a manual stage run. The daemon consumes the request on its next
-    pass and spawns it itself — one registry writer, the daemon's env (a bare
-    ssh shell has no OAuth token), no race with live passes."""
-    reg = Registry(cfg.data_dir / "registry.json")
-    slug = args.story
-    if slug not in reg.data["stories"]:
-        sys.exit(f"trigger: story {slug!r} not registered (see `status`)")
-    rq = cfg.data_dir / "requests"
-    rq.mkdir(parents=True, exist_ok=True)
-    p = rq / f"{time.strftime('%Y%m%d-%H%M%S')}-{slug}-{args.stage}.json"
-    p.write_text(json.dumps({"story": slug, "stage": args.stage,
-                             "slice": args.slice, "pr": args.pr,
-                             "role": args.role or ""}))
-    log(f"queued {p.name} — the daemon spawns it within one poll pass")
-
-
-def _consume_requests(cfg, reg, ghc):
-    """Manual trigger requests, executed inside the daemon's own loop."""
-    rq = cfg.data_dir / "requests"
-    if not rq.is_dir():
-        return
-    for f in sorted(rq.glob("*.json")):
-        try:
-            req = json.loads(f.read_text())
-        except (OSError, json.JSONDecodeError):
-            f.unlink(missing_ok=True)
-            continue
-        slug = req.get("story")
-        if slug not in reg.data["stories"]:
-            log(f"request {f.name}: unknown story — dropped")
-            f.unlink(missing_ok=True)
-            continue
-        story = reg.get(slug)
-        try:
-            _run_stage(cfg, reg, ghc, slug, story,
-                       {"stage": req["stage"], "slice": req.get("slice"),
-                        "pr": req.get("pr"), "role": req.get("role", "")},
-                       skip_cap=True)
-            f.unlink(missing_ok=True)
-            reg.save()
-        except runs_mod.RunsBusy as e:
-            log(f"request {f.name}: deferred ({e})")  # file stays; retried next pass
-        except Exception as e:
-            log(f"request {f.name}: FAILED — {e}")
-            f.unlink(missing_ok=True)
-
-
-def cmd_board_check(cfg, args):
-    """Validate the board connection live: config, key, team, trigger column."""
-    board = board_mod.make_board(cfg.intake)
-    if board is None:
-        sys.exit("board-check: no [intake] provider configured")
-    if not board.enabled:
-        # The provider names its own credential env var — this command must not
-        # know which tracker it is checking.
-        sys.exit(f"board-check: API key env {board.api_key_env} is not set")
-    states = board.states()
-    print(f"team {board.team!r}: connected — states: {', '.join(sorted(states))}")
-    trig = board.trigger_state.lower()
-    if trig not in states:
-        sys.exit(f"trigger column {board.trigger_state!r} MISSING — create it on the team board")
-    cands = board.candidates()
-    known = board_mod.known_issue_ids(Registry(cfg.data_dir / "registry.json"))
-    print(f"trigger column {board.trigger_state!r}: {len(cands)} card(s)"
-          + (f" — {', '.join(c['key'] for c in cands)}" if cands else ""))
-    for c in cands:
-        print(f"  {c['key']}: {'already registered' if c['id'] in known else 'would intake'}")
 
 
 def cmd_status(cfg, args):
     reg = Registry(cfg.data_dir / "registry.json")
     tasks = tasks_mod.records(reg)
-    if not reg.data["stories"] and not tasks:
-        print("nothing registered: no stories, no tasks")
+    if not tasks:
+        print("nothing registered: no dialogue tasks")
         return
-    # Dialogue tasks first: on a dialogue-only runner they are all there is, and
-    # "no stories registered" read as "nothing here" to an agent that then
-    # guessed `pipeline.py task list` — which dispatched a task named "list".
     for tid, t in sorted(tasks.items(), key=lambda kv: kv[1].get("since") or 0):
         state = "running" if t.get("active_runs") else "idle"
         print(f"{tid}  [round {t.get('iteration') or 1}, {state}]  {t.get('cwd') or ''}")
-    for slug, s in reg.data["stories"].items():
-        print(f"{slug}  [{s['status']}/{s['phase']}]  {s['repo']}  "
-              f"planning=#{s.get('planning_pr')}  issue=#{s.get('tracking_issue')}")
-        for name, sl in s["slices"].items():
-            done = [r for r in ("contract", "tests", "build") if sl.get(f"{r}_merged")]
-            print(f"   - {name}: merged={done or '[]'}")
-
-
-def _vars(repo, repo_cfg, story_id, slug, title, variant, story_url="", workflows_dir=""):
-    return {
-        "repo": repo, "story_id": story_id, "story_slug": slug, "story_title": title,
-        "variant": variant, "variant_desc": VARIANT_DESC[variant],
-        "feature_branch": feature_branch(slug),
-        "planning_branch": stage_branch(slug, "planning"),
-        "default_branch": repo_cfg["default_branch"],
-        "story_url": story_url or "(no board link — CLI-started story)",
-        "workflows_dir": workflows_dir,
-        "agent_marker": AGENT_MARKER,
-    }
 
 
 def cmd_ask(cfg, args):
@@ -1710,8 +590,8 @@ def cmd_answer(cfg, args):
 
 
 def cmd_surface(cfg, args):
-    """Driver channel controls: list open sessions, force a test hold artifact
-    for any PR, publish an outbound notice, or run one collect pass."""
+    """Driver channel controls: list open sessions, register an outside page,
+    publish an outbound notice, or run one collect pass."""
     if not surface_mod.available():
         print("review-surface CLI not on PATH")
         return
@@ -1729,41 +609,6 @@ def cmd_surface(cfg, args):
         surface_mod.register_external(cfg, path, args.project, args.s_title,
                                       role=args.role, cwd=args.s_cwd, log=log)
         return
-    if args.action == "hold":
-        if not (args.story and args.pr):
-            print("hold needs --story and --pr"); return
-        ghc = GitHub(cfg.data_dir / "etags.json")
-        reg = Registry(cfg.data_dir / "registry.json")
-        story = reg.stories().get(args.story) or {}
-        repo = story.get("repo")
-        if not repo:
-            print(f"unknown story {args.story}"); return
-        detail = ghc.pr(repo, args.pr)
-        try:
-            pr_files = ghc.get(f"/repos/{repo}/pulls/{args.pr}/files")
-        except Exception:
-            pr_files = None
-        art = surface_mod.author_risk_hold(cfg, args.story, args.pr, detail,
-                                           "manual-test", files=pr_files)
-        surface_mod.open_session(cfg, art, "risk_hold", log,
-                                 story=args.story, pr=args.pr, repo=repo)
-        return
-    if args.action == "spec":
-        if not (args.story and args.pr):
-            print("spec needs --story and --pr"); return
-        ghc = GitHub(cfg.data_dir / "etags.json")
-        reg = Registry(cfg.data_dir / "registry.json")
-        story = reg.stories().get(args.story) or {}
-        repo = story.get("repo")
-        if not repo:
-            print(f"unknown story {args.story}"); return
-        detail = ghc.pr(repo, args.pr)
-        spec_files = _spec_files_for_pr(ghc, repo, detail, args.pr)
-        art = surface_mod.author_spec_review(cfg, args.story, args.pr, detail, spec_files)
-        surface_mod.open_session(cfg, art, "spec_review", log, story=args.story,
-                                 pr=args.pr, repo=repo,
-                                 sha=(detail.get("head") or {}).get("sha") or "")
-        return
     if args.action == "notify":
         if not (args.story and args.text):
             print("notify needs --story and --text"); return
@@ -1774,9 +619,8 @@ def cmd_surface(cfg, args):
         surface_mod.open_session(cfg, art, "notice", log, story=args.story)
         return
     if args.action == "collect":
-        ghc = GitHub(cfg.data_dir / "etags.json")
         reg = Registry(cfg.data_dir / "registry.json")
-        surface_mod.tick(cfg, reg, ghc, log)
+        surface_mod.tick(cfg, reg, log)
         print("collected one pass; sessions:")
         for s in surface_mod.status_list(cfg):
             print(f"  {s['kind']} {s.get('story')} {s.get('path')}")
@@ -1885,7 +729,7 @@ def cmd_task(cfg, args):
         # agent: `pipeline.py task list` started a real agent session (2026-09-22).
         print(f"refusing a one-word task ({args.text.strip()!r}): that reads like a "
               f"command, not a request.\n"
-              f"  tasks and stories:  python3 pipeline.py status\n"
+              f"  tasks:              python3 pipeline.py status\n"
               f"  open pages:         python3 pipeline.py surface list\n"
               f"  send it anyway:     add --yes", file=sys.stderr)
         sys.exit(2)
@@ -1926,7 +770,7 @@ def cmd_study_thread(cfg, args):
     rec = tasks_mod.records(reg).get(args.from_task)
     if rec is None:
         sys.exit(f"no task {args.from_task!r}")
-    page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+    page = task_page(cfg, args.from_task, rec.get("page"))
     try:
         t = study_thread.start(cfg, reg, " ".join(args.rest), args.from_task, str(page or ""),
                                model=args.model)
@@ -1949,7 +793,7 @@ def cmd_study(cfg, args):
         if rec is None:
             sys.exit(f"study: no task {args.from_task!r} — `pipeline.py status` lists them")
         cwd = cwd or rec.get("cwd") or None
-        page = surface_out(cfg, tasks_mod.NODE, args.from_task, page=rec.get("page"))
+        page = task_page(cfg, args.from_task, rec.get("page"))
     try:
         task_id = tasks_mod.submit_study(cfg, " ".join(args.topic), from_task=args.from_task,
                                          cwd=cwd, page=page)
@@ -2096,30 +940,13 @@ def main():
                     help="path to config.toml (default: $CADRE_CONFIG)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("install", help="clone + link pipeline skills into a checkout")
-    p.add_argument("--repo", required=True)
-    p = sub.add_parser("start", help="PR pipeline: run intake for a story "
-                                     "(feature branch, tracking issue, planning PR)")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--story", help="story text inline")
-    p.add_argument("--story-file", help="path to story markdown")
-    p.add_argument("--story-id", help="board id, e.g. ENG-123 (default: timestamp)")
-    p.add_argument("--title")
-    p.add_argument("--variant", choices=["change-spec", "spec-as-source"])
     sub.add_parser("up", help="start the page server, the fleet page and the daemon "
                               "in this terminal; Ctrl-C stops all three")
     sub.add_parser("run", help="the engine loop alone, without the API (see `serve`)")
     sub.add_parser("serve", help="the backend: the API and fleet page plus the engine "
                                  "loop, in one process")
     sub.add_parser("once", help="one daemon pass, then exit — it dispatches for real")
-    sub.add_parser("status", help="print registered dialogue tasks and pipeline stories")
-    sub.add_parser("board-check", help="validate board-intake config against the live tracker")
-    p = sub.add_parser("trigger", help="manually fire a stage for a slice (re-fire stranded builds)")
-    p.add_argument("--story", required=True)
-    p.add_argument("--stage", required=True, choices=["contracts", "tests", "build", "interrogate", "revise", "assembly", "risk-triage"])
-    p.add_argument("--slice")
-    p.add_argument("--pr", type=int)
-    p.add_argument("--role")
+    sub.add_parser("status", help="print registered dialogue tasks")
 
     p = sub.add_parser("ask", help="agent: record a driver question without blocking")
     p.add_argument("--story", required=True)
@@ -2215,10 +1042,8 @@ def main():
                             "prompt versions (`pipeline.py node` alone lists them)")
     p.add_argument("argv", nargs=argparse.REMAINDER)
     p = sub.add_parser("surface", help="driver channel: list sessions / force a test artifact")
-    p.add_argument("action", choices=["list", "hold", "spec", "notify", "collect",
-                                      "register"])
+    p.add_argument("action", choices=["list", "notify", "collect", "register"])
     p.add_argument("--story")
-    p.add_argument("--pr", type=int)
     p.add_argument("--title", dest="s_title")
     p.add_argument("--text")
     p.add_argument("--file", help="register: artifact to open/link (omit for a "
@@ -2231,12 +1056,9 @@ def main():
 
     args = ap.parse_args()
     cfg = config_mod.load(args.config)
-    # The summon handle is per-deployment; set it once, here, so every command
-    # (and every subprocess this one spawns) reads comments the same way.
-    poller.use_token(cfg.runner["summon_token"])
-    {"install": cmd_install, "start": cmd_start, "status": cmd_status, "trigger": cmd_trigger,
+    {"status": cmd_status,
      "ask": cmd_ask, "wait": cmd_wait, "answer": cmd_answer, "messages": cmd_messages,
-     "board-check": cmd_board_check, "surface": cmd_surface, "task": cmd_task,
+     "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),

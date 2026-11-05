@@ -6,7 +6,7 @@ signal only raises a flag, the pass runs to its end (save included), and the
 loop exits 0 at the top of the next pass. A stop that lands in the sleep
 between passes ends it within a second.
 
-No claude, no gh, no network: every collaborator of a pass is stubbed.
+No claude, no network: every collaborator of a pass is stubbed.
 
 Run directly: python3 tests/test_graceful_stop.py
 """
@@ -30,7 +30,6 @@ class Cfg:
     def __init__(self, poll_interval):
         self.data_dir = Path(tempfile.mkdtemp())
         self.runner = {"poll_interval": poll_interval, "max_concurrent_runs": 1}
-        self.intake = {"provider": "none", "phase_states": {}}
         self.limits = {"max_rounds_per_stage": 5}
 
 
@@ -38,14 +37,9 @@ class Reg:
     saves = []
 
     tasks = {}
-    polled = []
-    story_set = {}
 
     def __init__(self, _path):
         self.data = {"stories": {}, "tasks": Reg.tasks}
-
-    def stories(self, *a):
-        return {} if a else dict(Reg.story_set)
 
     def save(self):
         Reg.saves.append(time.time())
@@ -56,26 +50,18 @@ def stubbed_pass(during_reap=None):
     """Every collaborator of one daemon pass replaced; `during_reap` runs in
     the middle of the pass, between two registry saves' worth of work."""
     Reg.saves = []
-    Reg.polled = []
     names = {
-        "_poll_story": lambda _c, _r, _g, slug, _s: Reg.polled.append(slug),
-        "GitHub": lambda *_a: None,
         "_preflight_or_exit": lambda *_a: None,
         "_log_stale_nodes": lambda *_a: None,
         "Registry": Reg,
-        "_consume_requests": lambda *_a: None,
         "_reap_tasks": lambda *_a: during_reap and during_reap(),
         "log": lambda *_a: None,
     }
     saved = {n: getattr(pipeline, n) for n in names}
-    mods = [(pipeline.board_mod, "make_board", lambda *_a: None),
-            (pipeline.board_mod, "mirror_status", lambda *_a, **_k: None),
-            (pipeline.status_mod, "install_page", lambda *_a: None),
+    mods = [(pipeline.status_mod, "install_page", lambda *_a: None),
             (pipeline.status_mod, "write_status", lambda *_a, **_k: None),
             (pipeline.surface_mod, "tick", lambda *_a: None),
-            (pipeline.surface_mod, "reconcile_merged_holds", lambda *_a: None),
             (pipeline.engine_seam, "enabled", lambda: False),
-            (pipeline.runs_mod, "all_active", lambda *_a: []),
             # `run` stamps its code into the status module; keep that local
             (pipeline.status_mod, "CODE", None)]
     saved_mods = [(m, n, getattr(m, n)) for m, n, _ in mods]
@@ -133,7 +119,7 @@ def _passes_while(cfg, poke_at, poke, stop_at):
     return [round(s - t0, 2) for s in Reg.saves]
 
 
-def test_a_ring_from_the_api_starts_a_pass_at_once_without_polling_github():
+def test_a_ring_from_the_api_starts_a_pass_at_once():
     cfg = Cfg(poll_interval=30)
     # from another process, as the API and the CLI do — the daemon's own
     # process never rings itself
@@ -142,19 +128,13 @@ def test_a_ring_from_the_api_starts_a_pass_at_once_without_polling_github():
             " from runnerlib import wake; sys.exit(0 if wake.notify(N(data_dir=%r)) else 1)"
             % (str(Path(pipeline.__file__).parent), str(cfg.data_dir))]
     rang = []
-    Reg.story_set = {"s": {}}  # one story, so a GitHub poll is visible
-    try:
-        saves = _passes_while(cfg, 0.3, lambda: rang.append(subprocess.call(ring)),
-                              stop_at=3.5)
-    finally:
-        Reg.story_set = {}
+    saves = _passes_while(cfg, 0.3, lambda: rang.append(subprocess.call(ring)),
+                          stop_at=3.5)
     assert rang == [0], "the listener took the ring"
-    # pass 1 saves twice (its story, its reap); the ring at ~0.3 s starts
-    # pass 2 straight away, which saves once — and nothing else until 30 s
-    assert len(saves) == 3, saves
-    assert saves[2] < 0.8, saves
-    # GitHub was polled by the timed first pass only, not the pushed one
-    assert Reg.polled == ["s"], Reg.polled
+    # pass 1 saves once (its reap); the ring at ~0.3 s starts pass 2 straight
+    # away, which saves once — and nothing else until 30 s
+    assert len(saves) == 2, saves
+    assert saves[1] < 0.8, saves
 
 
 def test_a_run_exiting_ends_the_wait():

@@ -7,7 +7,7 @@
     "shape of work entirely — no stories, no PRs, no stages, no GitHub, a body",
     "that runs a python script and a node whose command is not `claude -p` —",
     "and it runs on the same load_actions/tick path as",
-    "config/actions-pipeline.json, at the same time, over the same board.",
+    "config/actions-dialogue.json, at the same time, over the same board.",
     "tests/test_agnosticism.py is that claim, asserted.",
     "",
     "One topic carries an eval run:",
@@ -24,8 +24,7 @@
     "Prototype scope (evals/PLAN-2026-09.md, re-cut 2026-09-08): judges are",
     "plain ad-hoc scripts writing jsonl. There is no backend here on purpose.",
     "",
-    "Relative argv paths, like actions-pipeline.json's `python3 -m",
-    "runnerlib.gh_watch`, resolve against the daemon's cwd — the repo."
+    "Relative argv paths resolve against the daemon's cwd — the repo."
   ],
 
   "actions": [

@@ -1,14 +1,10 @@
-# PR-gated pipeline — local runner config
+# Cadre — local runner config
 # Copy to config.toml (same dir) or pass --config. Paths may use ~.
 
 [runner]
-poll_interval = 45                                  # seconds between poll passes
-data_dir = "~/.local/state/pipeline-runner"         # registry, etags, checkouts, logs
-skills_source = "~/dev-config/ai-workflow-config/skills"  # where `install` links skills from
-require_skills = true              # false: warn about missing skills instead of refusing
-summon_token = "@claude"           # the handle a driver types to summon the agent —
-                                   # the BOT ACCOUNT's name, so a deployment under a
-                                   # different account changes it here
+poll_interval = 45                                  # longest gap between daemon passes (work wakes it sooner)
+data_dir = "~/.local/state/pipeline-runner"         # registry, board, pages, logs
+skills_source = "~/dev-config/ai-workflow-config/skills"  # skills linked into a turn's directory
 status_bind = "0.0.0.0"            # statusd.py: bind address (tailnet default) and port;
 status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
                                    # several addresses: ["127.0.0.1", "100.x.y.z"]
@@ -33,52 +29,15 @@ timeout_seconds = 0              # per-turn wall-clock ceiling in seconds; 0 = n
 # Models are ALWAYS passed explicitly (sessions must not inherit the laptop default).
 default_model = "opus"
 
+# Model and effort per node, overriding the defaults above. Model and effort
+# are one choice, not two: a strong model at low effort and a weaker one at
+# high effort can cost about the same per task, so the interesting comparisons
+# are pairs. Unlisted nodes take the global default.
 [claude.stage_models]
-intake = "opus"
-interrogate = "opus"
-contracts = "opus"
-tests = "sonnet"
-build = "sonnet"
-revise = "sonnet"
+# implement = "sonnet"
 
-# Effort per stage, overriding [claude].effort. Model and effort are one
-# choice, not two: a strong model at low effort and a weaker one at high effort
-# can cost about the same per task, so the interesting comparisons are pairs.
-# Unlisted stages take the global default.
 [claude.stage_effort]
-# build = "low"        # strong model, brief thinking — the locked tests steer it
-# interrogate = "max"  # where finding the flaw is the whole job
+# tutor = "medium"
 
 [limits]
-max_rounds_per_stage = 5           # interrogate rounds / revise rounds per PR before escalation
-allowed_actors = ["BrandonPerez-Dev"]  # GitHub logins whose comments/merges are honored
-
-# One [[repos]] block per target repo the runner may operate on.
-[[repos]]
-name = "BrandonPerez-Dev/pipeline-sandbox"   # owner/repo on GitHub
-variant = "change-spec"                      # "change-spec" | "spec-as-source"
-default_branch = "main"
-# checkout is optional; defaults to <data_dir>/checkouts/<repo-name>
-
-# Board-driven intake (optional): watch a tracker column, auto-start stories,
-# mirror status back to the card. Trigger is a configurable predicate — the
-# work/Jira version is the same shape with different conditions.
-# [intake]
-# provider = "linear"              # selects the provider AND the [intake.<name>] block
-# repo = "owner/name"              # repo triggered stories run against
-# variant = "change-spec"          # optional; else the repo's default
-# pickup_state = "In Progress"     # where a picked-up card is moved
-# State names are workspace vocabulary, not the provider's: override the ones
-# your board spells differently and the rest keep their defaults.
-# [intake.phase_states]
-# slices = "In Progress"
-# "assembly-pending" = "In Review"
-# "final-review" = "In Review"
-# done = "Done"
-# [intake.linear]
-# api_key_env = "LINEAR_API_KEY"   # key lives in ~/.config/cadre/env
-# team = "Nexusdev"                # team name or key
-# trigger_state = "cadre"          # the column that means "go"
-# require_labels = []              # extra conditions, all must pass
-# exclude_labels = []              # e.g. ["spike"]
-# assignee = ""                    # "" = anyone
+max_rounds_per_stage = 5           # dialogue rounds offered, and agent-to-agent handoffs per task

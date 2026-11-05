@@ -2,9 +2,8 @@
 
 Every check here is the same shape: the shipped default is what the runner did
 before, and one config key (or one env var) moves it — because the corporate
-deployment this was audited against has a different bot account, a different
-skills tree, a network policy about bind addresses, and a data dir somewhere
-else entirely.
+deployment this was audited against has a different skills tree, a network
+policy about bind addresses, and a data dir somewhere else entirely.
 
 Run directly: python3 tests/test_portability.py
 """
@@ -18,42 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from runnerlib import board_events, claude_run, poller, surface
+from runnerlib import board_events, claude_run, surface
 
 
 def scratch() -> Path:
     return Path(tempfile.mkdtemp())
-
-
-# --------------------------------------------------------------------------- summon token
-
-
-def test_the_summon_handle_is_configuration():
-    """`@claude` is the bot ACCOUNT's name. A deployment running under another
-    account is unsummonable until this is a dial."""
-    was = os.environ.get(poller.SUMMON_TOKEN_ENV)
-    try:
-        assert poller.SUMMON_RE.search("hey @claude take a look")
-
-        poller.use_token("@cadre-bot")
-        assert poller.SUMMON_RE.search("@cadre-bot please revise")
-        assert not poller.SUMMON_RE.search("@claude please revise")
-        # gh_watch reads the same pattern through the module, so the daemon and
-        # the watcher can never disagree about what a summon is
-        from runnerlib import gh_watch
-        assert gh_watch.poller.SUMMON_RE is poller.SUMMON_RE
-        # ...and a subprocess inherits it, which is how the watcher gets it when
-        # the engine shells out
-        assert os.environ[poller.SUMMON_TOKEN_ENV] == "@cadre-bot"
-
-        # a token with regex punctuation in it is matched literally
-        poller.use_token("@team.bot+ci")
-        assert poller.SUMMON_RE.search("ping @team.bot+ci now")
-        assert not poller.SUMMON_RE.search("ping @teamXbotYci now")
-    finally:
-        poller.use_token(was or poller.DEFAULT_SUMMON_TOKEN)
-        if was is None:
-            os.environ.pop(poller.SUMMON_TOKEN_ENV, None)
 
 
 # --------------------------------------------------------------------------- skills
@@ -66,33 +34,9 @@ def _checkout() -> Path:
     return d
 
 
-def test_missing_skills_fail_loudly_by_default_and_are_survivable_by_config():
-    """A half-wired checkout is a bad deployment, but a fresh machine that has
-    not cloned the skills tree yet has to be able to come up."""
-    source = scratch()
-    (source / claude_run.PIPELINE_SKILLS[0]).mkdir(parents=True)
-
-    try:
-        claude_run.install_skills(_checkout(), source)
-        assert False, "a missing skill must stop the install by default"
-    except SystemExit as e:
-        # the error names the key to change, not just the symptom
-        assert "runner.skills_source" in str(e)
-        assert "runner.require_skills" in str(e)
-
-    checkout, warnings = _checkout(), []
-    linked, missing = claude_run.install_skills(
-        checkout, source, required=False, log=warnings.append)
-    assert linked == [claude_run.PIPELINE_SKILLS[0]]
-    assert set(missing) == set(claude_run.PIPELINE_SKILLS[1:])
-    assert warnings and "runner.skills_source" in warnings[0]
-    assert (checkout / ".claude" / "skills" / linked[0]).is_symlink()
-
-
 def test_task_dialogues_get_their_skills_in_any_cwd():
-    """A dialogue runs in whatever directory the ask names — no checkout
-    preparation happens for it, so the skills its prompt invokes by name must
-    be linked there at spawn. A round written without auto-surface silently
+    """A dialogue runs in whatever directory the ask names, so the skills its
+    prompt invokes by name must be linked there at spawn. A round written without auto-surface silently
     drops the whole authoring contract (decided layer included)."""
     source = scratch()
     for name in claude_run.TASK_SKILLS:
@@ -140,9 +84,8 @@ def test_cadre_ships_its_own_page_skill():
 
 
 def test_no_machines_own_config_is_shipped():
-    """config.local.toml carries this host's paths and this person's
-    allowed_actors. Tracking it hands a fresh machine someone else's
-    skills_source and an actor list it is not in — and the installer then
+    """config.local.toml carries this host's paths. Tracking it hands a fresh
+    machine someone else's skills_source and data dir — and the installer then
     declines to overwrite the file it finds, so the wrong config sticks. The
     installer writes this per machine; the repo must not carry one."""
     assert _tracked(ROOT / "config.local.toml") is not True, \

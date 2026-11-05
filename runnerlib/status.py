@@ -1,18 +1,10 @@
 """Runner status snapshot — the data behind the status page.
 
-The daemon writes one JSON file (<data_dir>/status/status.json) at every
-meaningful moment: each idle poll pass, just before a stage run starts, and
-just after it ends. A separate tiny web service (cadre-status.service) serves
-the directory; the page's freshness logic is the alarm:
-
-  - `run` present            -> a stage is executing (updates pause while the
-                                blocking claude run works; `run.started` is the
-                                freshness anchor, not `ts`)
-  - no `run`, recent `ts`    -> idle, healthy
-  - no `run`, stale `ts`     -> the daemon is dead or wedged — the page goes red
+The daemon writes one JSON file (<data_dir>/status/status.json) every pass.
+statusd.py serves it; a stale `ts` means the daemon is dead or wedged.
 
 Status writes must never take the daemon down: every entry point swallows
-exceptions. Served read-only on LAN + tailnet; nothing sensitive beyond story
+exceptions. Served read-only on LAN + tailnet; nothing sensitive beyond page
 titles and log lines.
 """
 
@@ -51,35 +43,18 @@ def install_page(cfg) -> None:
         pass
 
 
-def write_status(cfg, reg, run: dict | None = None, runs: list | None = None) -> None:
-    """Atomic snapshot write. `run` describes the oldest in-flight stage (page
-    back-compat); `runs` is the full list of concurrent in-flight stages, each
-    {"stage", "story", "slice", "pr", "started" (epoch)}."""
+def write_status(cfg) -> None:
+    """Atomic snapshot write."""
     try:
         d = status_dir(cfg)
         d.mkdir(parents=True, exist_ok=True)
-        stories = _stories(reg)
-        surfs = _surfaces(cfg)
-        # Surfaces belong to their story's row (driver feedback 2026-08-27);
-        # the standalone list keeps only orphans with no story to live under.
-        by_story = {st["slug"]: st for st in stories}
-        orphans = []
-        for sf in surfs:
-            st = by_story.get(sf.get("story"))
-            if st is not None:
-                st.setdefault("surfaces", []).append(sf)
-            else:
-                orphans.append(sf)
         snap = {
             "ts": time.time(),
             "iso": time.strftime("%Y-%m-%d %H:%M:%S"),
             "poll_interval": cfg.runner["poll_interval"],
-            "run": run,
-            "runs": runs or [],
-            "stories": stories,
             "recent": _history(cfg.data_dir / "history.jsonl"),
             "questions": _questions(cfg),
-            "surfaces": orphans,
+            "surfaces": _surfaces(cfg),
             "log_tail": _log_tail(cfg.data_dir / "daemon.log"),
         }
         if CODE is not None:
@@ -144,51 +119,6 @@ def _questions(cfg) -> list[dict]:
                 for m in messages.pending(cfg.data_dir)]
     except Exception:
         return []
-
-
-def _all_stories(reg) -> dict:
-    """Active work plus anything escalated. An escalation is the one state that
-    MOST wants a human, and filtering the snapshot to `active` hid those rows
-    from the page entirely. Fakes with a no-argument stories() still work."""
-    merged = dict(reg.stories())
-    try:
-        merged.update(reg.stories("escalated"))
-    except TypeError:
-        pass
-    return merged
-
-
-def _stories(reg) -> list[dict]:
-    out = []
-    for slug, s in _all_stories(reg).items():
-        out.append({
-            "slug": slug,
-            "story_id": s.get("story_id"),
-            "title": s.get("title"),
-            "repo": s.get("repo"),
-            "status": s.get("status"),
-            "phase": s.get("phase"),
-            "planning_pr": s.get("planning_pr"),
-            "board_url": (s.get("board") or {}).get("url"),
-            "slices": {
-                name: {r: bool(sl.get(f"{r}_merged")) for r in ("contract", "tests", "build")}
-                for name, sl in s.get("slices", {}).items()
-            },
-            # Every PR the story owns, flattened: the fleet page links them
-            # from the story row and has no other route to a slice's PR number.
-            "prs": _story_prs(s),
-        })
-    return out
-
-
-def _story_prs(s: dict) -> list[int]:
-    seen = []
-    for n in ([s.get("planning_pr")] +
-              [sl.get(f"{r}_pr") for sl in s.get("slices", {}).values()
-               for r in ("contract", "tests", "build")]):
-        if isinstance(n, int) and n not in seen:
-            seen.append(n)
-    return seen
 
 
 def _log_tail(log_path: Path) -> list[str]:

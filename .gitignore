@@ -1,10 +1,10 @@
-# Local-only: holds machine-specific repo list + allowed_actors (no secrets,
-# but per-machine). Copy from config.example.toml on each host.
+# Local-only: holds machine-specific paths (no secrets, but per-machine).
+# Copy from config.example.toml on each host.
 config.toml
 __pycache__/
 *.pyc
 
 # The local instance config. Written by deploy/install.sh per machine: it
-# carries this host s paths and actor, so shipping one person s copy hands
-# every other machine the wrong skills_source and the wrong allowed_actors.
+# carries this host s paths, so shipping one person s copy hands every other
+# machine the wrong skills_source and data_dir.
 config.local.toml

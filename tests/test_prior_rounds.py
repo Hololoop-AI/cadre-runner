@@ -23,7 +23,7 @@ PAGE = """<!doctype html><html lang="en"><head><title>t</title></head><body>
 
 def annotate(cfg, reg, page, meta, text):
     with jsonl_board(cfg.data_dir):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(page), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(page), meta,
                              poll_json(note(text, "Round one")))
 
 

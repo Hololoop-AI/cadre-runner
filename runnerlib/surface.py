@@ -1,29 +1,22 @@
 """Review Surface as the driver channel (cadre-context decision
 2026-08-26-surface-as-driver-channel).
 
-The daemon authors deterministic HTML artifacts (no LLM, no tokens) at each
-driver touchpoint and opens them as Review Surface sessions. Nothing here
-long-polls: our review-surface fork appends a wake signal to an outbox JSONL
-on every driver "send", and the daemon's tick consumes new signals with a
-short one-shot poll — delivery semantics stay review-surface's own. Surface
-feedback comes back as machine tokens embedded in queued prompts:
+Dialogue turns write their own pages; the daemon opens them as Review Surface
+sessions, and authors a few deterministic ones itself (questions, notices).
+Nothing here long-polls: our review-surface fork appends a wake signal to an
+outbox JSONL on every driver "send", and the daemon's tick consumes new
+signals with a short one-shot poll — delivery semantics stay review-surface's
+own. Surface feedback comes back as machine tokens embedded in queued prompts:
 
-    CADRE_DECISION gate=risk_hold story=<slug> pr=<n> verdict=approve|reject
+    CADRE_DECISION gate=task story=<task> task=<task> verdict=...
     CADRE_ANSWER ticket=<id> :: <free text>
 
-Everything else the driver annotates is recorded to the board as
-`surface_feedback` and mirrored to the PR when there is one — the PR stays
-the record (dual channel: GitHub remains fully live for teammates; the gate
-advances on the first qualifying event from either side).
+Task pages (workflow #3, `config/actions-dialogue.json`) are where the
+driver's words go somewhere, and `_task_bridge` is the whole of it: their
+feedback goes to the BLACKBOARD as that workflow's own commands. Free text on
+any other page is recorded to the board as `surface_feedback`.
 
-Task pages (workflow #3, `config/actions-dialogue.json`) are the exception,
-and `_task_bridge` is the whole of it: they have no PR, so their feedback goes
-to the BLACKBOARD as that workflow's own commands and nowhere near GitHub.
-The scope is one session kind — a session opened as `kind="task"` — so every
-pipeline surface keeps the flow above untouched.
-
-A batch the daemon consumes that NOTHING routes — no task id, no PR to
-mirror to — is STRANDED: `_dead_letter` writes it verbatim under
+A batch the daemon consumes that NOTHING routes — no task id — is STRANDED: `_dead_letter` writes it verbatim under
 surfaces/stranded/ and the fleet badges the row. A tripwire, not a router.
 
 sessions.json is the durable session list; the outbox cursor is a byte
@@ -41,15 +34,10 @@ import time
 from html import escape
 from pathlib import Path
 
-from . import board_events, dispatcher, gh
+from . import board_events
 
 CLI = "review-surface"
-_DECISION_RE = re.compile(
-    r"CADRE_DECISION gate=(\w+) story=([\w.-]+) pr=(\d+) verdict=(approve|reject)")
-# Workflow #3's verdict (prompts/task.md). Its own pattern because the pipeline
-# one is PR-shaped to the bone — `pr=<n>` is required and the verdicts are
-# approve|reject — and a dialogue has no PR and a `continue` instead of a
-# reject. Matched FIRST, so a task token can never be read as a pipeline one.
+# Workflow #3's verdict (prompts/task.md).
 #
 # `route:<node>` is the third kind of verdict: the driver picked the node
 # that takes the work next (runnerlib/tasks.py "the node event"). Same form,
@@ -141,70 +129,6 @@ def _write_artifact(cfg, name: str, title: str, body: str) -> Path:
     return path
 
 
-def _risk_rationale(body: str) -> str:
-    """The Risk line plus its adjacent rationale — the part of the report that
-    actually argues for the hold."""
-    lines = (body or "").splitlines()
-    for i, line in enumerate(lines):
-        if re.match(r"^\s*\**risk:\s*\**\s*high\b", line, re.IGNORECASE):
-            block = [line.strip()]
-            for follow in lines[i + 1:i + 8]:
-                if not follow.strip():
-                    break
-                block.append(follow.strip())
-            return "\n".join(block)
-    return ""
-
-
-def author_risk_hold(cfg, slug: str, pr: int, detail: dict, stage: str,
-                     files: list | None = None) -> Path:
-    """A decision brief, not a body dump: what the change is, what it touches,
-    why it held — with the full report collapsed for when it's needed."""
-    url = gh.web_url(detail.get('base', {}).get('repo', {}).get('full_name') or '', pr)
-    html_url = detail.get("html_url") or url
-    token = f"CADRE_DECISION gate=risk_hold story={slug} pr={pr} verdict="
-    body_text = detail.get("body") or ""
-    summary = next((p.strip() for p in body_text.split("\n\n")
-                    if p.strip() and not p.lstrip().startswith("#")
-                    and not re.match(r"^\s*\**(risk|confidence):", p.strip(),
-                                     re.IGNORECASE)), "")
-    rationale = _risk_rationale(body_text)
-    file_rows = "".join(
-        f"<tr><td style='font-family:ui-monospace,monospace;font-size:12.5px'>{escape(f.get('filename') or '')}</td>"
-        f"<td style='color:#8fe39e;text-align:right'>+{f.get('additions', 0)}</td>"
-        f"<td style='color:#f06464;text-align:right'>−{f.get('deletions', 0)}</td></tr>"
-        for f in (files or [])[:40])
-    files_html = (f"<div class='card'><span class='chip'>Touches "
-                  f"{len(files)} file(s)</span><table style='width:100%;border-collapse:collapse'>"
-                  f"{file_rows}</table></div>") if files else ""
-    body = f"""
-<h1>Risk HIGH — driver decision</h1>
-<div class="meta">{escape(slug)} · {escape(stage)} · <a href="{escape(html_url)}">PR #{pr}</a> — {escape(detail.get('title') or '')}</div>
-<div class="card"><span class="chip">The change</span>
-<p>{escape(summary[:800]) or '<span class="dim">(no summary in the PR body)</span>'}</p></div>
-{files_html}
-<div class="card"><span class="chip">Why it held</span>
-{f'<pre>{escape(rationale[:3000])}</pre>' if rationale else ''}
-<p class="dim">A fresh reviewer assigned <b>Risk: high</b> to this finished change — low/medium
-auto-merge; high is a decision, not a PR to read. Annotate anything here, then give the
-verdict. Approving merges the PR (a GitHub merge works too; first channel wins).</p></div>
-<div class="card"><details><summary class="dim" style="cursor:pointer">Full reviewer report (PR body)</summary>
-<pre>{escape(body_text[:20000] or '(empty body)')}</pre></details></div>
-<div class="card"><span class="chip">Verdict</span>
-<form data-review-surface-question="verdict" onsubmit="event.preventDefault();
-  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
-  window.reviewSurface.queuePrompt('{token}'+v,
-    {{tag:'choice', text:'Risk-hold verdict: '+v, element:event.currentTarget,
-     data:{{gate:'risk_hold', story:'{slug}', pr:{pr}, verdict:v}}}});">
-<label><input type="radio" name="verdict" value="approve"><b>Approve — merge it</b>
-<span class="why">The risk is acceptable; the change merges as-is.</span></label>
-<label><input type="radio" name="verdict" value="reject"><b>Reject — send back</b>
-<span class="why">Holds the PR with a `hold` label; annotate above to say what must change.</span></label>
-<button type="submit">Queue verdict</button></form></div>"""
-    return _write_artifact(cfg, f"hold-{slug}-pr{pr}.html",
-                           f"Risk hold — {slug} PR #{pr}", body)
-
-
 def author_question(cfg, msg: dict) -> Path:
     ticket = msg["ticket"]
     rec = msg.get("recommendation") or ""
@@ -224,44 +148,6 @@ def author_question(cfg, msg: dict) -> Path:
 <textarea name="text" placeholder="Answer in your own words — it reaches the run verbatim."></textarea>
 <button type="submit">Queue answer</button></form></div>"""
     return _write_artifact(cfg, f"ask-{ticket}.html", f"Question — {ticket}", body)
-
-
-def author_spec_review(cfg, slug: str, pr: int, detail: dict,
-                       spec_files: list[dict]) -> Path:
-    """The unified spec gate (cadre-context 2026-08-26-unified-spec): one
-    artifact carrying the plan narrative and every spec document on the
-    planning branch, each annotatable in place, with the approval verdict.
-    Approve merges the planning PR; revise feeds annotations to the ordinary
-    revise machinery. spec_files: [{path, text}]."""
-    html_url = detail.get("html_url") or ""
-    token = f"CADRE_DECISION gate=spec_review story={slug} pr={pr} verdict="
-    docs = "".join(
-        f"""<div class="card"><span class="chip">{escape(f['path'])}</span>
-<pre>{escape(f['text'][:30000])}</pre></div>"""
-        for f in spec_files)
-    body = f"""
-<h1>Spec review — the one human gate</h1>
-<div class="meta">{escape(slug)} · <a href="{escape(html_url)}">planning PR #{pr}</a> — {escape(detail.get('title') or '')}</div>
-<div class="card"><span class="chip">Plan narrative (PR description)</span>
-<pre>{escape((detail.get('body') or '(empty)')[:20000])}</pre></div>
-{docs}
-<div class="card"><span class="chip">Verdict</span>
-<p class="dim">Annotate any slice, decision, or contract above first — annotations reach the
-agents as your PR comments either way. On approval the spec locks and everything
-after is automated; a GitHub merge of the planning PR does the same thing (first
-channel wins).</p>
-<form data-review-surface-question="verdict" onsubmit="event.preventDefault();
-  const v=new FormData(event.currentTarget).get('verdict'); if(!v) return;
-  window.reviewSurface.queuePrompt('{token}'+v,
-    {{tag:'choice', text:'Spec verdict: '+v, element:event.currentTarget,
-     data:{{gate:'spec_review', story:'{slug}', pr:{pr}, verdict:v}}}});">
-<label><input type="radio" name="verdict" value="approve"><b>Approve — lock the spec and run</b>
-<span class="why">Merges the planning PR; slices dispatch from the next daemon pass.</span></label>
-<label><input type="radio" name="verdict" value="revise"><b>Revise — send my annotations back</b>
-<span class="why">Your annotations become driver comments on the PR; a revise round picks them up.</span></label>
-<button type="submit">Queue verdict</button></form></div>"""
-    return _write_artifact(cfg, f"spec-{slug}-pr{pr}.html",
-                           f"Spec review — {slug}", body)
 
 
 def author_notice(cfg, story: str, title: str, message_html: str) -> Path:
@@ -402,7 +288,7 @@ def end_session(cfg, path: str, log) -> None:
     log(f"surface: ended session for {Path(path).name}")
 
 
-def agent_reply(cfg, reg, ghc, log, path: Path, message: str) -> bool:
+def agent_reply(cfg, reg, log, path: Path, message: str) -> bool:
     """Answer the driver where they asked (audit 2026-09-15: feedback was
     one-way — annotations went out to GitHub and nothing ever came back on the
     surface). Posts into the session's conversation panel; no-ops when the CLI
@@ -428,7 +314,7 @@ def agent_reply(cfg, reg, ghc, log, path: Path, message: str) -> bool:
         log(f"surface: agent reply failed for {path.name}: {e}")
         return False
     try:
-        _handle_poll(cfg, reg, ghc, log, key, meta, raw)
+        _handle_poll(cfg, reg, log, key, meta, raw)
     except Exception as e:
         log(f"surface: agent reply poll response unhandled for {path.name}: {e}")
     log(f"surface: replied into {path.name}: {text[:120]}")
@@ -470,15 +356,6 @@ def _read_outbox(cfg) -> list[dict]:
 ANCHOR_LIMIT = 200
 
 
-def _quote(anchor: str) -> str:
-    """The anchored text as a markdown blockquote above the driver's words. It
-    gets its own budget — an anchor must never eat into the driver's text."""
-    if not anchor:
-        return ""
-    text = anchor[:ANCHOR_LIMIT] + ("…" if len(anchor) > ANCHOR_LIMIT else "")
-    return "> " + text.replace("\n", "\n> ") + "\n\n"
-
-
 def _anchor(p: dict) -> dict:
     """What the driver attached their words TO. The payload's own `text` is the
     selected/annotated element's text — without it the agent receives a floating
@@ -510,12 +387,6 @@ def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
                                "text": (text[:t.start()] + text[t.end():]).strip(),
                                **anchor})
             continue
-        d = _DECISION_RE.search(text)
-        if d:
-            structured.append({"type": "decision", "gate": d.group(1),
-                               "story": d.group(2), "pr": int(d.group(3)),
-                               "verdict": d.group(4), **anchor})
-            continue
         a = _ANSWER_RE.search(text)
         if a:
             structured.append({"type": "answer", "ticket": a.group(1),
@@ -543,7 +414,7 @@ UNAVAILABLE_LOG_EVERY = 600
 _unavailable_logged = 0.0
 
 
-def tick(cfg, reg, ghc, log) -> None:
+def tick(cfg, reg, log) -> None:
     """One daemon pass: consume new outbox signals (short one-shot poll per
     signalled session) -> open sessions for new pending questions."""
     if not available():
@@ -554,22 +425,22 @@ def tick(cfg, reg, ghc, log) -> None:
                 "annotation is collected until it is")
         return
     try:
-        _tick(cfg, reg, ghc, log)
+        _tick(cfg, reg, log)
     except Exception as e:
         log(f"surface: tick error: {e}")
 
 
-def _consume(cfg, reg, ghc, log, path: str, meta: dict) -> None:
+def _consume(cfg, reg, log, path: str, meta: dict) -> None:
     """One short poll on a session the outbox says has feedback waiting."""
     try:
         raw = _run_cli(["poll", path, "--timeout-ms", "4000", "--json"], timeout=30)
     except Exception as e:
         log(f"surface: consume poll failed for {Path(path).name}: {e}")
         return
-    _handle_poll(cfg, reg, ghc, log, path, meta, raw)
+    _handle_poll(cfg, reg, log, path, meta, raw)
 
 
-def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
+def _handle_poll(cfg, reg, log, path: str, meta: dict, raw: str) -> None:
     """Everything a poll response means: session-ended bookkeeping, structured
     decisions, and the driver's free-text annotations. Shared by the feedback
     consume pass and by agent replies, which poll the same session and would
@@ -605,14 +476,12 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
         _dead_letter(cfg, log, path, meta, raw, payload, reason)
     if meta.get("kind") == "task":
         # Workflow #3 owns this page. Its feedback goes to the blackboard as
-        # the dialogue's own commands and NOWHERE else — no PR mirror, no
-        # merge, no `gh` at all, which is the claim that makes this workflow
-        # the engine's agnosticism proof.
+        # the dialogue's own commands and nowhere else.
         _task_bridge(cfg, reg, log, path, meta, structured, free,
                      raw=raw, payload=payload)
         return
     for item in structured:
-        _apply(cfg, reg, ghc, log, path, meta, item)
+        _apply(cfg, reg, log, path, meta, item)
     for item in free:
         text, anchor = item["text"], item.get("anchor") or ""
         board_events.emit("surface_feedback", artifact=path,
@@ -620,34 +489,21 @@ def _handle_poll(cfg, reg, ghc, log, path: str, meta: dict, raw: str) -> None:
                           text=text[:2000], anchor=anchor[:ANCHOR_LIMIT],
                           selector=item.get("selector") or "",
                           tag=item.get("tag") or "", uid=item.get("uid") or "")
-        if meta.get("pr") and meta.get("repo"):
-            try:
-                # Deliberately NO agent marker: these are the driver's words.
-                # They must count as human activity — blocking automerge and
-                # triggering revise rounds — exactly like a typed PR comment.
-                ghc.comment(meta["repo"], int(meta["pr"]),
-                            f"{dispatcher.DRIVER_PREFIX}\n\n"
-                            f"{_quote(anchor)}{text[:1500]}")
-            except Exception as e:
-                log(f"surface: PR mirror failed: {e}")
         log(f"surface: feedback on {Path(path).name}: {text[:120]}")
 
 
 def _strand_reason(meta: dict, free: list[dict]) -> str:
     """Why this batch reached no reader, or "" when something owns it.
 
-    A task page routes by its task id; every other page routes its free text
-    only by mirroring to a PR. Without either, the driver's annotations become
-    board events nothing reads — the black-hole page. Decision and answer
-    tokens carry their own routing (story+pr, ticket), so a batch of only
-    those is never stranded."""
+    A task page routes by its task id; no other page routes free text.
+    Without one, the driver's annotations become board events nothing reads —
+    the black-hole page. Answer tokens carry their own routing (the ticket),
+    so a batch of only those is never stranded."""
     if meta.get("kind") == "task":
         return "" if meta.get("task") else "task page with no task id"
     if not any((f.get("text") or "").strip() for f in free):
         return ""
-    if meta.get("pr") and meta.get("repo"):
-        return ""
-    return f"{meta.get('kind') or 'unknown'} session with no task id and no PR to mirror to"
+    return f"{meta.get('kind') or 'unknown'} session with no task id"
 
 
 def stranded_dir(cfg) -> Path:
@@ -972,11 +828,9 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
                  free: list[dict], raw: str = "", payload: dict | None = None) -> None:
     """Surface -> board, for workflow #3's pages only.
 
-    The rest of this module mirrors driver feedback to a PR, because for the
-    pipeline the PR is the record. A dialogue has no PR: the BOARD is the
-    record, so the driver's words become the two commands
-    `config/actions-dialogue.json` triggers on and the engine takes the next
-    turn from there.
+    The BOARD is the dialogue's record, so the driver's words become the two
+    commands `config/actions-dialogue.json` triggers on and the engine takes
+    the next turn from there.
 
     The mapping is the config's rule, not a choice made here:
 
@@ -1117,10 +971,10 @@ def _start_study(cfg, reg, log, path: str, meta: dict, task_id: str,
                                  cwd=meta.get("cwd") or "", log=log)
     except Exception as e:
         log(f"surface: study thread from {task_id} not started: {e}")
-        agent_reply(cfg, reg, None, log, Path(path), f"Study not started: {e}")
+        agent_reply(cfg, reg, log, Path(path), f"Study not started: {e}")
         return
     log(f"surface: {task_id} asked to study {topic[:80]!r} — thread {rec['id']}")
-    agent_reply(cfg, reg, None, log, Path(path),
+    agent_reply(cfg, reg, log, Path(path),
                 f"Study thread open on “{topic[:120]}” — it answers in its own page, "
                 "filed under this one on the fleet. This dialogue keeps its round.")
 
@@ -1177,14 +1031,10 @@ def _ensure_server(cfg, sess: dict, log) -> None:
 
 def _sweep_stale(cfg, reg, log) -> None:
     """Close sessions that can no longer be acted on: artifact file deleted,
-    an ask whose ticket is already answered/gone (a CLI answer must retire
-    the surface twin, or the driver is shown a dead question — observed), or
-    any session on a story that is no longer active (shipped/escalated)."""
+    or an ask whose ticket is already answered/gone (a CLI answer must retire
+    the surface twin, or the driver is shown a dead question — observed)."""
     from . import messages
     sess = sessions(cfg)
-    # reg.stories() filters to active — the whole point here is seeing the
-    # NON-active ones, so read the raw table.
-    stories = (reg.data.get("stories") or {}) if reg is not None else {}
     for path, meta in list(sess.items()):
         if not meta.get("open"):
             continue
@@ -1194,23 +1044,6 @@ def _sweep_stale(cfg, reg, log) -> None:
             # absence could mean stale, and the first sweep was closing it
             continue
         stale = not Path(path).exists()
-        if not stale and meta.get("story"):
-            st = stories.get(meta["story"])
-            if st is None:
-                stale = True  # story record deleted (reset/re-plan)
-            elif st.get("status") not in ("active", "intaking"):
-                # "intaking" is live: S0 asks questions too, and treating it
-                # as dead closed an ask surface 56s after it opened — the
-                # driver was left a form that posts into nothing (observed on
-                # the nex-151 clean run, 2026-09-12).
-                stale = True
-            elif (meta.get("kind") == "spec_review" and meta.get("pr")
-                  and st.get("planning_pr")
-                  and int(meta["pr"]) != int(st["planning_pr"])):
-                # A re-planned story has a NEW planning PR; a surface pinned
-                # to the superseded one is a zombie (observed: the driver
-                # reviewed a closed PR's plan).
-                stale = True
         if not stale and meta.get("kind") == "ask" and meta.get("ticket"):
             m = messages.get(cfg.data_dir, meta["ticket"])
             stale = m is None or m.get("answer") is not None
@@ -1219,7 +1052,7 @@ def _sweep_stale(cfg, reg, log) -> None:
             board_events.emit("surface_closed", artifact=path, by="sweep")
 
 
-def _tick(cfg, reg, ghc, log) -> None:
+def _tick(cfg, reg, log) -> None:
     from . import messages
     _sweep_stale(cfg, reg, log)
     sess = sessions(cfg)
@@ -1239,7 +1072,7 @@ def _tick(cfg, reg, ghc, log) -> None:
         for key in signalled:
             hit = by_key.get(key)
             if hit:
-                _consume(cfg, reg, ghc, log, hit[0], hit[1])
+                _consume(cfg, reg, log, hit[0], hit[1])
         sess = sessions(cfg)  # consuming may close sessions
 
     # 1a) a study thread whose engine has gone, with a message waiting, wakes
@@ -1260,6 +1093,9 @@ def _tick(cfg, reg, ghc, log) -> None:
     # re-authoring — counting closed ones meant a question whose surface got
     # swept could never come back, leaving a parked session waiting on an
     # answer the driver had no way to give.
+    # Left as the PR pipeline had it on purpose: it still reads that
+    # pipeline's story table, which nothing writes any more, so no question
+    # page opens here. Agent questions on task pages (track A) replace it.
     open_tickets = {m.get("ticket") for m in sess.values()
                     if m.get("kind") == "ask" and m.get("open")}
     stories = (reg.data.get("stories") or {}) if reg is not None else {}
@@ -1268,15 +1104,16 @@ def _tick(cfg, reg, ghc, log) -> None:
             continue
         st = stories.get(msg.get("story") or "")
         if st is None or st.get("status") not in ("active", "intaking"):
-            continue  # same liveness rule as the sweep, or the two would churn
+            continue
         path = author_question(cfg, msg)
         open_session(cfg, path, "ask", log, ticket=msg["ticket"],
                      story=msg.get("story"), pr=msg.get("pr"))
 
 
-def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
+def _apply(cfg, reg, log, path: str, meta: dict, item: dict) -> None:
+    """A structured item on a page that is not a task page: an answer to a
+    question the daemon surfaced. Task verdicts never reach here."""
     from . import messages
-    from .dispatcher import AGENT_MARKER
     if item["type"] == "answer":
         m = messages.answer(cfg.data_dir, item["ticket"], item["text"])
         board_events.emit("surface_answer", ticket=item["ticket"],
@@ -1284,75 +1121,8 @@ def _apply(cfg, reg, ghc, log, path: str, meta: dict, item: dict) -> None:
                           anchor=(item.get("anchor") or "")[:ANCHOR_LIMIT],
                           selector=item.get("selector") or "",
                           tag=item.get("tag") or "", uid=item.get("uid") or "")
-        if m and m.get("pr") and meta.get("repo"):
-            try:  # the PR is still the record
-                ghc.comment(meta["repo"], int(m["pr"]),
-                            f"**Driver answer (via surface, {item['ticket']}):** "
-                            f"{item['text'][:1500]} {AGENT_MARKER}")
-            except Exception:
-                pass
         log(f"surface: answer recorded for {item['ticket']}")
         end_session(cfg, path, log)
-        return
-    if item["type"] == "decision" and item["gate"] in ("risk_hold", "spec_review",
-                                                       "final_review"):
-        slug, pr = item["story"], item["pr"]
-        story = reg.stories().get(slug) or {}
-        if item["gate"] == "spec_review" and story.get("planning_pr"):
-            # The spec gate targets THE planning PR; a session-substituted
-            # number in the form can be stale after a re-plan.
-            pr = int(story["planning_pr"])
-        if item["gate"] == "final_review":
-            # Same trust rule: the open final PR from the store beats the
-            # session-substituted number.
-            finals = [int(n) for n, p in (story.get("prs_cache") or {}).items()
-                      if p.get("role") == "final" and p.get("state") == "open"]
-            if finals:
-                pr = finals[0]
-        repo = story.get("repo") or meta.get("repo")
-        if not repo:
-            log(f"surface: no repo known for {slug} — decision dropped")
-            return
-        board_events.emit("surface_approval", gate=item["gate"], story=slug,
-                          pr=pr, verdict=item["verdict"])
-        try:
-            if item["verdict"] == "approve":
-                ghc.merge_pr(repo, pr)
-                ghc.comment(repo, pr, f"Approved via surface — merged. {AGENT_MARKER}")
-                log(f"surface: {slug} PR #{pr} approved via surface — merged")
-            elif item["verdict"] == "revise":  # spec gate: back to the agents
-                ghc.comment(repo, pr,
-                            f"{dispatcher.DRIVER_PREFIX} revise requested — my "
-                            "annotations above say what to change.")
-                log(f"surface: {slug} planning PR #{pr} sent to revise via surface")
-            else:  # reject (risk hold)
-                ghc.post(f"/repos/{repo}/issues/{pr}/labels", {"labels": ["hold"]})
-                ghc.comment(repo, pr,
-                            f"Rejected via surface — held. See surface annotations "
-                            f"for what must change. {AGENT_MARKER}")
-                log(f"surface: {slug} PR #{pr} rejected via surface — held")
-        except Exception as e:
-            log(f"surface: applying {item['verdict']} on {repo}#{pr} failed: {e}")
-        end_session(cfg, path, log)
-
-
-def reconcile_merged_holds(cfg, reg, log) -> None:
-    """Dual channel, other direction: a hold PR merged on GitHub while its
-    surface session sat open -> close the session (first event won there)."""
-    sess = sessions(cfg)
-    for path, meta in list(sess.items()):
-        if not meta.get("open") or meta.get("kind") not in ("risk_hold", "spec_review",
-                                                            "final_review"):
-            continue
-        slug = meta.get("story")
-        story = reg.stories().get(slug) if slug else None
-        if not story:
-            continue
-        p = (story.get("prs_cache") or {}).get(str(meta.get("pr")))
-        if p and p.get("state") != "open":
-            board_events.emit("surface_superseded", story=slug, pr=meta.get("pr"),
-                              by="github")
-            end_session(cfg, path, log)
 
 
 def status_list(cfg) -> list[dict]:

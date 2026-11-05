@@ -253,9 +253,9 @@ def test_the_daemon_never_consumes_a_thread_page(quiet, monkeypatch):
     monkeypatch.setattr(surface, "_attach_requested", lambda *a: None)
     monkeypatch.setattr(study_thread, "wake", lambda *a, **k: [])
     consumed = []
-    monkeypatch.setattr(surface, "_consume", lambda *a: consumed.append(a[4]))
+    monkeypatch.setattr(surface, "_consume", lambda *a: consumed.append(a[3]))
     try:
-        surface._tick(cfg, FakeReg(), None, lambda *a: None)
+        surface._tick(cfg, FakeReg(), lambda *a: None)
     except Exception:
         pass                                # later tick stages need more world than this
     assert consumed == ["/pages/task-other.html"]

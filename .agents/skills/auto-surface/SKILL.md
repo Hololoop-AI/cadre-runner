@@ -146,7 +146,7 @@ Rules that make these links trustworthy:
 ## Layout rules (non-negotiable)
 
 - Use the pipeline theme (`surface-theme.css` vocabulary) and nothing else — no custom CSS,
-  no inline styles beyond what `_common.md` permits.
+  no inline styles.
 - Cap the measure: body text in a centered column (the theme's `.wrap`); never let prose
   run full-bleed.
 - One question per card. Two decisions in one form guarantees one goes unanswered.

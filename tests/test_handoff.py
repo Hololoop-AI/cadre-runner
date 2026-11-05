@@ -164,7 +164,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
     # the driver approves with the handoff, and annotates as they do so
     with jsonl_board(d):
         surface._handle_poll(
-            cfg, reg, None, lambda *a: None, str(review_page), meta,
+            cfg, reg, lambda *a: None, str(review_page), meta,
             poll_json(note("drop commit 3, it is superseded", "Commit 3 is the guard"),
                       decision("handoff:implement")))
     cmds = commands(cfg)
@@ -215,7 +215,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
 
     # continue on the implement page resumes implement's session
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(out), new,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(out), new,
                              poll_json(decision("continue", "also run the linter")))
     back = commands(cfg)[-1]
     assert (back["target"], back["node"], back["resume"]) == (
@@ -229,7 +229,7 @@ def test_approve_and_hand_off_runs_the_approved_page_through_implement(quiet_cli
 
     # approve on it ends the task, like any page
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(out), new,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(out), new,
                              poll_json(decision("approve")))
     assert commands(cfg)[-1] == {"target": "task:verdict", "task": "task-demo",
                                  "story": "task-demo", "verdict": "approve"}
@@ -249,7 +249,7 @@ def test_a_handoff_queued_with_a_plain_approve_wins(quiet_cli):
     tasks.record(reg, "task-demo")["cwd"] = str(work)
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(d / "p.html"), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(d / "p.html"), meta,
                              poll_json(decision("approve"), note("use message 2 as written"),
                                        decision("handoff:implement")))
     assert [c["target"] for c in commands(cfg)] == ["task:handoff"]
@@ -265,7 +265,7 @@ def test_an_approve_carrying_words_spends_one_last_turn_on_them(quiet_cli):
     cfg, reg = FakeCfg(d), FakeReg()
     meta = {"kind": "task", "task": "task-demo", "cwd": str(work), "open": True}
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, str(d / "p.html"), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None, str(d / "p.html"), meta,
                              poll_json(note("add this as a discussion point", "Option B"),
                                        decision("approve")))
     sent = commands(cfg)

@@ -1,16 +1,17 @@
 """The headline claim: the engine is workflow-agnostic.
 
-Two workflows exist — `config/actions-pipeline.json` (the 7-stage PR-gated
-pipeline) and `config/actions-eval.json` (an eval run: build a fixture, judge
-it, report to the driver). They share no vocabulary: different topics,
-different kinds, different node registry, one spawning `claude -p` sessions and
-one spawning a python script. Neither is mentioned anywhere in `runnerlib`.
+Two workflows exist — `config/actions-dialogue.json` (a dialogue: ask, an
+agent turn writes a page, the driver annotates) and `config/actions-eval.json`
+(an eval run: build a fixture, judge it, report to the driver). They share no
+vocabulary: different topics, different node registry, one spawning `claude -p`
+sessions and one spawning a python script. Neither is mentioned anywhere in
+the engine.
 
 This suite asserts that three ways, because "workflow-agnostic" is a claim that
 rots quietly:
 
   1. Both files load and validate through the SAME `load_actions` path.
-  2. ONE `tick` over ONE board carrying one pipeline event and one eval event
+  2. ONE `tick` over ONE board carrying one dialogue event and one eval event
      fires actions from both files, with the two configs concatenated in a
      single list and no flag, branch or ordering telling them apart.
   3. `runnerlib/engine.py`'s executable source mentions no name from either
@@ -34,11 +35,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from runnerlib import engine, seed_eval_nodes, seed_nodes            # noqa: E402
+from runnerlib import engine, seed_eval_nodes, tasks                 # noqa: E402
 from runnerlib.blackboard import Board                               # noqa: E402
 from runnerlib.nodes import Nodes                                    # noqa: E402
 
-PIPELINE = ROOT / "config" / "actions-pipeline.json"
+DIALOGUE = ROOT / "config" / "actions-dialogue.json"
 EVAL = ROOT / "config" / "actions-eval.json"
 FIXTURE = ROOT / "evals" / "fixtures" / "judge-sample"
 
@@ -51,11 +52,11 @@ def scratch() -> Path:
 
 
 def test_both_workflows_load_through_the_same_path():
-    pipeline, evals = engine.load_actions(PIPELINE), engine.load_actions(EVAL)
-    assert pipeline and evals
+    dialogue, evals = engine.load_actions(DIALOGUE), engine.load_actions(EVAL)
+    assert dialogue and evals
 
     # the same closed vocabulary covers both, and it is a SMALL one
-    for a in pipeline + evals:
+    for a in dialogue + evals:
         assert engine.validate_action(a) is a
         for cond in engine._conditions(a["trigger"].get("where")):
             assert cond["op"] in engine.WHERE_OPS
@@ -68,8 +69,8 @@ def test_both_workflows_load_through_the_same_path():
     def topics(actions):
         return {a["trigger"]["topic"] for a in actions}
 
-    assert topics(pipeline).isdisjoint(topics(evals))
-    assert {a["name"] for a in pipeline}.isdisjoint({a["name"] for a in evals})
+    assert topics(dialogue).isdisjoint(topics(evals))
+    assert {a["name"] for a in dialogue}.isdisjoint({a["name"] for a in evals})
 
 
 # --------------------------------------------------------------------------- 2. tick
@@ -78,21 +79,22 @@ def test_both_workflows_load_through_the_same_path():
 def test_one_tick_serves_both_workflows_with_no_special_casing():
     d = scratch()
     b = Board(d / "board.db")
-    seed_nodes.seed(d)
+    tasks.seed(d)
     seed_eval_nodes.seed(d)
     nodes = Nodes(d)
 
     # ONE list, concatenated. The engine is handed no hint that these came from
     # two files, and receives no per-workflow argument of any kind.
-    actions = engine.load_actions(PIPELINE) + engine.load_actions(EVAL)
+    actions = engine.load_actions(DIALOGUE) + engine.load_actions(EVAL)
 
     was = os.getcwd()
     os.chdir(ROOT)
     try:
-        # a pipeline event: the tests PR merged, so the build stage should spawn
-        b.write("cadre", "github", "story:nex-1", "signal",
-                {"status": "finished", "story": "nex-1", "repo": "o/r",
-                 "role": "tests", "state": "merged", "slice": "core", "pr": 9})
+        # a dialogue event: somebody asked for work, so the task node spawns
+        b.write("cadre", "tasks", tasks.key_for("task-demo"), "command",
+                {"target": tasks.TARGET_REQUEST, "task": "task-demo",
+                 "story": "task-demo", "title": "demo", "task_text": "do it",
+                 "cwd": str(d), "iteration": "1"})
         # an eval event: somebody asked for a fixture story to be judged
         b.write("cadre", "evals", "eval:judge-sample", "command",
                 {"target": "eval", "story": "judge-sample",
@@ -104,20 +106,20 @@ def test_one_tick_serves_both_workflows_with_no_special_casing():
         os.chdir(was)
 
     fired = {f["action"] for f in firings if f["outcome"] == "fired"}
-    assert "tests-merged-to-build" in fired          # from actions-pipeline.json
+    assert "task-requested" in fired                 # from actions-dialogue.json
     assert "eval-requested" in fired                 # from actions-eval.json
     assert all(f["outcome"] == "fired" for f in firings), firings
 
     # both bodies did their real work in the same pass, from the same
-    # three-part action shape: a `claude -p` stage spawn and a python-script
+    # three-part action shape: a `claude -p` turn spawn and a python-script
     # node spawn, plus a command body that really ran
-    assert sorted(s["node"] for s in spawns) == ["build", "eval-judge-spec"]
+    assert sorted(s["node"] for s in spawns) == ["eval-judge-spec", "task"]
     assert (d / "run" / "briefing-good.md").exists()
     argv = {s["node"]: s["argv"][0] for s in spawns}
-    assert argv["build"] == "claude" and argv["eval-judge-spec"] == "python3"
+    assert argv["task"] == "claude" and argv["eval-judge-spec"] == "python3"
 
     # the emitted events landed on their own workflow's topic and nowhere else
-    assert [e["payload"]["stage"] for e in b.peek(topic="stages", kind="signal")] == ["build"]
+    assert [e["payload"]["stage"] for e in b.peek(topic="tasks", kind="signal")] == ["task"]
     assert [e["payload"]["stage"] for e in b.peek(topic="evals", kind="signal")] \
         == ["eval-fixture", "eval-judge"]
 
@@ -159,9 +161,9 @@ SHARED = {"cadre", "status", "started", "finished", "progress", "failed",
           "namespace", "payload", "type", "action", "error", "note", "message",
           "target", "kind",
           # `open` is a python builtin the engine calls; finding it says nothing
-          # about coupling, even though a pipeline action routes on state=open.
+          # about coupling.
           "open",
-          # a board claim state, and also the pipeline's terminal phase name
+          # a board claim state
           "done"}
 
 
@@ -170,7 +172,7 @@ def workflow_vocabulary() -> set[str]:
     names, topics, node names, and the `stage`/`phase`/`role` values the
     actions route on."""
     words = set()
-    for path in (PIPELINE, EVAL):
+    for path in (DIALOGUE, EVAL):
         for a in engine.load_actions(path):
             words.add(a["name"])
             words.add(a["trigger"].get("topic"))
@@ -185,9 +187,9 @@ def workflow_vocabulary() -> set[str]:
                 words.update(payload.get(f) for f in ("stage", "phase", "role"))
             if (a.get("body") or {}).get("type") == "spawn_node":
                 words.add(a["body"]["node"])
-    words |= set(seed_nodes.STAGES) | set(seed_eval_nodes.NODES)
+    words |= set(tasks.NODES) | set(seed_eval_nodes.NODES)
     # the workflow nouns themselves, which no config field happens to spell out
-    words |= {"story", "github", "briefing", "judge", "fixture", "rubric"}
+    words |= {"story", "briefing", "judge", "fixture", "rubric"}
     words = {w for w in words
              if isinstance(w, str) and w and "{" not in w and " " not in w}
     return words - SHARED
@@ -208,20 +210,20 @@ def test_engine_source_names_no_workflow_concept():
 
     # controls on the grep itself, so a vacuous pass is not possible:
     # (a) the vocabulary is real and non-trivial
-    assert len(vocab) > 25, sorted(vocab)
-    assert {"intake", "assembly", "risk-triage", "eval-judge-spec", "eval-fixture",
-            "eval-judge", "stages", "evals", "github"} <= vocab
+    assert len(vocab) > 15, sorted(vocab)
+    assert {"task", "tasks", "implement", "tutor", "eval-judge-spec", "eval-fixture",
+            "eval-judge", "evals"} <= vocab
     # (b) every word in it really does appear in the sources it was drawn from
-    corpus = (PIPELINE.read_text() + EVAL.read_text()
-              + " ".join(seed_nodes.STAGES) + " ".join(seed_eval_nodes.NODES)
-              + " story github briefing judge fixture rubric")
+    corpus = (DIALOGUE.read_text() + EVAL.read_text()
+              + " ".join(tasks.NODES) + " ".join(seed_eval_nodes.NODES)
+              + " story briefing judge fixture rubric")
     assert all(w in corpus for w in vocab)
     # (c) the grep CAN fire: the engine's own vocabulary is found by it
     code = executable_source(ROOT / "runnerlib" / "engine.py")
     for word in ("spawn_node", "write_event", "payload_eq", "hitl"):
         assert mentions(word, code)
     # (d) ...and it fires on a plant, which is what a regression would look like
-    assert mentions("assembly", code + "\nif stage == 'assembly': pass")
+    assert mentions("tutor", code + "\nif stage == 'tutor': pass")
 
 
 if __name__ == "__main__":

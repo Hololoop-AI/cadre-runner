@@ -23,11 +23,8 @@ this workflow's own vocabulary is `task`. The other two commands on this topic
 (`task:feedback`, `task:verdict`) are written by whatever bridges the review
 surface back to the board; their shapes are documented in the config.
 
-The task node itself is seeded here rather than in `seed_nodes`, for the reason
-`seed_eval_nodes` exists: a dialogue node is not a pipeline stage. Its prompt is
-`prompts/task.md` ALONE — `_common.md` is the PR-gated pipeline's briefing (gh
-CLI, never merge, never push to main) and prepending it to a node that has no
-repo, no PR and no story would be instructions for a different world.
+The dialogue nodes are seeded here, each from its own `prompts/<node>.md`
+alone — no shared briefing is prepended.
 """
 
 import os

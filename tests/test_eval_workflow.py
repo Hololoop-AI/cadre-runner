@@ -153,7 +153,7 @@ def test_eval_run_walks_from_request_to_driver_report():
     key = "eval:judge-sample"
 
     was = os.getcwd()
-    os.chdir(ROOT)          # the argv is repo-relative, like `runnerlib.gh_watch`
+    os.chdir(ROOT)          # the argv is repo-relative
     try:
         # -- somebody asks for an eval -------------------------------------
         b.write("cadre", "evals", key, "command",

@@ -1,24 +1,18 @@
-"""Is this deployment ready to run a story with `CADRE_ENGINE=only`?
+"""Is this deployment ready to run dialogue turns with `CADRE_ENGINE=only`?
 
-In shadow mode a broken piece of the engine is invisible: the legacy path
-spawned the stage anyway and the engine's failure is a line in a log nobody
-reads. In engine-only mode the same break is a story that simply never moves.
-So the checks that used to be implicit get run up front, once, and print a
-table.
+With the engine driving, a broken piece is a turn that simply never starts.
+So the checks get run up front, once, and print a table:
 
-Every check answers a question engine-only mode asks and shadow mode does not:
-
-    nodes       is there an ACTIVE version for all 9 stage nodes, the eval
-                judges, and workflow #3's `task` node? (`seed_nodes` records a
+    nodes       is there an ACTIVE version for the eval judges and every
+                dialogue node (`task`, `implement`, …)? (a seed records a
                 changed prompt WITHOUT promoting it — a registry can be seeded
                 and still have a node with no active version.)
     actions     does every action file still validate against the closed
                 vocabulary, does every spawn_node name an installed node, and
                 does the set the DAEMON loads have unique names across files?
     board       can the daemon actually write the board file in the data dir?
-    gh          is `gh` authenticated? The gh-watch action shells out to it
-                every heartbeat; unauthenticated, the board just stays empty.
     claude      is the agent binary on PATH? Nodes name it in their command.
+    surface     is review-surface on PATH, and is its page server answering?
 
 Exit status is the point: nonzero on any FAIL, so this can gate a deploy.
 """
@@ -30,13 +24,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import engine, engine_seam, seed_eval_nodes, seed_nodes, tasks
+from . import engine, engine_seam, seed_eval_nodes, tasks
 from .blackboard import Board
 from .nodes import Nodes, NodeError
 
 ROOT = Path(__file__).resolve().parent.parent
-ACTION_FILES = (ROOT / "config" / "actions-pipeline.json",
-                ROOT / "config" / "actions-eval.json",
+ACTION_FILES = (ROOT / "config" / "actions-eval.json",
                 ROOT / "config" / "actions-dialogue.json",
                 ROOT / "config" / "actions-handoff.json")
 
@@ -56,8 +49,7 @@ def check_nodes(data_dir: Path, cfg=None, seed: bool = True) -> list[Check]:
     """
     out = []
     if seed:
-        for name, fn in (("seed_nodes", lambda: seed_nodes.seed(data_dir, cfg)),
-                         ("seed_eval_nodes", lambda: seed_eval_nodes.seed(data_dir)),
+        for name, fn in (("seed_eval_nodes", lambda: seed_eval_nodes.seed(data_dir)),
                          # workflow #3's node is seeded by its own submit, so a
                          # deployment that has never had a task submitted has no
                          # `task` node — and the dialogue actions the engine now
@@ -69,7 +61,7 @@ def check_nodes(data_dir: Path, cfg=None, seed: bool = True) -> list[Check]:
             except Exception as e:
                 out.append(Check(name, False, f"{type(e).__name__}: {e}"))
     nodes = Nodes(data_dir)
-    expected = list(seed_nodes.STAGES) + list(seed_eval_nodes.NODES) + list(tasks.NODES)
+    expected = list(seed_eval_nodes.NODES) + list(tasks.NODES)
     missing, inactive = [], []
     for name in expected:
         try:
@@ -130,8 +122,7 @@ def check_action_set(paths=None) -> Check:
 
 
 def check_board(data_dir: Path) -> Check:
-    """The board file has to be writable by THIS user in THIS data dir — the
-    gh-watch subprocess inherits CADRE_DATA_DIR and writes the same file, so a
+    """The board file has to be writable by THIS user in THIS data dir — a
     read-only or wrong-owner path is a silent, total failure."""
     path = Path(data_dir) / "board.db"
     try:
@@ -144,20 +135,6 @@ def check_board(data_dir: Path) -> Check:
         return Check("board writable", True, str(path))
     except Exception as e:
         return Check("board writable", False, f"{path}: {type(e).__name__}: {e}")
-
-
-def check_gh() -> Check:
-    if not shutil.which("gh"):
-        return Check("gh auth", False, "gh is not on PATH")
-    try:
-        proc = subprocess.run(["gh", "auth", "status"], capture_output=True,
-                              text=True, timeout=30)
-    except Exception as e:
-        return Check("gh auth", False, f"{type(e).__name__}: {e}")
-    detail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
-    return Check("gh auth", proc.returncode == 0,
-                 next((l.strip() for l in detail if "account" in l.lower()),
-                      detail[-1].strip() if detail else f"exit {proc.returncode}"))
 
 
 def check_claude(cfg=None) -> Check:
@@ -229,7 +206,6 @@ def run(data_dir: Path, cfg=None, seed: bool = True, skip_tools: bool = False
     checks += check_actions(data_dir)
     checks.append(check_board(data_dir))
     if not skip_tools:
-        checks.append(check_gh())
         checks.append(check_claude(cfg))
         checks.append(check_surface_cli())
         checks.append(check_surface_server())
@@ -261,12 +237,13 @@ def main(argv=None) -> int:
     ap.add_argument("--no-seed", action="store_true",
                     help="check the registry as it stands; do not run the seeds")
     ap.add_argument("--skip-tools", action="store_true",
-                    help="skip the gh/claude checks (CI without credentials)")
+                    help="skip the claude/surface checks (CI without credentials)")
     ap.add_argument("--no-server", action="store_true",
                     help="skip the page-server check (an install that has not "
                          "started the server yet: `pipeline.py up` starts it)")
-    ap.add_argument("--no-gh", action="store_true",
-                    help="skip the gh check (a machine that only runs dialogues)")
+    # accepted and ignored: there is no gh check any more, and older install
+    # scripts still pass it
+    ap.add_argument("--no-gh", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -277,8 +254,7 @@ def main(argv=None) -> int:
         cfg = config_mod.load(args.config)
         data_dir = cfg.data_dir
     checks = run(data_dir, cfg, seed=not args.no_seed, skip_tools=args.skip_tools)
-    skipped = ({"review-surface server"} if args.no_server else set()) | (
-        {"gh auth"} if args.no_gh else set())
+    skipped = {"review-surface server"} if args.no_server else set()
     checks = [c for c in checks if c.name not in skipped]
     if args.json:
         print(json.dumps([{"check": c.name, "ok": c.ok, "detail": c.detail}

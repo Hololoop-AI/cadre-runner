@@ -1,8 +1,7 @@
 """Workflow #3: a dialogue over the surface, expressed as data.
 
-The seam this suite guards is the one the pipeline suite guards for workflow #1
-— "the workflow IS the actions config" — plus the one claim this workflow makes
-that no other does: it reaches GitHub nowhere. Board, surfaces and sessions
+The seam this suite guards is "the workflow IS the actions config", plus the
+claim this workflow makes: it reaches GitHub nowhere. Board, surfaces and sessions
 only. So the checks are: the config validates against the closed vocabulary, its
 three triggers fire on synthetic events and on nothing else, `submit_task`
 writes an event the engine actually consumes, and the CLI's `task` subcommand is
@@ -31,7 +30,6 @@ from runnerlib.nodes import Nodes
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTIONS = ROOT / "config" / "actions-dialogue.json"
-PIPELINE_ACTIONS = ROOT / "config" / "actions-pipeline.json"
 PROMPTS = ROOT / "prompts"
 
 
@@ -186,9 +184,9 @@ def test_surface_feedback_takes_the_next_turn_on_the_same_session():
     # seam's passthrough they would be dropped and the session would restart
     # cold, which is the failure this workflow exists to avoid
     calls = []
-    engine_seam.run_spawn_spec(FakeCfg(d), FakeReg(), None, b, lambda *a: None,
+    engine_seam.run_spawn_spec(FakeCfg(d), FakeReg(), b, lambda *a: None,
                                lambda *a: calls.append(a), spawns[0])
-    action = calls[0][5]
+    action = calls[0][3]
     assert action["stage"] == "task"
     assert action["extra_vars"]["feedback"].startswith("the second table")
     assert action["extra_vars"]["iteration"] == "2"
@@ -284,10 +282,9 @@ def test_submit_task_writes_an_event_the_engine_consumes():
         pass
 
 
-def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
-    """_common.md is the PR-gated pipeline's briefing (gh CLI, never merge,
-    never push to main). A dialogue node has no repo and no PR — prepending it
-    would be instructions for a different world."""
+def test_seed_is_idempotent_and_the_prompt_is_the_node_file_alone():
+    """A dialogue node's prompt is its own file — no shared briefing is
+    prepended to it."""
     d = scratch()
     assert tasks.seed(d) == {"task": "registered", "implement": "registered",
                              "tutor": "registered"}
@@ -295,7 +292,7 @@ def test_seed_is_idempotent_and_prepends_no_pipeline_briefing():
                              "tutor": "unchanged"}
 
     prompt = Nodes(d).active("task")["prompt"]
-    assert (PROMPTS / "_common.md").read_text() not in prompt
+    assert prompt == (PROMPTS / "task.md").read_text()
     # the page path is freeform HTML via auto-surface — no component DSL
     assert "auto-surface" in prompt
     assert "$CADRE_SURFACE_OUT" in prompt
@@ -409,16 +406,13 @@ def test_status_lists_dialogue_tasks_on_a_runner_with_no_stories():
 
 
 def test_the_engine_loads_every_workflow_as_one_set():
-    """Two workflows, two files, one tick. Before this the seam loaded
-    actions-pipeline.json alone, so the dialogue config was a file nothing
-    read."""
+    """Two workflow files, one tick: the dialogue and the node event."""
     loaded = engine.load_action_set(engine_seam.ACTIONS_PATHS)
     names = [a["name"] for a in loaded]
 
     routes = ROOT / "config" / "actions-handoff.json"
-    assert set(engine_seam.ACTIONS_PATHS) == {PIPELINE_ACTIONS, ACTIONS, routes}
-    assert names == [a["name"] for a in engine.load_actions(PIPELINE_ACTIONS)] + \
-                    [a["name"] for a in engine.load_actions(ACTIONS)] + \
+    assert set(engine_seam.ACTIONS_PATHS) == {ACTIONS, routes}
+    assert names == [a["name"] for a in engine.load_actions(ACTIONS)] + \
                     [a["name"] for a in engine.load_actions(routes)], \
         "the set is the files concatenated in order — no merge, no reordering"
     assert "task-requested" in names and len(names) == len(set(names))
@@ -464,12 +458,12 @@ class Spawned(dict):
 
 @contextmanager
 def no_real_spawn(calls):
-    """Replace the two things a task spawn must and must not do: record the
-    spawn, and make any worktree attempt an outright failure."""
+    """Record the spawn instead of making it. (There is no worktree code left
+    for a task spawn to reach: the runner has none.)"""
     import pipeline
     from runnerlib import runs as runs_mod
 
-    real_spawn, real_wt = runs_mod.spawn, runs_mod.add_worktree
+    real_spawn = runs_mod.spawn
 
     def fake_spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
                    timeout, run_dir, session_id=None, resume=False,
@@ -481,24 +475,18 @@ def no_real_spawn(calls):
                              run_dir=str(run_dir)))
         return 4242
 
-    def forbidden_worktree(*a, **k):
-        raise AssertionError("a task spawn must never create a worktree")
-
-    runs_mod.spawn, runs_mod.add_worktree = fake_spawn, forbidden_worktree
-    pipeline.runs_mod.spawn = fake_spawn
-    pipeline.runs_mod.add_worktree = forbidden_worktree
+    runs_mod.spawn = pipeline.runs_mod.spawn = fake_spawn
     try:
         yield calls
     finally:
-        runs_mod.spawn, runs_mod.add_worktree = real_spawn, real_wt
-        pipeline.runs_mod.spawn, pipeline.runs_mod.add_worktree = real_spawn, real_wt
+        runs_mod.spawn = pipeline.runs_mod.spawn = real_spawn
 
 
 def drive(cfg, reg, b, spec, calls):
     import pipeline
     with no_real_spawn(calls):
-        engine_seam.run_spawn_spec(cfg, reg, None, b, lambda *a: None,
-                                   pipeline._run_stage, spec)
+        engine_seam.run_spawn_spec(cfg, reg, b, lambda *a: None,
+                                   pipeline._run_task, spec)
 
 
 def test_a_task_turn_runs_in_the_ask_s_cwd_with_no_worktree_and_a_recorded_session():
@@ -663,7 +651,7 @@ def test_annotations_on_a_task_surface_become_a_feedback_command():
 
     with jsonl_board(d):
         surface._handle_poll(
-            cfg, reg, None, lambda *a: None, str(d / "task-task-demo.html"), meta,
+            cfg, reg, lambda *a: None, str(d / "task-task-demo.html"), meta,
             poll_json(note("fold this into prose", "The second table"),
                       note("and say what you could not check")))
 
@@ -690,7 +678,7 @@ def test_a_continue_verdict_is_a_feedback_turn_and_approve_ends_the_dialogue():
     # `continue` is not a verdict the config handles — continuing IS a feedback
     # turn, so the bridge writes one
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
             note("CADRE_DECISION gate=task story=task-demo task=task-demo "
                  "verdict=continue\n\nkeep going, drop the second table",
                  "Verdict")))
@@ -699,7 +687,7 @@ def test_a_continue_verdict_is_a_feedback_turn_and_approve_ends_the_dialogue():
     assert "drop the second table" in payloads[0]["feedback"]
 
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None, art, meta, poll_json(
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
             note("CADRE_DECISION gate=task story=task-demo task=task-demo "
                  "verdict=approve")))
     payloads = commands(cfg)
@@ -723,7 +711,7 @@ def test_approve_with_annotations_runs_a_closing_turn_instead_of_dropping_them()
     meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
     choice = "Go with option B, and record why A was rejected."
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None,
+        surface._handle_poll(cfg, reg, lambda *a: None,
                              str(d / "task-task-demo.html"), meta, poll_json(
             note(choice, "Which option"),
             note("CADRE_DECISION gate=task story=task-demo task=task-demo "
@@ -745,7 +733,7 @@ def test_a_bare_approve_with_no_words_still_closes_immediately():
     cfg, reg = FakeCfg(d), FakeReg()
     meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
     with jsonl_board(d):
-        surface._handle_poll(cfg, reg, None, lambda *a: None,
+        surface._handle_poll(cfg, reg, lambda *a: None,
                              str(d / "task-task-demo.html"), meta, poll_json(
             note("CADRE_DECISION gate=task story=task-demo task=task-demo "
                  "verdict=approve")))
@@ -753,37 +741,22 @@ def test_a_bare_approve_with_no_words_still_closes_immediately():
 
 
 def test_the_bridge_never_touches_a_surface_it_does_not_own():
-    """Scope: one session kind. A pipeline surface keeps mirroring to its PR
-    and writing `surface_feedback`, and writes NOTHING on the tasks topic."""
+    """Scope: one session kind. Free text on any other page is recorded as
+    `surface_feedback` (and stranded, since nothing routes it) and writes
+    NOTHING on the tasks topic."""
     d = scratch()
-    cfg, reg = FakeCfg(d), FakeReg({"nex-1": {"repo": "o/r", "status": "active"}})
-    mirrored = []
-
-    class FakeGh:
-        def comment(self, repo, pr, body):
-            mirrored.append((repo, pr, body))
-
-    meta = {"kind": "spec_review", "story": "nex-1", "pr": 7, "repo": "o/r",
-            "open": True}
+    cfg, reg = FakeCfg(d), FakeReg()
+    meta = {"kind": "notice", "story": "nex-1", "open": True}
     with jsonl_board(d) as events:
-        surface._handle_poll(cfg, reg, FakeGh(), lambda *a: None,
-                             str(d / "spec-nex-1.html"), meta,
+        surface._handle_poll(cfg, reg, lambda *a: None,
+                             str(d / "notice-nex-1.html"), meta,
                              poll_json(note("this slice is too big", "Slice 2")))
         emitted = [json.loads(l) for l in events.read_text().splitlines()]
 
-    assert [e["kind"] for e in emitted] == ["surface_feedback"]
-    assert emitted[0]["story"] == "nex-1" and emitted[0]["pr"] == 7
-    assert mirrored and mirrored[0][1] == 7        # still the PR's record
-    assert commands(cfg) == [], "the bridge must not write for a pipeline surface"
+    assert [e["kind"] for e in emitted] == ["surface_stranded", "surface_feedback"]
+    assert emitted[1]["story"] == "nex-1"
+    assert commands(cfg) == [], "the bridge must not write for a page it does not own"
     assert tasks.records(reg) == {}
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-    print("dialogue-as-actions tests: all passed")
-
 
 def test_tick_pass_reopens_the_node_registry_every_pass():
     """A daemon runs for weeks; the CLI re-seeds and `promote` retargets nodes
@@ -813,7 +786,7 @@ def test_tick_pass_reopens_the_node_registry_every_pass():
         return [], []
     engine.tick = spy
     try:
-        engine_seam.tick_pass(cfg, FakeReg(), None, lambda *a: None, None)
+        engine_seam.tick_pass(cfg, FakeReg(), lambda *a: None, None)
     finally:
         engine.tick = real_tick
         engine_seam.reset()

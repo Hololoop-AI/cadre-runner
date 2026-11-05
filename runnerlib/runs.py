@@ -1,17 +1,11 @@
-"""Async stage runs: every stage session is a detached process in its own git
-worktree. The daemon spawns and keeps polling — it never blocks on a run — and
-reaps completions on later passes. Per-story `active_runs` in the registry is
-the source of truth and survives daemon restarts: runs are session-detached,
-and their exit status lands in a file (never a waitpid the daemon could miss).
+"""Detached agent runs: every turn is a process the daemon spawns and keeps
+polling — it never blocks on one — and reaps on a later pass. The task's
+`active_runs` in the registry is the source of truth and survives daemon
+restarts: runs are session-detached, and their exit status lands in a file
+(never a waitpid the daemon could miss).
 
-Concurrency safety rests on three guards, all enforced at spawn:
-- one active run per (stage, slice, pr) target per story — duplicates drop;
-- one active run per git branch per repo — two sessions must never share a
-  writable branch (worktrees make the working trees disjoint; this guard makes
-  the branches disjoint);
-- a global cap (`runner.max_concurrent_runs`) — beyond it, RunsBusy requeues
-  the event as backpressure, explicitly WITHOUT an attempt bump (a crowded
-  machine must never dead-letter a legitimate event).
+A global cap (`runner.max_concurrent_runs`) bounds them; beyond it a spawn
+raises RunsBusy and the turn waits for a slot (engine_seam.run_deferred).
 """
 
 import json
@@ -22,95 +16,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from .claude_run import sh
-
 
 class RunsBusy(Exception):
-    """Cap reached or branch held — backpressure, not failure."""
-
-
-# ------------------------------------------------------------------ inventory
-
-def all_active(reg):
-    """[(slug, run_id, run)] across every story, any status."""
-    out = []
-    for slug, story in reg.data["stories"].items():
-        for rid, r in (story.get("active_runs") or {}).items():
-            out.append((slug, rid, r))
-    return out
-
-
-def key_active(story, stage, slice_name, pr):
-    return any((r["stage"], r.get("slice"), r.get("pr")) == (stage, slice_name, pr)
-               for r in (story.get("active_runs") or {}).values())
-
-
-def branch_held(reg, repo, branch):
-    """Paused runs count: their worktree still has the branch checked out, so
-    handing it to a new run would move the branch under a session that is
-    coming back to it."""
-    held = [r for _s, _rid, r in all_active(reg)]
-    for story in reg.data["stories"].values():
-        held += list((story.get("paused_runs") or {}).values())
-    return any(r.get("repo") == repo and r.get("branch") == branch for r in held)
-
-
-# ------------------------------------------------------------------ worktrees
-
-def add_worktree(checkout: Path, wt_path: Path, branch: str, start_ref: str):
-    """Dedicated working tree on its own branch. -B resets the local branch to
-    start_ref; the branch guard above ensures no other worktree holds it.
-
-    Verified before returning: sessions have repeatedly been handed a directory
-    with no checkout in it, and an agent that starts in an empty tree either
-    rebuilds it by hand or builds the wrong thing entirely. `git worktree add`
-    can report success and still leave nothing usable, so success is defined
-    here as "the tree is actually there"."""
-    wt_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
-    sh(["git", "worktree", "add", "--force", "-B", branch, str(wt_path), start_ref], cwd=checkout)
-    if not _worktree_ready(wt_path):
-        # One retry: prune again in case stale metadata blocked the checkout.
-        subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)],
-                       cwd=checkout, check=False, capture_output=True)
-        subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
-        sh(["git", "worktree", "add", "--force", "-B", branch, str(wt_path), start_ref], cwd=checkout)
-        if not _worktree_ready(wt_path):
-            raise RuntimeError(
-                f"worktree {wt_path} is empty after two attempts (branch {branch} "
-                f"from {start_ref}) — refusing to start a session in it")
-
-
-def _worktree_ready(wt_path: Path) -> bool:
-    """Git's own view decides: a usable worktree has its gitdir pointer AND is
-    recognized as a work tree from inside. Counting files would reject a valid
-    checkout of an empty tree."""
-    if not (wt_path / ".git").exists():
-        return False
-    p = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
-                       cwd=wt_path, capture_output=True, text=True)
-    return p.returncode == 0 and p.stdout.strip() == "true"
-
-
-def remove_worktree(checkout: Path, wt_path: Path) -> tuple[bool, str]:
-    """(removed?, detail). Never raises — the caller decides how loudly a
-    surviving worktree gets reported (silent failure hid a leak for hours)."""
-    detail = ""
-    try:
-        p = subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)],
-                           cwd=checkout, capture_output=True, text=True)
-        detail = (p.stderr or "").strip()[:200]
-    except Exception as e:
-        detail = f"git worktree remove raised: {e}"
-    if wt_path.exists():
-        try:
-            p2 = subprocess.run(["rm", "-rf", str(wt_path)], capture_output=True, text=True)
-            if wt_path.exists():
-                return False, f"{detail} | rm -rf: {(p2.stderr or '').strip()[:200]}"
-        except Exception as e:
-            return False, f"{detail} | rm raised: {e}"
-    subprocess.run(["git", "worktree", "prune"], cwd=checkout, check=False, capture_output=True)
-    return True, detail
+    """Cap reached — backpressure, not failure."""
 
 
 # ------------------------------------------------------------------ processes

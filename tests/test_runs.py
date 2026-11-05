@@ -12,25 +12,6 @@ from runnerlib import runs
 tmp = Path(tempfile.mkdtemp(prefix="cadre-runs-test-"))
 
 
-class FakeReg:
-    def __init__(self, stories):
-        self.data = {"stories": stories}
-
-
-# -- inventory guards ---------------------------------------------------------
-story_a = {"active_runs": {"r1": {"stage": "tests", "slice": "s1", "pr": 7,
-                                  "repo": "o/r", "branch": "pipe/x/tests-s1"}}}
-story_b = {"active_runs": {}}
-reg = FakeReg({"a": story_a, "b": story_b})
-
-assert runs.key_active(story_a, "tests", "s1", 7)
-assert not runs.key_active(story_a, "tests", "s2", 7)
-assert not runs.key_active(story_b, "tests", "s1", 7)
-assert runs.branch_held(reg, "o/r", "pipe/x/tests-s1")
-assert not runs.branch_held(reg, "o/r", "pipe/x/tests-s2")
-assert not runs.branch_held(reg, "other/repo", "pipe/x/tests-s1")
-assert len(runs.all_active(reg)) == 1
-
 # -- spawn/finished/outcome via a stand-in binary -----------------------------
 run_dir = tmp / "run1"
 wt = tmp / "wt1"
@@ -186,20 +167,6 @@ assert runs.outcome(held)[1] == "timed out after 10 s"
 # a run from before runs carried a deadline is left alone
 assert runs.enforce_deadline({"pid": 1, "run_dir": str(tmp), "started": 0}) is None
 
-# -- worktree lifecycle -------------------------------------------------------
-repo = tmp / "repo"
-repo.mkdir()
-subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
-subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                "commit", "-q", "--allow-empty", "-m", "root"], cwd=repo, check=True)
-wt2 = tmp / "wt2"
-runs.add_worktree(repo, wt2, "pipe/x/tests-s1", "main")
-head = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt2,
-                      capture_output=True, text=True).stdout.strip()
-assert head == "pipe/x/tests-s1", head
-runs.remove_worktree(repo, wt2)
-assert not wt2.exists()
-
 # -- usage limits are a pause, not a failure (session resume) -----------------
 from runnerlib.runs import is_rate_limited, retry_after
 
@@ -221,7 +188,7 @@ assert time.localtime(_t2).tm_mday == 14
 assert retry_after("rate limit exceeded", _now) >= _now + 60
 
 # -- transient API failures are also a pause, on a short clock ----------------
-from runnerlib.runs import is_transient, _worktree_ready
+from runnerlib.runs import is_transient
 
 assert is_transient("API Error: 529 Overloaded. This is a server-side issue")
 assert is_transient("503 Service Unavailable")
@@ -230,20 +197,6 @@ assert not is_transient("ModuleNotFoundError: No module named 'runner'")
 assert not is_transient("")
 # a usage limit is its own class, not a transient blip
 assert not is_transient("You've hit your session limit")
-
-# -- a worktree is only ready when git itself recognizes it -------------------
-with tempfile.TemporaryDirectory() as _td:
-    _p = Path(_td) / "wt"
-    _p.mkdir()
-    assert not _worktree_ready(_p)                      # nothing at all
-    (_p / ".git").write_text("gitdir: /nonexistent")
-    assert not _worktree_ready(_p)                      # dangling pointer
-# a real worktree passes even when the tree it checks out is empty
-assert _worktree_ready(wt2) is False                     # removed above
-wt3 = tmp / "wt3"
-runs.add_worktree(repo, wt3, "pipe/x/build-s1", "main")
-assert _worktree_ready(wt3)
-runs.remove_worktree(repo, wt3)
 
 # -- exit codes survive because SIGCHLD is never ignored ----------------------
 # Under SIG_IGN, CPython reports rc=0 for every failing child (the NEX-160

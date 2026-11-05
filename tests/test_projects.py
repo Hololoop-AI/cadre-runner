@@ -47,8 +47,8 @@ def drive_recording_dirs(cfg, reg, b, spec, calls):
     real = pipeline.runs_mod.spawn
     pipeline.runs_mod.spawn = fake_spawn
     try:
-        engine_seam.run_spawn_spec(cfg, reg, None, b, lambda *a: None,
-                                   pipeline._run_stage, spec)
+        engine_seam.run_spawn_spec(cfg, reg, b, lambda *a: None,
+                                   pipeline._run_task, spec)
     finally:
         pipeline.runs_mod.spawn = real
 from test_status import _Server                                      # noqa: E402
