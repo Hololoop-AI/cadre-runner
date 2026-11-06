@@ -6,6 +6,7 @@ import { assignStates, fleetItems, itemFacts, type Item } from './items';
 import { effectiveView, layout, loadSel, serverView, tagChips } from './view';
 import { clean, kidsOf } from './tree';
 import { findEntries, projectHint } from './picker';
+import { pyRound, runsHref, runsSel, runsView, treeRoots } from './screens';
 
 const NOW = 1_800_000_000;
 
@@ -161,5 +162,26 @@ describe('opening a graph row', () => {
       ['root', 0, ''], ['round:k1', 1, 'round two'], ['round:k0', 1, 'round one'], ['a', 1, ''], ['a1', 2, ''],
     ]);
     expect(opened.rows.find((r) => r.task === 'a')).toMatchObject({ hidden: 0, history: 1, open: true });
+  });
+});
+
+describe('the other screens', () => {
+  it('rounds minutes the way Python does', () => {
+    expect([0.5, 1.5, 2.5, 2.4, 2.6].map(pyRound)).toEqual([0, 2, 2, 2, 3]);
+  });
+
+  it('reads the runs query as statusd does and links a view the same way', () => {
+    const sel = runsSel('?view=bogus&sort=cost&q=%20fleet%20');
+    expect(sel).toEqual({ view: 'bogus', sort: 'cost', project: '', node: '', q: 'fleet' });
+    expect(runsView(sel)).toBe('latest');
+    expect(runsHref(sel, { view: 'turns' })).toBe('/runs?view=turns&sort=cost&q=fleet');
+    expect(runsHref(runsSel(''))).toBe('/runs');
+  });
+
+  it('lists as trees only sessions that launched others and were launched by none, newest first', () => {
+    const { roots } = treeRoots({
+      old: { since: 1 }, a: { parent: 'old', since: 2 }, young: { since: 9 }, b: { parent: 'young', since: 10 }, alone: { since: 5 },
+    });
+    expect(roots).toEqual(['young', 'old']);
   });
 });

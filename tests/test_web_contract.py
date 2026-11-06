@@ -30,7 +30,8 @@ import statusd
 CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
-GETS = ["/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json"]
+GETS = ["/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
+        "/api/library", "/api/costs", "/api/runs", "/api/tree"]
 POSTS = {"/tasks": "text=&cwd=/tmp",
          "/items": "item=task-a&action=tag&tag=cadre",
          "/repair": "action=move&key=nosuchkey&project=cadre",
@@ -99,7 +100,9 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setattr(statusd, "journal_batches", lambda a, *r: [{}, {}])
     monkeypatch.setattr(statusd, "_known_keys", lambda: (set(), [], {}))
     monkeypatch.setattr(statusd.library_mod, "scan", lambda **kw: [
-        {"kind": "skill", "name": "review", "invoke": "/review", "description": "d"}])
+        {"kind": "skill", "name": "review", "invoke": "/review", "description": "d",
+         "path": "/home/me/.claude/skills/review/SKILL.md", "scope": "user", "origin": "linked",
+         "broken": False}])
     statusd.items_mod.apply(tmp_path, "task-a", "hide")
     (tmp_path / "Projects").mkdir()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), statusd.Handler)
@@ -233,10 +236,11 @@ def _app_calls():
 
 def test_the_app_calls_only_declared_paths():
     calls = _app_calls()
-    # "/" is the Python page's GET toolbar form the app keeps for its markup
-    # and never submits; it is HTML, not part of this contract.
+    # "/" and "/runs" are the Python pages' GET forms (the home toolbar, the
+    # runs filter) the app keeps for their markup; it navigates instead of
+    # submitting them. They are HTML pages, not part of this contract.
     assert {"/api/fleet", "/api/newwork", "/fs", "/fleet/events", "/tasks", "/items"} <= calls
-    assert calls - {"/"} - set(CONTRACT["paths"]) == set()
+    assert calls - {"/", "/runs"} - set(CONTRACT["paths"]) == set()
 
 
 @pytest.mark.parametrize("fixture", sorted((ROOT / "web" / "parity").glob("fixture*.json")),

@@ -154,6 +154,12 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
 BACKENDS_API_PATH = "/api/backends"
+# The React app's other screens, one read each: what the Python page at the
+# same name (/library, /costs, /runs, /tree) draws from, as JSON.
+SCREEN_API_PATHS = {"/api/library": "library", "/api/costs": "costs", "/api/runs": "runs",
+                    "/api/tree": "tree"}
+# rows the runs screen draws at most; the payload says how many there are
+RUNS_LIMIT = 200
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
 # driver with nothing to click but the browser's back button.
@@ -3176,6 +3182,35 @@ def run_library(entries: list[dict]) -> list[dict]:
              "k": e["kind"], "d": (e.get("description") or "")[:120]} for e in live]
 
 
+def library_payload() -> dict:
+    """/library's data: everything a launch can pick, and where it was found."""
+    dirs = list(dict.fromkeys(d for p in projects_mod.live(load_projects()) for d in p.get("dirs") or ()))
+    return {"entries": library_mod.scan(dirs=dirs, skills_source=_skills_source()), "scanned": dirs}
+
+
+def costs_payload() -> dict:
+    """/costs's data: costs.summarize over every finished turn (also /costs.json)."""
+    return costs_mod.summarize(*load_costs())
+
+
+def runs_payload(query: dict) -> dict:
+    """/runs's data for one view: the view's rows (at most RUNS_LIMIT, with
+    how many there are), and every project and node a filter can pick."""
+    turns, owners, pages = load_runs()
+    sel = {k: (query.get(k) or [""])[0].strip()[:200] for k in ("view", "sort", "project", "node", "q")}
+    rows = recent_mod.rows(turns, owners, pages, view=sel["view"], sort=sel["sort"],
+                           project=sel["project"], node=sel["node"], q=sel["q"])
+    everything = recent_mod.rows(turns, owners, pages, view="turns")
+    return {"rows": rows[:RUNS_LIMIT], "total": len(rows), "limit": RUNS_LIMIT,
+            "projects": sorted({r["project"] for r in everything if r["project"]}),
+            "nodes": sorted({r["node"] for r in everything if r["node"]})}
+
+
+def tree_payload() -> dict:
+    """/tree's data: every session that launched or was launched, by task."""
+    return {"nodes": load_tree()}
+
+
 def backends_payload() -> dict:
     """The machines the React app can switch between: this one first (url ""
     means "where the app was loaded from"), then every configured
@@ -4075,7 +4110,7 @@ class Handler(BaseHTTPRequestHandler):
                              "round is ready.")
 
     def _serve_costs(self, as_json: bool):
-        summary = costs_mod.summarize(*load_costs())
+        summary = costs_payload()
         if not as_json:
             self._send_html(render_costs(summary))
             return
@@ -4432,6 +4467,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
+            return
+        if path in SCREEN_API_PATHS and self.command in ("GET", "HEAD"):
+            screen = SCREEN_API_PATHS[path]
+            self._send_json(runs_payload(query) if screen == "runs" else
+                            {"library": library_payload, "costs": costs_payload,
+                             "tree": tree_payload}[screen]())
             return
         if path == BACKENDS_API_PATH and self.command in ("GET", "HEAD"):
             self._send_json(backends_payload())

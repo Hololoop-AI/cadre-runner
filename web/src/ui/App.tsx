@@ -12,6 +12,11 @@ import { RunningNow } from './Running';
 import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
 import { useFleet } from './useFleet';
+import { CostsScreen } from './Costs';
+import { LibraryScreen } from './Library';
+import { current, keepLinksInApp } from './router';
+import { RunsScreen } from './Runs';
+import { TreeScreen } from './Tree';
 import { MachineSwitch, ServerProvider, useMachines, useServer, type Machines } from './server';
 import { useProjectOptions } from './useProjectOptions';
 import { useWorkLayout } from './useWorkLayout';
@@ -21,14 +26,25 @@ import { WorkList } from './WorkList';
 const LIST_POSTS = ['/items', '/tasks', '/repair'];
 
 /**
- * The fleet home page, for the machine chosen in the header (this one until
- * another is chosen). Switching machines draws that machine's home afresh.
+ * The fleet app: the home page, or one of the other screens by path, for the
+ * machine chosen in the header (this one until another is chosen).
+ * Switching machines draws that machine's screen afresh.
  */
 export function App() {
   const machines = useMachines();
+  const [here] = useState(current);
+  useEffect(keepLinksInApp, []);
+  // the Python pages give the body a class on home only
+  useEffect(() => {
+    document.body.className = here.screen === 'home' ? 'home' : '';
+  }, [here]);
   return (
     <ServerProvider base={machines.base}>
-      <Home key={machines.base} machines={machines} />
+      {here.screen === 'home' ? <Home key={machines.base} machines={machines} />
+        : here.screen === 'library' ? <LibraryScreen key={machines.base} />
+          : here.screen === 'costs' ? <CostsScreen key={machines.base} />
+            : here.screen === 'runs' ? <RunsScreen key={machines.base} />
+              : <TreeScreen key={machines.base} task={here.task} />}
     </ServerProvider>
   );
 }

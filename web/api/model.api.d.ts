@@ -10,6 +10,28 @@ export interface Backend {
 export interface Backends {
     backends: Backend[];
 }
+/** One way of cutting spend (costs._bucket): by node, by project or by task. */
+export interface CostBucket {
+    key: string;
+    usd: number;
+    runs: number;
+    unpriced?: number;
+    /** by task only: the task's project */
+    project?: string;
+}
+/** GET /api/costs (and /costs.json): costs.summarize over every finished turn. */
+export interface CostSummary {
+    total_usd: number;
+    priced: number;
+    unpriced: number;
+    last_24h_usd: number;
+    last_7d_usd: number;
+    by_node: CostBucket[];
+    by_project: CostBucket[];
+    by_task: CostBucket[];
+    /** the newest turns, newest first */
+    recent: TurnRecord[];
+}
 /** GET /fs: directories on the server's machine completing what was typed. */
 export interface Dirs {
     dirs: string[];
@@ -64,6 +86,63 @@ export interface Fleet {
         since?: number;
         head?: string;
     };
+}
+/** One installed skill, workflow, agent or flow (library.scan), as /api/library lists it. */
+export interface InstalledEntry {
+    kind: string;
+    name: string;
+    invoke: string;
+    scope: string;
+    description: string;
+    broken: boolean;
+}
+/** GET /api/library: everything a launch can pick, and the project folders scanned. */
+export interface Library {
+    entries: InstalledEntry[];
+    scanned: string[];
+}
+/** One row of the runs screen (recent.rows): a task's run, or one turn. */
+export interface RunRow {
+    task: string;
+    project: string;
+    node: string;
+    ended: number;
+    seconds: number;
+    cost: number | null;
+    ok: boolean;
+    turns: number;
+    /** the task's newest page, enough to open and manage it */
+    page: {
+        path?: string;
+        key?: string;
+        title?: string;
+    } | null;
+    open: boolean;
+}
+/** GET /api/runs?view=&sort=&project=&node=&q=: one view of every run. */
+export interface Runs {
+    /** at most `limit` rows */
+    rows: RunRow[];
+    /** how many rows the view has */
+    total: number;
+    limit: number;
+    /** every project and node a filter can pick */
+    projects: string[];
+    nodes: string[];
+}
+/** GET /api/tree: every session that launched or was launched, by task. */
+export interface TreePayload {
+    nodes: Record<string, TreeNode>;
+}
+/** One finished turn as the runner logged it (history.jsonl). */
+export interface TurnRecord {
+    story?: string | null;
+    stage?: string | null;
+    model?: string | null;
+    seconds?: number | null;
+    ended?: number | null;
+    ok?: boolean | null;
+    cost_usd?: number | null;
 }
 /** An item's tags, done and hidden marks (items.json). */
 export interface ItemRecord {
@@ -172,6 +251,8 @@ export interface TreeNode {
     node?: string;
     round?: string;
     result?: string;
+    /** the session that launched this one, when this machine does not know it as a task */
+    launcher?: string;
     page?: string;
     [k: string]: unknown;
 }
@@ -312,6 +393,13 @@ export interface GraphRow {
 /** projects.live: not archived, by name */
 export declare function liveProjects(projs: Record<string, Project>): Project[];
 // --- from tree.ts
+/** ancestors: root first, ending at task's parent */
+export declare function ancestors(task: string, parents: Record<string, string>): string[];
+/** descendants: how many sessions sit anywhere under task */
+export declare function descendants(task: string, kids: Record<string, string[]>): number;
+/** {child: parent} from the tree, for the roots-first walk up from a session. */
+export declare function parentsOf(nodes: Tree): Record<string, string>;
+// --- from tree.ts
 /** The launch tree, cleaned: task -> its node, parent '' at a root, since 0 when unknown. */
 export type Tree = Record<string, TreeNode & {
     parent: string;
@@ -444,3 +532,32 @@ export declare function folderPicks(projs: Record<string, Project>, home: string
  * The words are the page script's hint().
  */
 export declare function projectHint(value: string, home: string, projs: Record<string, Project>): string;
+// --- from screens.ts
+/** Plural "s" for a count, as the Python pages write it. */
+export declare function plural(n: number): string;
+/** Python's round(): to the nearest integer, an exact half to the even one. */
+export declare function pyRound(x: number): number;
+/** recent.SORTS: key -> label; "newest" is the select's blank option. */
+export declare const RUN_SORTS: [string, string][];
+/** recent.VIEWS: the runs screen's views, key -> label, in tab order. */
+export declare const RUN_VIEWS: [string, string][];
+/** render_runs' href(): /runs with the selection, overridden, empty values left out. */
+export declare function runsHref(sel: RunsSel, over?: Partial<RunsSel>): string;
+/** The query's view, sort, project, node and q, each trimmed to 200 characters. */
+export declare function runsSel(search: string): RunsSel;
+/** The view render_runs draws: a known view, else "latest". */
+export declare function runsView(sel: RunsSel): string;
+/** render_tree's index: every session that launched others and was launched by none, newest first. */
+export declare function treeRoots(nodes: Record<string, TreeNode>): {
+    tree: Tree;
+    kids: Record<string, string[]>;
+    roots: string[];
+};
+/** The runs screen's selection, as statusd._serve_runs reads it off the query. */
+export interface RunsSel {
+    view: string;
+    sort: string;
+    project: string;
+    node: string;
+    q: string;
+}

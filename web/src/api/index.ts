@@ -3,7 +3,7 @@
 // whichever machine is chosen, directly (the server allows its configured
 // peers' pages: statusd.CORS_ORIGINS); `connect` binds the calls to one
 // machine. This file is the module's only public entry.
-import type { Backend, Backends, Dirs, Fleet, NewWorkInfo } from '../model';
+import type { Backend, Backends, CostSummary, Dirs, Fleet, Library, NewWorkInfo, Runs, TreePayload } from '../model';
 
 /** GET a JSON endpoint; a non-2xx answer is an error naming it. */
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -31,6 +31,14 @@ export interface Server {
   fetchNewWork(): Promise<NewWorkInfo>;
   /** GET /fs: real directories on this machine completing `q`, as a shell would */
   fetchDirs(q: string): Promise<string[]>;
+  /** GET /api/library: everything a launch can pick, and the folders scanned */
+  fetchLibrary(): Promise<Library>;
+  /** GET /api/costs: where the money went */
+  fetchCosts(): Promise<CostSummary>;
+  /** GET /api/runs with the runs screen's query (view, sort, project, node, q) */
+  fetchRuns(search: string): Promise<Runs>;
+  /** GET /api/tree: which session launched which */
+  fetchTree(): Promise<TreePayload>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
@@ -46,6 +54,10 @@ export function connect(base: string): Server {
     fetchFleet: (signal) => getJson<Fleet>(at('/api/fleet'), signal),
     fetchNewWork: () => getJson<NewWorkInfo>(at('/api/newwork')),
     fetchDirs: async (q) => (await getJson<Dirs>(at('/fs?q=' + encodeURIComponent(q)))).dirs || [],
+    fetchLibrary: () => getJson<Library>(at('/api/library')),
+    fetchCosts: () => getJson<CostSummary>(at('/api/costs')),
+    fetchRuns: (search) => getJson<Runs>(at('/api/runs' + search)),
+    fetchTree: () => getJson<TreePayload>(at('/api/tree')),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };

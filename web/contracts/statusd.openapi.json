@@ -281,6 +281,125 @@
           }
         }
       }
+    },
+    "/api/library": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The library screen's data: everything installed that a launch can pick (library.scan), and the project folders scanned.",
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/costs": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The costs screen's data: costs.summarize over every finished turn; the same body as /costs.json.",
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The runs screen's data for one view: its rows (at most `limit`), how many there are, and every project and node a filter can pick.",
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Runs"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "latest | open | turns | failed; anything else is latest"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "newest | oldest | cost | longest"
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "only this project"
+          },
+          {
+            "name": "node",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "only this node"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "task, project or page title contains (hyphens read as spaces)"
+          }
+        ]
+      }
+    },
+    "/api/tree": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The session-tree screen's data: every session that launched or was launched, by task (session_tree.load).",
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreePayload"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -776,6 +895,10 @@
           },
           "page": {
             "type": "string"
+          },
+          "launcher": {
+            "type": "string",
+            "description": "the session that launched this one, when this machine does not know it as a task"
           }
         }
       },
@@ -1095,11 +1218,11 @@
           "recent": {
             "type": "array",
             "items": {
-              "type": "object",
-              "description": "a cost-log turn record, newest first (open: the runner writes it)"
+              "$ref": "#/components/schemas/TurnRecord"
             }
           }
-        }
+        },
+        "x-ts": "CostSummary"
       },
       "CostBucket": {
         "type": "object",
@@ -1131,7 +1254,8 @@
             "type": "string",
             "description": "by_task only"
           }
-        }
+        },
+        "x-ts": "CostBucket"
       },
       "Upstream": {
         "type": "object",
@@ -1300,6 +1424,238 @@
           }
         },
         "x-ts": "Backend"
+      },
+      "Library": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "entries",
+          "scanned"
+        ],
+        "x-ts": "Library",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstalledEntry"
+            }
+          },
+          "scanned": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "InstalledEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "name",
+          "invoke",
+          "scope",
+          "description",
+          "broken"
+        ],
+        "x-ts": "InstalledEntry",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "broken": {
+            "type": "boolean"
+          },
+          "invoke": {
+            "type": "string"
+          }
+        }
+      },
+      "Runs": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rows",
+          "total",
+          "limit",
+          "projects",
+          "nodes"
+        ],
+        "x-ts": "Runs",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunRow"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RunRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task",
+          "project",
+          "node",
+          "ended",
+          "seconds",
+          "cost",
+          "ok",
+          "turns",
+          "page",
+          "open"
+        ],
+        "x-ts": "RunRow",
+        "properties": {
+          "task": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "ended": {
+            "type": "number"
+          },
+          "seconds": {
+            "type": "number"
+          },
+          "cost": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "turns": {
+            "type": "integer"
+          },
+          "page": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "the task's newest page's session record (recent.pages_by_task; open: the page server writes it); the app reads path, key and title",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "open": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TreePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes"
+        ],
+        "x-ts": "TreePayload",
+        "properties": {
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TreeNode"
+            }
+          }
+        }
+      },
+      "TurnRecord": {
+        "type": "object",
+        "description": "a cost-log turn record, newest first (open: the runner writes it)",
+        "x-ts": "TurnRecord",
+        "properties": {
+          "story": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ended": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
       }
     }
   }

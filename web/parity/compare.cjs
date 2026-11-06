@@ -81,20 +81,24 @@ function serialize() {
   const wrap = document.querySelector('.wrap');
   if (!wrap) return `NO .wrap AT ${location.href}\n${document.body.innerText.slice(0, 300)}`;
   walk(wrap, 0);
-  walk(document.querySelector('dialog#newwork'), 0);
+  const dialog = document.querySelector('dialog#newwork');
+  if (dialog) walk(dialog, 0);
   return lines.join('\n') + '\n';
 }
 
-const PAGES = { py: '/', react: '/app/' };
+// a scenario's path: the Python page at it, the React app at /app + it
+const PAGES = { py: (path) => path, react: (path) => '/app' + path };
 
 (async () => {
   const b = await chromium.launch({ executablePath: chrome() });
   const rows = [];
-  for (const [scen, act, query = ''] of require('./scenarios.cjs')) {
+  const failed = new Set();
+  for (const [scen, act, query = '', where = '/'] of require('./scenarios.cjs')) {
     if (only && !only.includes(scen)) continue;
     const dir = path.join(out, scen);
     fs.mkdirSync(dir, { recursive: true });
-    for (const [name, page] of Object.entries(PAGES)) {
+    for (const [name, at] of Object.entries(PAGES)) {
+      const page = at(where);
       await fetch(base + '/parity/reset');
       const ctx = await b.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
       const p = await ctx.newPage();
@@ -106,6 +110,8 @@ const PAGES = { py: '/', react: '/app/' };
       try {
         await act(p);
       } catch (e) {
+        // a scenario whose action failed did not test what it names: say so in the result
+        failed.add(scen);
         console.error(scen, name, 'action failed', e.message.split('\n')[0]);
       }
       await p.waitForTimeout(900);
@@ -116,7 +122,7 @@ const PAGES = { py: '/', react: '/app/' };
       await ctx.close();
     }
     const [a, r] = ['py', 'react'].map((n) => fs.readFileSync(path.join(dir, `${n}.txt`), 'utf8'));
-    rows.push([scen, a === r ? 'IDENTICAL' : 'DIFFERS', `${a.split('\n').length} lines`]);
+    rows.push([scen, failed.has(scen) ? 'ACTION FAILED' : a === r ? 'IDENTICAL' : 'DIFFERS', `${a.split('\n').length} lines`]);
   }
   await b.close();
   for (const row of rows) console.log(row.join('\t'));

@@ -1,6 +1,8 @@
 """Freeze a backend's fleet into a fixture for parity/serve.py: its
 /api/fleet and /api/newwork as they are now, the skill library they were
-drawn from, and the instant they were read.
+drawn from, the finished turns and page records the costs and runs screens
+read, and the instant they were read. Run it on the machine whose fleet it
+captures: the library and runs come off this machine's disk.
 
     python3 web/parity/capture.py http://127.0.0.1:8183 web/parity/fixture.json
 """
@@ -30,7 +32,12 @@ def main():
     except Exception:  # a backend from before /api/newwork: this machine's
         newwork = statusd.newwork_payload()
     entries = statusd.library_mod.scan(dirs=[], skills_source=statusd._skills_source())
-    out.write_text(json.dumps({"now": now, "fleet": fleet, "newwork": newwork, "entries": entries}))
+    # what the library, costs and runs screens read off this machine's disk
+    turns, owners, pages = statusd.load_runs()
+    out.write_text(json.dumps({"now": now, "fleet": fleet, "newwork": newwork, "entries": entries,
+                               "library": statusd.library_payload(),
+                               "runs": {"turns": turns, "owners": owners, "pages": pages}},
+                              default=str))
     print(f"wrote {out}: {len((fleet.get('snap') or {}).get('surfaces') or [])} surfaces")
 
 

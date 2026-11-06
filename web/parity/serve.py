@@ -62,7 +62,14 @@ def main():
         sf for sf in data["snap"].get("surfaces") or []
         if statusd.conv_mod.key_of(sf) not in statusd._ARCHIVED]}}
     statusd.newwork_payload = lambda: fixture["newwork"]
-    statusd.library_mod.scan = lambda **kw: fixture["entries"]
+    # the library screen scans the projects' folders too; New work scans none
+    statusd.library_mod.scan = lambda **kw: fixture["library"]["entries"] if kw.get("dirs") else fixture["entries"]
+    statusd.load_projects = lambda *a, **k: data.get("projs") or {}
+    runs = fixture["runs"]
+    statusd.load_runs = lambda *a, **k: (runs["turns"], runs["owners"], runs["pages"])
+    statusd.load_costs = lambda *a, **k: (runs["turns"], runs["owners"])
+    statusd.load_tree = lambda *a, **k: data.get("tree") or {}
+    statusd.costs_mod.time = FrozenTime(now)       # "last 24 hours" from the frozen instant
     backends_mod.fleet = lambda b, now=None: (data, None)
     backends_mod.signature = lambda backends, now=None: ("frozen", True)
 

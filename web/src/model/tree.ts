@@ -23,6 +23,7 @@ export function clean(nodes: unknown): Tree {
   return out;
 }
 
+/** {child: parent} from the tree, for the roots-first walk up from a session. */
 export function parentsOf(nodes: Tree): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [t, n] of Object.entries(nodes)) if (n.parent) out[t] = n.parent;

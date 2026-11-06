@@ -75,6 +75,8 @@ export interface TreeNode {
   node?: string;
   round?: string;
   result?: string;
+  /** the session that launched this one, when this machine does not know it as a task */
+  launcher?: string;
   page?: string;
   [k: string]: unknown;
 }
@@ -182,4 +184,87 @@ export interface LibraryEntry {
   i: string;
   k: string;
   d: string;
+}
+
+/** One installed skill, workflow, agent or flow (library.scan), as /api/library lists it. */
+export interface InstalledEntry {
+  kind: string;
+  name: string;
+  invoke: string;
+  scope: string;
+  description: string;
+  broken: boolean;
+}
+
+/** GET /api/library: everything a launch can pick, and the project folders scanned. */
+export interface Library {
+  entries: InstalledEntry[];
+  scanned: string[];
+}
+
+/** One way of cutting spend (costs._bucket): by node, by project or by task. */
+export interface CostBucket {
+  key: string;
+  usd: number;
+  runs: number;
+  unpriced?: number;
+  /** by task only: the task's project */
+  project?: string;
+}
+
+/** One finished turn as the runner logged it (history.jsonl). */
+export interface TurnRecord {
+  story?: string | null;
+  stage?: string | null;
+  model?: string | null;
+  seconds?: number | null;
+  ended?: number | null;
+  ok?: boolean | null;
+  cost_usd?: number | null;
+}
+
+/** GET /api/costs (and /costs.json): costs.summarize over every finished turn. */
+export interface CostSummary {
+  total_usd: number;
+  priced: number;
+  unpriced: number;
+  last_24h_usd: number;
+  last_7d_usd: number;
+  by_node: CostBucket[];
+  by_project: CostBucket[];
+  by_task: CostBucket[];
+  /** the newest turns, newest first */
+  recent: TurnRecord[];
+}
+
+/** One row of the runs screen (recent.rows): a task's run, or one turn. */
+export interface RunRow {
+  task: string;
+  project: string;
+  node: string;
+  ended: number;
+  seconds: number;
+  cost: number | null;
+  ok: boolean;
+  turns: number;
+  /** the task's newest page, enough to open and manage it */
+  page: { path?: string; key?: string; title?: string } | null;
+  open: boolean;
+}
+
+/** GET /api/runs?view=&sort=&project=&node=&q=: one view of every run. */
+export interface Runs {
+  /** at most `limit` rows */
+  rows: RunRow[];
+  /** how many rows the view has */
+  total: number;
+  limit: number;
+  /** every project and node a filter can pick */
+  projects: string[];
+  nodes: string[];
+}
+
+/** GET /api/tree: every session that launched or was launched, by task. */
+export interface TreePayload {
+  nodes: Record<string, TreeNode>;
 }

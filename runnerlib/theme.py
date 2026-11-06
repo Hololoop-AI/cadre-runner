@@ -5,7 +5,9 @@ palette colours to roles, and two renderings of those roles, because the
 fleet page and surface-theme.css name their CSS variables differently.
 
 Only one theme exists today. A user setting picks a name from THEMES later;
-until then DEFAULT is the theme.
+until then DEFAULT is the theme. Direction (the driver, 2026-11-06): settings
+in a JSON file the way VS Code keeps them, which a meta agent can edit and
+have the pages reload on the fly. This module would then read that file.
 """
 
 # Everforest, dark, hard contrast (github.com/sainnhe/everforest, palette.md,

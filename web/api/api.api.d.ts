@@ -16,6 +16,14 @@ export interface Server {
     fetchNewWork(): Promise<NewWorkInfo>;
     /** GET /fs: real directories on this machine completing `q`, as a shell would */
     fetchDirs(q: string): Promise<string[]>;
+    /** GET /api/library: everything a launch can pick, and the folders scanned */
+    fetchLibrary(): Promise<Library>;
+    /** GET /api/costs: where the money went */
+    fetchCosts(): Promise<CostSummary>;
+    /** GET /api/runs with the runs screen's query (view, sort, project, node, q) */
+    fetchRuns(search: string): Promise<Runs>;
+    /** GET /api/tree: which session launched which */
+    fetchTree(): Promise<TreePayload>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */

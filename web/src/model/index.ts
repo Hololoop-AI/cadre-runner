@@ -5,7 +5,8 @@
 // proves the copies still agree.
 
 export type {
-  Backend, Backends, Dirs, Earlier, Ending, Fleet, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
+  Backend, Backends, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
+  TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
   RunningCard, SessionStatus, Surface, TreeNode,
 } from './payload';
 export { cmp, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';
@@ -16,9 +17,11 @@ export {
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
 export { liveProjects } from './projects';
+export { ancestors, descendants, parentsOf } from './tree';
 export type { Tree } from './tree';
 export {
   CHIPS, effectiveView, layout, loadSel, saveSel, serverView, tagChips, type LayoutInput, type Placed, type Sel, type ServerView,
 } from './view';
 export { buildHome, limitChoices, staleCode, type Home, type ItemContext } from './home';
 export { findEntries, folderPicks, projectHint } from './picker';
+export { plural, pyRound, RUN_SORTS, RUN_VIEWS, runsHref, runsSel, runsView, treeRoots, type RunsSel } from './screens';

@@ -2,7 +2,8 @@
 
 // --- from App.ts
 /**
- * The fleet home page, for the machine chosen in the header (this one until
- * another is chosen). Switching machines draws that machine's home afresh.
+ * The fleet app: the home page, or one of the other screens by path, for the
+ * machine chosen in the header (this one until another is chosen).
+ * Switching machines draws that machine's screen afresh.
  */
 export declare function App(): import("react").JSX.Element;
