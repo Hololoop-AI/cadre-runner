@@ -397,6 +397,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
         # it (runnerlib/library.py) — there is no flag for it.
         prompt = f"{action['invoke']} {prompt}"
     run_dir = cfg.data_dir / "runs" / task_id / rid
+    page = task_page(cfg, task_id, rec.get("page"))
     session_id = action["session_id"]
     model = action.get("model") or cfg.model_for(stage)
     effort = action.get("effort") or cfg.effort_for(stage)
@@ -413,8 +414,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                                     "CADRE_RUN_ID": rid,
                                     # the task's page, whichever node a handoff
                                     # handed it to
-                                    "CADRE_SURFACE_OUT": str(task_page(cfg, task_id,
-                                                                       rec.get("page")))})
+                                    "CADRE_SURFACE_OUT": str(page)})
     active[rid] = {
         "stage": stage, "task": task_id, "slice": None, "pr": None, "pid": pid,
         "repo": "", "branch": "", "model": model, "effort": effort,
@@ -422,6 +422,9 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
         "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         "session_id": session_id, "resumed": bool(action.get("resume")),
         "iteration": rec["iteration"], "action": action,
+        # what the page looked like before the turn: the reap compares, so a
+        # turn that ends without rewriting it is caught (`_page_rewritten`)
+        "page_mtime": _mtime(page),
     }
     reg.save()
     log(f"{task_id}: spawned turn {rec['iteration']} in {cwd} — pid {pid} "
@@ -459,6 +462,13 @@ def _reap_tasks(cfg, reg):
             log(f"{task_id}: turn {run.get('iteration')} "
                 f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
             art = task_page(cfg, task_id, rec.get("page"))
+            if ok and not _page_rewritten(run, art):
+                if not run["action"].get("page_nudge"):
+                    _nudge_for_page(cfg, reg, task_id, run, art)
+                    continue
+                log(f"{task_id}: turn {run.get('iteration')} was asked again and "
+                    f"still did not rewrite {art.name} — the driver sees the "
+                    f"previous round's page")
             if rec.pop("closing", False):
                 # The driver approved AND annotated: this turn existed only to
                 # act on those last words and write the decision onto the page.
@@ -485,6 +495,52 @@ def _reap_tasks(cfg, reg):
             elif ok and art and not art.exists():
                 log(f"{task_id}: turn finished but wrote no page at {art} — "
                     f"nothing for the driver to rule on")
+
+
+def _mtime(path) -> float | None:
+    try:
+        return Path(path).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _page_rewritten(run, art) -> bool:
+    """Did the turn write its page? Existing is not enough: from round 2 on
+    the previous round's page is still at that path, so a turn that ended
+    before writing reopened the old page as if it were the answer. A run
+    from before runs recorded `page_mtime` is taken at its word."""
+    if "page_mtime" not in run:
+        return bool(art and art.exists())
+    now = _mtime(art) if art else None
+    return now is not None and now != run["page_mtime"]
+
+
+# The one follow-up a turn gets when it ends without its page. The usual
+# cause: the agent started work in the background, said "I'll write the page
+# once it finishes" and ended its turn — and `claude -p` exits when the turn
+# ends, killing that background work (the React fleet parity round 2,
+# 2026-11-05: a 15-minute screenshot pass cut off at "[killed]", no page).
+PAGE_NUDGE = """Your turn ended without rewriting the page at $$CADRE_SURFACE_OUT.
+This is a headless run: when your turn ends the process exits, and anything you
+left running in the background was stopped — check its output before trusting
+it. Finish what the page needs in the foreground (no background commands, no
+"I'll write it once X finishes"), then write the full page to $$CADRE_SURFACE_OUT
+before you end this turn. If the work cannot finish, write the page anyway and
+say on it what did not finish and why."""
+
+
+def _nudge_for_page(cfg, reg, task_id, run, art) -> None:
+    """Resume the same session once, asking for the page. Bounded: the nudged
+    turn carries `page_nudge`, and a second miss falls through to the reap's
+    normal path rather than asking again."""
+    log(f"{task_id}: turn {run.get('iteration')} ended without rewriting "
+        f"{art.name} — resuming its session once to ask for the page")
+    action = {**run["action"], "resume": True, "invoke": "",
+              "prompt_template": PAGE_NUDGE, "page_nudge": True}
+    try:
+        _run_task(cfg, reg, task_id, action, skip_cap=True)
+    except Exception as e:
+        log(f"{task_id}: could not resume the session for its page: {e}")
 
 
 def _inherited(cfg, rec, art) -> dict:

@@ -32,7 +32,11 @@ $task_text
 4. Never commit or push unless the ask or the driver's words this round say
    to. When they do, do it: push exactly what they asked for, and nothing on
    your own initiative. Otherwise leave the work in the tree.
-5. Your final message is a one-paragraph summary for the runner log: what you
+5. Do not end your turn while work you started is still running. You are
+   headless: the turn ending IS the process exiting, and anything left in the
+   background is killed with it. Wait for it in the foreground, and write the
+   page before you stop — never "I'll write the page once X finishes".
+6. Your final message is a one-paragraph summary for the runner log: what you
    did, what you are waiting on.
 
 ## Rounds after the first
