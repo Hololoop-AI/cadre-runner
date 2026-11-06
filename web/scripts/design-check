@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Run the low-level-design checks a project's context/design.toml names.
+
+G1 type-check, G2 boundary rules, G3 module map agrees with the tree,
+G5 API snapshots regenerate unchanged, G8 duplication at or below baseline,
+plus the R6 module-size warning. Exits 1 if any check fails. Never leaves the
+tree changed: snapshots are restored after regeneration.
+"""
+import argparse
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import tomllib
+
+CODE_SUFFIXES = {".ts", ".tsx", ".js", ".mjs", ".py", ".rs"}
+
+
+def run(cmd, root):
+    p = subprocess.run(cmd, shell=True, cwd=root, capture_output=True, text=True)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def tail(text, n=15):
+    return "\n".join(text.splitlines()[-n:])
+
+
+def g1_typecheck(cfg, root):
+    code, out = run(cfg["stack"]["typecheck"], root)
+    return code == 0, tail(out)
+
+
+def g2_boundary(cfg, root):
+    cmd = cfg["stack"].get("boundary")
+    if not cmd:
+        return None, "no stack.boundary command configured"
+    code, out = run(cmd, root)
+    return code == 0, tail(out)
+
+
+def g3_map(cfg, root):
+    m = cfg.get("map", {})
+    text = (root / m.get("path", "context/modules.md")).read_text()
+    entries = {}
+    for section in re.split(r"^## ", text, flags=re.M)[1:]:
+        name = section.splitlines()[0].strip()
+        hit = re.search(r"\*\*Entry:\*\*\s*`([^`]+)`", section)
+        if hit:
+            entries[name] = hit.group(1)
+    problems = [f"module {n}: Entry {e} does not exist" for n, e in entries.items() if not (root / e).is_file()]
+    for mod in cfg.get("module", []):
+        if mod["name"] not in entries:
+            problems.append(f"design.toml module {mod['name']} has no ## section with an Entry line in the map")
+    src = root / m.get("source_root", "src")
+    owned = [(root / e).resolve() for e in entries.values()]
+    for d in sorted(p for p in src.iterdir() if p.is_dir()) if src.is_dir() else []:
+        has_code = any(f.suffix in CODE_SUFFIXES for f in d.rglob("*") if f.is_file())
+        if has_code and not any(d.resolve() in e.parents for e in owned):
+            problems.append(f"{d.relative_to(root)} holds code but no module's Entry is inside it")
+    return not problems, "\n".join(problems) or f"{len(entries)} modules, all entries present"
+
+
+def g5_snapshots(cfg, root):
+    problems, checked = [], 0
+    for mod in cfg.get("module", []):
+        if "snapshot_cmd" not in mod:
+            continue
+        snap = root / mod["snapshot"]
+        before = snap.read_bytes() if snap.exists() else None
+        code, out = run(mod["snapshot_cmd"], root)
+        after = snap.read_bytes() if snap.exists() else None
+        if before is None:
+            snap.unlink(missing_ok=True)
+        else:
+            snap.write_bytes(before)
+        checked += 1
+        if code != 0:
+            problems.append(f"{mod['name']}: snapshot command exited {code}\n{tail(out)}")
+        elif before is None:
+            problems.append(f"{mod['name']}: no committed snapshot at {mod['snapshot']}")
+        elif after != before:
+            problems.append(f"{mod['name']}: public API differs from {mod['snapshot']}\n" + unified(before, after, mod["snapshot"]))
+    return not problems, "\n".join(problems) or f"{checked} snapshots unchanged"
+
+
+def unified(before, after, name):
+    import difflib
+    lines = difflib.unified_diff(before.decode().splitlines(), (after or b"").decode().splitlines(),
+                                 f"{name} (committed)", f"{name} (regenerated)", lineterm="")
+    return tail("\n".join(lines), 30)
+
+
+def duplication_now(cfg, root):
+    d = cfg["duplication"]
+    run(d["cmd"], root)  # jscpd exits non-zero on its own thresholds; the report is what counts
+    report = json.loads((root / d["report"]).read_text())
+    return float(report["statistics"]["total"]["percentage"])
+
+
+def g8_duplication(cfg, root):
+    if "duplication" not in cfg:
+        return None, "no [duplication] configured"
+    now = duplication_now(cfg, root)
+    base_file = root / cfg["duplication"]["baseline"]
+    if not base_file.exists():
+        return False, f"no baseline at {base_file.relative_to(root)}; run with --write-baseline"
+    base = float(json.loads(base_file.read_text())["percentage"])
+    return now <= base, f"duplication {now}% (baseline {base}%)"
+
+
+def r6_size(cfg, root):
+    limit = cfg.get("size", {}).get("warn_lines")
+    if not limit:
+        return None, "no [size] configured"
+    big = []
+    for mod in cfg.get("module", []):
+        d = (root / mod["entry"]).parent
+        n = sum(len(f.read_text(errors="ignore").splitlines()) for f in d.rglob("*")
+                if f.is_file() and f.suffix in CODE_SUFFIXES)
+        if n > limit:
+            big.append(f"{mod['name']}: {n} lines > {limit} (trigger R6: propose a split)")
+    return None, "\n".join(big) or "all modules under the size limit"
+
+
+CHECKS = {"G1": g1_typecheck, "G2": g2_boundary, "G3": g3_map, "G5": g5_snapshots, "G8": g8_duplication, "R6": r6_size}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--root", default=".", help="project root (default: current directory)")
+    ap.add_argument("--only", help="comma-separated checks, e.g. G1,G5")
+    ap.add_argument("--write-baseline", action="store_true", help="record current duplication as the baseline (low-level-design node only)")
+    a = ap.parse_args()
+    root = pathlib.Path(a.root).resolve()
+    cfg = tomllib.loads((root / "context/design.toml").read_text())
+
+    if a.write_baseline:
+        import datetime
+        pct = duplication_now(cfg, root)
+        base = root / cfg["duplication"]["baseline"]
+        base.parent.mkdir(parents=True, exist_ok=True)
+        base.write_text(json.dumps({"percentage": pct, "measured": datetime.date.today().isoformat()}) + "\n")
+        print(f"baseline written: {pct}% -> {base.relative_to(root)}")
+        return 0
+
+    names = a.only.upper().split(",") if a.only else list(CHECKS)
+    failed = False
+    for name in names:
+        ok, detail = CHECKS[name](cfg, root)
+        label = {True: "PASS", False: "FAIL", None: "INFO"}[ok]
+        failed |= ok is False
+        print(f"{name} {label}  {detail.splitlines()[0] if detail else ''}")
+        for line in detail.splitlines()[1:]:
+            print(f"     {line}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

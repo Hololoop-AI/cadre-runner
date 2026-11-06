@@ -2,23 +2,26 @@
    content (sections, tables, pre, mermaid, details, chips, verdict forms)
    and never style anything; this file is the theme config the driver owns.
    Deployed beside status.json by install_page(); served as /surface-theme.css
-   through statusd. Swap or edit this file to retheme every surface at once. */
+   through statusd. The colours are runnerlib/theme.py's (Everforest dark,
+   hard contrast); change them there and here together: a test holds the two
+   to the same values. */
 
 :root {
   /* Native scrollbars, the select's option list and form controls draw dark.
      Without it Chrome paints them white across the bottom of a dark page. */
   color-scheme: dark;
-  --bg: #0f1115;
-  --panel: #12161e;
-  --panel-2: #171c26;
-  --border: #2a2e36;
-  --text: #e8e6e1;
-  --muted: #9aa4b2;
-  --label: #8c96aa;
-  --accent: #8fc7ff;
-  --good: #8fe0a8;
-  --bad: #ff8f8f;
-  --code-bg: #0b0e13;
+  --bg: #272e33;
+  --panel: #2e383c;
+  --panel-2: #374145;
+  --border: #414b50;
+  --text: #d3c6aa;
+  --muted: #9da9a0;
+  --label: #859289;
+  --accent: #7fbbb3;
+  --good: #a7c080;
+  --bad: #e67e80;
+  --code-bg: #1e2326;
+  --on-accent: #1e2326;
   --serif: "Iowan Old Style", Georgia, serif;
   --sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -217,7 +220,7 @@ button, input[type="submit"] {
   margin-top: 10px;
   font: 600 13px/1 var(--sans);
   background: var(--accent);
-  color: #10141b;
+  color: var(--on-accent);
   border: 0;
   border-radius: 8px;
   padding: 10px 16px;

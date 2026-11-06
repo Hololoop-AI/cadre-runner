@@ -1,0 +1,42 @@
+# What scripts/design-check reads for the web app (the React fleet UI).
+# Run from web/:  python3 scripts/design-check
+# Paths are relative to web/, the container's root.
+
+[stack]
+language = "typescript"
+typecheck = "npx tsc --noEmit -p ."                       # G1
+boundary = "node scripts/check_boundaries.mjs"            # G2: ui -> api -> model, entries only
+
+[map]
+path = "context/modules.md"
+source_root = "src"                                       # G3
+
+[[module]]
+name = "model"
+entry = "src/model/index.ts"
+snapshot = "api/model.api.d.ts"
+snapshot_cmd = "python3 scripts/api_snapshot.py model"   # G5 (and G4: fails on an undocumented export)
+
+[[module]]
+name = "api"
+entry = "src/api/index.ts"
+snapshot = "api/api.api.d.ts"
+snapshot_cmd = "python3 scripts/api_snapshot.py api"
+
+[[module]]
+name = "ui"
+entry = "src/ui/index.ts"
+snapshot = "api/ui.api.d.ts"
+snapshot_cmd = "python3 scripts/api_snapshot.py ui"
+
+[duplication]                                             # G8
+cmd = "npx jscpd --min-lines 5 --min-tokens 50 --format typescript,tsx --ignore '**/*.css' --reporters json --output .jscpd-report src"
+report = ".jscpd-report/jscpd-report.json"
+baseline = "context/baselines/duplication.json"
+ratchet = "down-only"
+
+[size]
+warn_lines = 8000                                         # R6, warning only
+
+[locked_paths]
+paths = ["api/**", "context/modules.md", "context/design.toml"]

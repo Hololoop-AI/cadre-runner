@@ -1,0 +1,1306 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "statusd.py: what the web app and other machines' fleets rely on",
+    "version": "1",
+    "description": "The HTTP boundary between statusd.py and its clients: the React app at /app/ (served by this or another configured machine; cross-origin reads and posts are allowed only for the origins in statusd.CORS_ORIGINS) and, for the two peer endpoints, other machines' fleet servers at other versions (runnerlib/backends.py). Decision: web/context/decisions/0002-statusd-http-contract.md. Checked by tests/test_web_contract.py with web/scripts/contract_check.py. Schemas use only the JSON Schema keywords that validator enforces (it refuses any other). Schemas describe what statusd SENDS; a reader must still ignore fields it does not know. x-tier: peer = read across machines and versions, additive changes only; app = read only by the app served from the same checkout. x-ts names the TypeScript interface in web/src/model/payload.ts that reads the schema; x-ts-client-only lists fields that interface adds itself after the fetch."
+  },
+  "paths": {
+    "/api/fleet/version": {
+      "get": {
+        "x-tier": "peer",
+        "summary": "Cheap, polled: changes whenever anything the fleet shows for this machine changed.",
+        "responses": {
+          "200": {
+            "description": "the version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetVersion"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fleet": {
+      "get": {
+        "x-tier": "peer",
+        "summary": "Everything the fleet renders for this machine (statusd.fleet_payload).",
+        "responses": {
+          "200": {
+            "description": "the payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Fleet"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/newwork": {
+      "get": {
+        "x-tier": "app",
+        "summary": "What the New work dialog needs beside /api/fleet: the home directory and the skill picker's library.",
+        "responses": {
+          "200": {
+            "description": "home and library",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewWorkInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fs": {
+      "get": {
+        "x-tier": "app",
+        "summary": "Real directories on this machine completing q, as a shell would. Directory names only.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "a path prefix; ~ expands; at most 400 characters are read"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "completions, at most 40",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dirs"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/costs.json": {
+      "get": {
+        "x-tier": "app",
+        "summary": "Spend: totals and the same spend cut by node, project and task (runnerlib/costs.summarize). The costs screen reads it.",
+        "responses": {
+          "200": {
+            "description": "the summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fleet/events": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The fleet stream (Server-Sent Events). It carries no data to draw: on hello and change the client re-fetches /api/fleet. Comment lines (': ping') keep it open. The server closes on error; a client falls back to polling /api/fleet.",
+        "x-sse-events": {
+          "hello": {
+            "$ref": "#/components/schemas/Upstream"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Upstream"
+          },
+          "change": {
+            "$ref": "#/components/schemas/Empty"
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "event: <name>\\ndata: <json>\\n\\n, events as x-sse-events declares",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Launch work. Empty text, a missing submitter or a refused task is answered with a notice, not an HTTP error.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownAction"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
+    },
+    "/items": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Change one item's done, hidden or tag marks (items.json). A refused change is a 'Refused: ...' notice.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownAction"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
+    },
+    "/repair": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Move, replace, end, archive or attach a conversation. Lands on /page/<key>, or on / for an archive with back=home that was not refused. A refused repair is a 'Refused: ...' notice.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownAction"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
+    },
+    "/projects": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Create a project. Lands on /project/<id>, or on / when refused. (/projects/<id>/tasks and /projects/<id>/archive join this contract with the project screen.)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownAction"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
+    },
+    "/api/backends": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The machines the app can switch between: this one first (url \"\" = where the app was loaded from), then each configured [[backends]] entry, which the app reads and posts to directly.",
+        "responses": {
+          "200": {
+            "description": "the machines",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Backends"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Landing": {
+        "description": "Asked with Accept: application/json: where the post landed and what happened, instead of the 303.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Landing"
+            }
+          }
+        }
+      },
+      "Landed": {
+        "description": "A plain browser post: Location is <path>?notice=<what happened>, so a refresh does not re-post.",
+        "headers": {
+          "Location": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CrossOrigin": {
+        "description": "cross-origin post (an Origin that is not this host). Body is text, not part of the contract."
+      },
+      "UnknownAction": {
+        "description": "unknown action path. Body is text, not part of the contract."
+      },
+      "TooLarge": {
+        "description": "body too large. Body is text, not part of the contract."
+      }
+    },
+    "schemas": {
+      "FleetVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "instance",
+          "machine"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "opaque; compare for equality only"
+          },
+          "instance": {
+            "type": "string",
+            "description": "this server process's id; same instance = this machine"
+          },
+          "machine": {
+            "type": "string"
+          },
+          "review_events": {
+            "type": "boolean",
+            "description": "whether this machine's page server is streaming its events to us"
+          }
+        }
+      },
+      "Fleet": {
+        "x-ts": "Fleet",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "instance",
+          "machine"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "machine": {
+            "type": "string"
+          },
+          "review_events": {
+            "type": "boolean"
+          },
+          "snap": {
+            "$ref": "#/components/schemas/Snapshot"
+          },
+          "graph": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[link records, holders, pages by key]. Exactly three: older readers unpack it.",
+            "prefixItems": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/LinkRecord"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/PageInfo"
+                }
+              }
+            ]
+          },
+          "statuses": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SessionStatus"
+            }
+          },
+          "projs": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "finished": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "starting": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Pageless"
+              }
+            }
+          },
+          "doing": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "spent": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "returned": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentRow"
+            }
+          },
+          "week_usd": {
+            "type": "number"
+          },
+          "histories": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "tree": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TreeNode"
+            }
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunningCard"
+            }
+          },
+          "slots": {
+            "type": "integer"
+          },
+          "pageless": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Pageless"
+            }
+          },
+          "endings": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Ending"
+            }
+          },
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ItemRecord"
+            }
+          },
+          "fleet_page_code": {
+            "type": "object",
+            "properties": {
+              "stale": {
+                "type": "boolean"
+              },
+              "since": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "Snapshot": {
+        "description": "The runner's status.json, passed through (open: the daemon owns it).",
+        "type": "object",
+        "properties": {
+          "ts": {
+            "type": "number"
+          },
+          "iso": {
+            "type": "string"
+          },
+          "surfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Surface"
+            }
+          },
+          "code": {
+            "type": "object",
+            "properties": {
+              "running": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tree": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "since": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "Surface": {
+        "x-ts": "Surface",
+        "x-ts-client-only": [
+          "earlier",
+          "page_title"
+        ],
+        "description": "A review page the runner registered (status.json surfaces). Open: the daemon owns it.",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "opened": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "epoch seconds"
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stranded": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "ended": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SessionStatus": {
+        "x-ts": "SessionStatus",
+        "description": "A page's live state from the page server (open: review-surface owns it).",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "presence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_prompts": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_agent_reply_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unseen": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "PageInfo": {
+        "x-ts": "PageInfo",
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "number"
+          },
+          "ended": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LinkRecord": {
+        "x-ts": "LinkRecord",
+        "type": "object",
+        "required": [
+          "type",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "supersedes | continues | child-of today; a reader skips a type it does not know"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "Project": {
+        "x-ts": "Project",
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "dirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TreeNode": {
+        "x-ts": "TreeNode",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "since": {
+            "type": "number"
+          },
+          "parent": {
+            "type": "string"
+          },
+          "working": {
+            "type": "boolean"
+          },
+          "node": {
+            "type": "string"
+          },
+          "round": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          }
+        }
+      },
+      "RunningCard": {
+        "x-ts": "RunningCard",
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "doing": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agents": {
+            "type": "integer"
+          },
+          "page": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "item": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "item_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "deadline": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "0 = no per-turn limit"
+          },
+          "waiting": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Pageless": {
+        "x-ts": "Pageless",
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string"
+          },
+          "since": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "ran": {
+            "type": "boolean"
+          },
+          "started": {
+            "type": "boolean"
+          },
+          "failed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Ending": {
+        "x-ts": "Ending",
+        "type": "object",
+        "properties": {
+          "ended": {
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "node": {
+            "type": "string"
+          }
+        }
+      },
+      "ItemRecord": {
+        "x-ts": "ItemRecord",
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "done_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "hidden_at": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "RecentRow": {
+        "description": "A recently finished task (recent.rows). The app does not read it yet.",
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string"
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ended": {
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      },
+      "NewWorkInfo": {
+        "x-ts": "NewWorkInfo",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "home",
+          "library"
+        ],
+        "properties": {
+          "home": {
+            "type": "string"
+          },
+          "library": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            }
+          }
+        }
+      },
+      "LibraryEntry": {
+        "x-ts": "LibraryEntry",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "v",
+          "i",
+          "k",
+          "d"
+        ],
+        "properties": {
+          "v": {
+            "type": "string",
+            "description": "kind:name, what /tasks takes as run"
+          },
+          "i": {
+            "type": "string",
+            "description": "how it is invoked"
+          },
+          "k": {
+            "type": "string",
+            "description": "kind"
+          },
+          "d": {
+            "type": "string",
+            "description": "the start of its description, at most 120 characters"
+          }
+        }
+      },
+      "Dirs": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dirs"
+        ],
+        "properties": {
+          "dirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "x-ts": "Dirs"
+      },
+      "CostSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "total_usd",
+          "runs",
+          "priced",
+          "unpriced",
+          "last_24h_usd",
+          "last_7d_usd",
+          "by_node",
+          "by_project",
+          "by_task",
+          "recent"
+        ],
+        "properties": {
+          "total_usd": {
+            "type": "number"
+          },
+          "runs": {
+            "type": "integer"
+          },
+          "priced": {
+            "type": "integer"
+          },
+          "unpriced": {
+            "type": "integer"
+          },
+          "last_24h_usd": {
+            "type": "number"
+          },
+          "last_7d_usd": {
+            "type": "number"
+          },
+          "by_node": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostBucket"
+            }
+          },
+          "by_project": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostBucket"
+            }
+          },
+          "by_task": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostBucket"
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "a cost-log turn record, newest first (open: the runner writes it)"
+            }
+          }
+        }
+      },
+      "CostBucket": {
+        "type": "object",
+        "required": [
+          "key",
+          "usd",
+          "runs"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "usd": {
+            "type": "number"
+          },
+          "runs": {
+            "type": "integer"
+          },
+          "unpriced": {
+            "type": "integer"
+          },
+          "seconds": {
+            "type": "number"
+          },
+          "last": {
+            "type": "number"
+          },
+          "project": {
+            "type": "string",
+            "description": "by_task only"
+          }
+        }
+      },
+      "Upstream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "upstream"
+        ],
+        "properties": {
+          "upstream": {
+            "type": "boolean",
+            "description": "every backend is answering"
+          }
+        }
+      },
+      "Empty": {
+        "type": "object",
+        "additionalProperties": false
+      },
+      "Landing": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "notice",
+          "location"
+        ],
+        "properties": {
+          "notice": {
+            "type": "string",
+            "description": "what happened, in words for the driver"
+          },
+          "location": {
+            "type": "string",
+            "description": "<path>?notice=..., the page a browser post would land on"
+          }
+        }
+      },
+      "TaskForm": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "required in practice: empty text is a notice"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "string",
+            "description": "the item's task id this work joins"
+          },
+          "run": {
+            "type": "string",
+            "description": "a LibraryEntry.v"
+          },
+          "tags": {
+            "type": "string",
+            "description": "comma separated"
+          }
+        }
+      },
+      "ItemForm": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "done",
+              "undone",
+              "hide",
+              "unhide",
+              "tag",
+              "untag"
+            ]
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "RepairForm": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "enum": [
+              "move",
+              "replace",
+              "end",
+              "archive",
+              "attach"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "move"
+          },
+          "target": {
+            "type": "string",
+            "description": "replace: the page that replaces key"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "attach"
+          },
+          "back": {
+            "type": "string",
+            "description": "home: an archive stays on the fleet"
+          }
+        }
+      },
+      "ProjectForm": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "dir1": {
+            "type": "string",
+            "description": "the directory launched work runs in"
+          },
+          "dirs": {
+            "type": "string",
+            "description": "more directories, one per line"
+          },
+          "group": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          }
+        }
+      },
+      "Backends": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "backends"
+        ],
+        "properties": {
+          "backends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Backend"
+            }
+          }
+        },
+        "x-ts": "Backends"
+      },
+      "Backend": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "x-ts": "Backend"
+      }
+    }
+  }
+}

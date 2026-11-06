@@ -57,6 +57,7 @@ from runnerlib import projects as projects_mod
 from runnerlib import recent as recent_mod
 from runnerlib import session_tree as tree_mod
 from runnerlib import surface as surface_mod
+from runnerlib import theme as theme_mod
 from runnerlib import wake as wake_mod
 from runnerlib.tasks import TARGET_REQUEST as TASK_REQUEST, TOPIC as TASK_TOPIC
 
@@ -113,6 +114,13 @@ MACHINE = backends_mod.machine_name(_CFG.runner if _CFG else {})
 # way, over HTTP, through the API below. This machine's URL is resolved per
 # request from the socket the request came in on (Handler._backends).
 BACKENDS = backends_mod.configured(_CFG.raw if _CFG else {})
+# Pages that may read this server's API and post its forms from another
+# origin: the React app served by any configured backend (it switches
+# between machines and talks to each one directly), plus any origin listed
+# under [runner] cors_origins, e.g. a teammate's fleet that does not list
+# this machine back. Everything else stays same-origin only.
+CORS_ORIGINS = backends_mod.origins(BACKENDS) | set(
+    backends_mod.origins([{"url": u} for u in (_CFG.runner if _CFG else {}).get("cors_origins") or []]))
 BLOCKED = {"/shutdown"}
 # The page server's "send" endpoint: a verdict or annotations queued for the
 # session — the one proxied request the daemon has to act on.
@@ -142,6 +150,10 @@ STREAM_PATH = "/fleet/events"
 # survive a reload.
 APP_PATH = "/app"
 APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
+# What the React app's New work dialog reads beside /api/fleet (newwork_payload).
+NEWWORK_API_PATH = "/api/newwork"
+# The machines the React app's server switcher offers (backends_payload).
+BACKENDS_API_PATH = "/api/backends"
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
 # driver with nothing to click but the browser's back button.
@@ -196,23 +208,23 @@ def framable_header(path: str, name: str, value: str):
     return value
 
 
-_VIEW_CSS = """
-html,body{margin:0;height:100%;background:#0f1115;color:#e8e6e1;
+_VIEW_CSS = theme_mod.fleet_root() + """
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
   font:14px/1.4 system-ui,sans-serif}
 body{display:flex;flex-direction:column}
 .bar{display:flex;gap:1rem;align-items:center;padding:.45rem .9rem;
-  border-bottom:1px solid #2a2e36;flex:none}
-.bar a{color:#8fc7ff;text-decoration:none}
+  border-bottom:1px solid var(--border);flex:none}
+.bar a{color:var(--accent);text-decoration:none}
 .bar a:hover{text-decoration:underline}
 .bar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  color:#9aa4b2}
-iframe{flex:1;border:0;width:100%;background:#fff}
+  color:var(--muted)}
+iframe{flex:1;border:0;width:100%;background:var(--bg)}
 .bar .study{display:flex;gap:.35rem}
-.bar .study input{background:#161a21;color:#e8e6e1;border:1px solid #2a2e36;
+.bar .study input{background:var(--card-2);color:var(--fg);border:1px solid var(--border);
   border-radius:4px;padding:.2rem .45rem;width:16rem;font:inherit}
-.bar .study button{background:#1f2630;color:#8fc7ff;border:1px solid #2a2e36;
+.bar .study button{background:var(--card-2);color:var(--accent);border:1px solid var(--border);
   border-radius:4px;padding:.2rem .6rem;font:inherit;cursor:pointer}
-.bar .notice{color:#b8e0a0}
+.bar .notice{color:var(--ok)}
 """
 
 # The frame is same-origin with this page (both come through this server), so
@@ -929,16 +941,10 @@ def closed_pages(projs: dict, data_dir: Path | None = None) -> dict:
 # -------------------------------------------------------------------- render
 
 _CSS = """
-/* One design system: these tokens are surface-theme.css's, verbatim, so the
-   fleet and every surface it opens read as one product. Dark, committed —
-   the surfaces have no light mode, so a light fleet is a theme break. */
-:root{--bg:#0f1115;--fg:#e8e6e1;--muted:#9aa4b2;--label:#8c96aa;
- --card:#12161e;--card-2:#171c26;--border:#2a2e36;
- --ok:#8fe0a8;--run:#e6c07b;--hot:#ff8f8f;--accent:#8fc7ff;--soft:#ffffff08;
- --serif:"Iowan Old Style",Georgia,serif;
- --sans:ui-sans-serif,system-ui,"Segoe UI",sans-serif;
- --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-*{box-sizing:border-box}
+/* One design system: the colours are runnerlib/theme.py's, the same ones
+   surface-theme.css carries, so the fleet and every surface it opens read as
+   one product. Dark, committed: the surfaces have no light mode. */
+""" + theme_mod.fleet_root() + """*{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
  font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
 .wrap{max-width:52rem;margin:0 auto;padding:1.6rem 1.2rem 3rem}
@@ -960,7 +966,7 @@ form.newtask input[type=text]{flex:1 1 18rem;padding:.45rem .6rem;border:1px sol
  border-radius:9px;background:var(--bg);color:var(--fg);font:inherit;
  font-family:ui-monospace,Menlo,monospace;font-size:.82rem}
 form.newtask button{font:inherit;font-weight:650;border:0;border-radius:9px;
- padding:.5rem 1.1rem;background:var(--accent);color:#0f1115;cursor:pointer}
+ padding:.5rem 1.1rem;background:var(--accent);color:var(--on-accent);cursor:pointer}
 .project{margin-bottom:1rem}
 .project > h2{display:flex;align-items:baseline;gap:.6rem}
 .project .repo{font-family:var(--mono);text-transform:none;
@@ -1073,7 +1079,7 @@ details.fold.idle > summary{padding:.5rem}
 #dir1,#workdir{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
  padding:.45rem .6rem .45rem 1.7rem;border:1px solid var(--line);border-radius:6px;
  background:var(--card) url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%238a94a6'%3E%3Cpath d='M1.5 3.5a1 1 0 011-1h3.2l1.3 1.4h6.5a1 1 0 011 1v6.6a1 1 0 01-1 1h-11a1 1 0 01-1-1z'/%3E%3C/svg%3E") no-repeat .5rem 50%/ .9rem .9rem}
-#dir1:focus,#workdir:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
+#dir1:focus,#workdir:focus{outline:2px solid var(--accent);outline-offset:-1px}
 /* Floats over the page: the list is a transient overlay, not a block that
    pushes the rest of the form down every time it opens. */
 .sug{position:absolute;z-index:40;top:100%;left:0;right:0;margin:.15rem 0 0;padding:0;
@@ -1098,7 +1104,7 @@ details.pick .dirwrap{margin-top:.4rem}
 #runq{width:100%;font-family:ui-monospace,monospace;font-size:.88rem;
  padding:.45rem .6rem;border:1px solid var(--line);border-radius:6px;
  background:var(--card);color:var(--fg)}
-#runq:focus{outline:2px solid var(--accent,#4c8dff);outline-offset:-1px}
+#runq:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .linky{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;
  font:inherit;text-decoration:underline}
 .story.dispatch{cursor:pointer;border-radius:8px;padding:.55rem .5rem;margin:0 -.5rem;
@@ -1302,7 +1308,7 @@ body.home button,body.home select,body.home input,body.home textarea,body.home .
  border-radius:8px;padding:6px 10px}
 body.home button,body.home .btn{cursor:pointer;text-decoration:none;display:inline-block;
  line-height:1.4}
-body.home button.primary{background:#8fc7ff22;border-color:var(--accent);color:var(--accent);
+body.home button.primary{background:color-mix(in srgb,var(--accent) 13%,transparent);border-color:var(--accent);color:var(--accent);
  font-weight:600}
 body.home .ghost{background:transparent}
 .notice{border:1px solid var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;
@@ -1334,7 +1340,7 @@ body.home .ghost{background:transparent}
 .badge.idle{border-style:dashed}
 .badge.done{border-color:var(--ok);color:var(--ok)}
 .badge.q{border-color:var(--hot);color:var(--hot)}
-.tag{font-size:11px;color:#c9b3ff}
+.tag{font-size:11px;color:var(--tag)}
 .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
 .toolbar input[type=search]{flex:1 1 220px}
 body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-radius:8px;
@@ -1343,7 +1349,7 @@ body.home #filter{margin:0;width:auto;padding:6px 10px;font-size:inherit;border-
 .toolbar.chips:empty{display:none}
 .chipbtn{font-size:12px!important;padding:3px 10px!important;border-radius:99px!important}
 .chipbtn[aria-pressed=true]{border-color:var(--accent)!important;color:var(--accent)!important;
- background:#8fc7ff14!important}
+ background:color-mix(in srgb,var(--accent) 8%,transparent)!important}
 .unseen{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
 .card.items{padding:0;overflow:visible;border-radius:10px}
 .items details.item{border-top:1px solid var(--border)}
@@ -3160,6 +3166,32 @@ def starting_rows(starting: list[dict], now: float,
     return "".join(out)
 
 
+def run_library(entries: list[dict]) -> list[dict]:
+    """What the skill picker offers: every installed entry that is not broken,
+    by kind then name, as {v: kind:name, i: how it is invoked, k: kind, d:
+    the start of its description}."""
+    live = sorted((e for e in entries if not e.get("broken")),
+                  key=lambda e: (e["kind"], e["name"].lower()))
+    return [{"v": f'{e["kind"]}:{e["name"]}', "i": e["invoke"],
+             "k": e["kind"], "d": (e.get("description") or "")[:120]} for e in live]
+
+
+def backends_payload() -> dict:
+    """The machines the React app can switch between: this one first (url ""
+    means "where the app was loaded from"), then every configured
+    [[backends]] entry, which the app reads and posts to directly."""
+    return {"backends": [{"name": b["name"] or MACHINE, "url": ""} if b["url"] is None
+                         else {"name": b["name"] or b["url"], "url": b["url"]} for b in BACKENDS]}
+
+
+def newwork_payload() -> dict:
+    """What the React app's New work dialog needs that /api/fleet does not
+    carry: this machine's home directory (a typed ~ resolves against it) and
+    the skill picker's library. The Python page inlines both."""
+    return {"home": str(Path.home()),
+            "library": run_library(library_mod.scan(dirs=[], skills_source=_skills_source()))}
+
+
 def _run_picker(entries: list[dict], current: str = "") -> str:
     """Pick a skill, workflow, agent or flow to launch — an OVERRIDE, folded
     away, not a question the driver has to answer every time.
@@ -3174,13 +3206,10 @@ def _run_picker(entries: list[dict], current: str = "") -> str:
     browser. The list is small enough to send once and a round trip per
     keystroke is exactly the lag that made the directory field feel broken.
     """
-    live = [e for e in entries if not e.get("broken")]
-    live.sort(key=lambda e: (e["kind"], e["name"].lower()))
-    data = json.dumps([{"v": f'{e["kind"]}:{e["name"]}', "i": e["invoke"],
-                        "k": e["kind"], "d": (e.get("description") or "")[:120]}
-                       for e in live], ensure_ascii=False)
-    chosen = next((e for e in live if f'{e["kind"]}:{e["name"]}' == current), None)
-    summary = (f'run {escape(chosen["invoke"])}' if chosen else
+    lib = run_library(entries)
+    data = json.dumps(lib, ensure_ascii=False)
+    chosen = next((e for e in lib if e["v"] == current), None)
+    summary = (f'run {escape(chosen["i"])}' if chosen else
                "the session picks its own skill — click to choose one yourself")
     return (
         f'<details class="pick"{" open" if chosen else ""}>'
@@ -3537,6 +3566,10 @@ def fleet_payload() -> dict:
     counts, the fleet page's code stamp) is resolved here, so a fleet on
     another machine renders it without touching this one's files."""
     snap = read_snapshot()
+    # A row archived here leaves the snapshot at the daemon's next pass; until
+    # then it leaves the payload, so no reader has to filter it again.
+    snap = {**snap, "surfaces": [sf for sf in snap.get("surfaces") or []
+                                 if conv_mod.key_of(sf) not in _ARCHIVED]}
     graph = load_graph()
     surfaces = conv_mod.collapse(snap.get("surfaces") or [], *graph)
     projs = load_projects()
@@ -3749,24 +3782,33 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _serve_app(self, rel: str):
+        """A built file of the React app, or index.html for one of the app's own
+        routes. A missing file (a path with an extension, such as an old
+        build's hashed chunk) is a 404: index.html served as JavaScript only
+        breaks the page with a MIME error."""
         root = APP_DIR.resolve()
         target = (root / rel).resolve() if rel else root / "index.html"
         if not target.is_relative_to(root):
             self.send_error(404)
             return
         if not target.is_file():
+            if Path(rel).suffix:
+                self.send_error(404, "no such file in the React build")
+                return
             target = root / "index.html"
         if not target.is_file():
             self.send_error(404, "the React UI is not built — cd web && npm run build")
             return
-        self._serve_static(target)
+        # Vite names every built asset by its content hash, so it never changes
+        hashed = target.parent == root / "assets"
+        self._serve_static(target, "public, max-age=31536000, immutable" if hashed else "no-store")
 
-    def _serve_static(self, p: Path):
+    def _serve_static(self, p: Path, cache: str = "no-store"):
         data = p.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", TYPES.get(p.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         if self.command != "HEAD":   # a HEAD body puts stray bytes on the wire
             self.wfile.write(data)
@@ -3884,12 +3926,30 @@ class Handler(BaseHTTPRequestHandler):
         return backends_mod.with_self(BACKENDS, self.server.server_address)
 
     def _serve_api_fleet(self, version_only: bool):
-        body = json.dumps(fleet_version() if version_only else fleet_payload(),
-                          default=str).encode()
+        self._send_json(fleet_version() if version_only else fleet_payload())
+
+    def _cors_origin(self) -> str:
+        """The request's Origin when it is another origin allowed to use this
+        server's API (CORS_ORIGINS), else ''."""
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        return origin if origin in CORS_ORIGINS else ""
+
+    def _send_cors(self):
+        """Let an allowed cross-origin page read this answer. No credentials:
+        the API has no session to send."""
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
+
+    def _send_json(self, data):
+        """200 with `data` as JSON, never cached; HEAD gets the headers only."""
+        body = json.dumps(data, default=str).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._send_cors()
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -3901,14 +3961,7 @@ class Handler(BaseHTTPRequestHandler):
         if not (_CFG and _CFG.learning.get("cards") == "team"):
             self.send_error(404, "no team cards here")
             return
-        body = json.dumps({"cards": cards_mod.export_team(_CFG.cards_dir)}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        self._send_json({"cards": cards_mod.export_team(_CFG.cards_dir)})
 
     def _serve_project(self, pid: str, query: dict):
         projs = load_projects()
@@ -4026,14 +4079,7 @@ class Handler(BaseHTTPRequestHandler):
         if not as_json:
             self._send_html(render_costs(summary))
             return
-        body = json.dumps(summary).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        self._send_json(summary)
 
     def _serve_runs(self, query: dict):
         turns, owners, pages = load_runs()
@@ -4124,8 +4170,16 @@ class Handler(BaseHTTPRequestHandler):
                              "the first round finishes.")
 
     def _redirect(self, where: str, notice: str):
+        """Where a form post lands, with what happened. A browser form gets a
+        303 (so a refresh does not re-post); a client that asks for JSON (the
+        React app) gets {notice, location} instead, so it need not follow the
+        redirect and have the whole page rendered only to read the notice."""
+        target = where + "?" + urllib.parse.urlencode({"notice": notice})
+        if "application/json" in (self.headers.get("Accept") or ""):
+            self._send_json({"notice": notice, "location": target})
+            return
         self.send_response(303)
-        self.send_header("Location", where + "?" + urllib.parse.urlencode({"notice": notice}))
+        self.send_header("Location", target)
         self.send_header("Content-Length", "0")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -4135,14 +4189,7 @@ class Handler(BaseHTTPRequestHandler):
         machine. Local-only like the rest of this server, and it returns
         directory names only — never file contents."""
         q = (query.get("q") or [""])[0][:400]
-        body = json.dumps({"dirs": complete_dirs(q)}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        self._send_json({"dirs": complete_dirs(q)})
 
     def _serve_find(self, query: dict):
         q = (query.get("q") or [""])[0].strip()[:200]
@@ -4183,6 +4230,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
+        self._send_cors()
         self.end_headers()
         self.close_connection = True
         stop = threading.Event()
@@ -4254,12 +4302,7 @@ class Handler(BaseHTTPRequestHandler):
         if form.get("back") == "home" and not msg.startswith("Refused"):
             self._redirect_home(msg)    # archived from the fleet: stay on it
             return
-        self.send_response(303)
-        self.send_header("Location", f"/page/{urllib.parse.quote(key)}?"
-                         + urllib.parse.urlencode({"notice": msg}))
-        self.send_header("Content-Length", "0")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
+        self._redirect(f"/page/{urllib.parse.quote(key)}", msg)
 
     def _serve_dead_letter(self, name: str):
         rec = read_dead_letter(name)
@@ -4295,7 +4338,8 @@ class Handler(BaseHTTPRequestHandler):
         if not origin:
             return True
         host = (self.headers.get("Host") or "").strip()
-        return urllib.parse.urlsplit(origin).netloc == host
+        # the React app on another configured machine posts here directly
+        return urllib.parse.urlsplit(origin).netloc == host or bool(self._cors_origin())
 
     def _new_task(self):
         """Form contract: POST /tasks, application/x-www-form-urlencoded,
@@ -4347,13 +4391,7 @@ class Handler(BaseHTTPRequestHandler):
         self._redirect_home(f"Task submitted{f': {result}' if result else '.'}{note}")
 
     def _redirect_home(self, notice: str):
-        # 303 so a refresh after submitting does not re-post the task.
-        target = HOME_PATH + "?" + urllib.parse.urlencode({"notice": notice})
-        self.send_response(303)
-        self.send_header("Location", target)
-        self.send_header("Content-Length", "0")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
+        self._redirect(HOME_PATH, notice)
 
     # --------------------------------------------------------------- routing
 
@@ -4394,6 +4432,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
+            return
+        if path == BACKENDS_API_PATH and self.command in ("GET", "HEAD"):
+            self._send_json(backends_payload())
+            return
+        if path == NEWWORK_API_PATH and self.command in ("GET", "HEAD"):
+            self._send_json(newwork_payload())
             return
         if path == CARDS_PATH and self.command in ("GET", "HEAD"):
             self._serve_cards(query)
