@@ -429,6 +429,9 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     model = action.get("model") or cfg.model_for(stage)
     effort = action.get("effort") or cfg.effort_for(stage)
     page = task_page(cfg, task_id, rec.get("page"))
+    # what the page looked like before the turn: the reap compares, so a turn
+    # that ends without rewriting it is caught (`_page_rewritten`)
+    page_mtime = _mtime(page)
     if not rec.get("title") and (v.get("title") or v.get("task_text")):
         # what the placeholder calls the page until the session names it
         rec["title"] = str(v.get("title") or v["task_text"]).strip().splitlines()[0][:100]
@@ -462,6 +465,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
         "deadline": runs_mod.deadline(cfg.claude["timeout_seconds"]),
         "session_id": session_id, "resumed": bool(action.get("resume")),
         "iteration": rec["iteration"], "action": action,
+        "page_mtime": page_mtime,
     }
     reg.save()
     log(f"{task_id}: spawned turn {rec['iteration']} in {cwd} — pid {pid} "
@@ -496,6 +500,12 @@ def _reap_tasks(cfg, reg):
             })
             del rec["active_runs"][rid]
             page = task_page(cfg, task_id, rec.get("page"))
+            if run.get("kind") != chat_mod.STAGE and ok and not _page_rewritten(run, page):
+                if not run["action"].get("page_nudge"):
+                    _nudge_for_page(cfg, reg, task_id, run, page)
+                    continue
+                log(f"{task_id}: turn {run.get('iteration')} was asked again and "
+                    f"still did not rewrite {page.name if page else 'its page'}")
             chat_mod.requeue_unread(cfg, reg, log, task_id, run, str(page or ""))
             if run.get("kind") == chat_mod.STAGE:
                 # A direct chat: its answer goes into the chat it was asked
@@ -524,6 +534,53 @@ def _reap_tasks(cfg, reg):
                 chat_mod.start_next(cfg, reg, log, task_id)
             except Exception as e:
                 log(f"{task_id}: chat turn could not start: {e}")
+
+
+def _mtime(path) -> float | None:
+    try:
+        return Path(path).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _page_rewritten(run, art) -> bool:
+    """Did the turn write its page? Existing is not enough: from round 2 on
+    the previous round's page is still at that path, so a turn that ended
+    before writing reopened the old page as if it were the answer. A run
+    from before runs recorded `page_mtime` is taken at its word."""
+    if not art or not art.exists() or surface_mod.is_placeholder(art):
+        return False    # no page, or only the placeholder the turn opened with
+    if "page_mtime" not in run:
+        return True
+    return _mtime(art) != run["page_mtime"]
+
+
+# The one follow-up a turn gets when it ends without its page. The usual
+# cause: the agent started work in the background, said "I'll write the page
+# once it finishes" and ended its turn — and `claude -p` exits when the turn
+# ends, killing that background work (the React fleet parity round 2,
+# 2026-11-05: a 15-minute screenshot pass cut off at "[killed]", no page).
+PAGE_NUDGE = """Your turn ended without rewriting the page at $$CADRE_SURFACE_OUT.
+This is a headless run: when your turn ends the process exits, and anything you
+left running in the background was stopped — check its output before trusting
+it. Finish what the page needs in the foreground (no background commands, no
+"I'll write it once X finishes"), then write the full page to $$CADRE_SURFACE_OUT
+before you end this turn. If the work cannot finish, write the page anyway and
+say on it what did not finish and why."""
+
+
+def _nudge_for_page(cfg, reg, task_id, run, art) -> None:
+    """Resume the same session once, asking for the page. Bounded: the nudged
+    turn carries `page_nudge`, and a second miss falls through to the reap's
+    normal path rather than asking again."""
+    log(f"{task_id}: turn {run.get('iteration')} ended without rewriting "
+        f"{art.name} — resuming its session once to ask for the page")
+    action = {**run["action"], "resume": True, "invoke": "",
+              "prompt_template": PAGE_NUDGE, "page_nudge": True}
+    try:
+        _run_task(cfg, reg, task_id, action, skip_cap=True)
+    except Exception as e:
+        log(f"{task_id}: could not resume the session for its page: {e}")
 
 
 def _reap_round(cfg, rec, task_id, run, ok, result, art):
