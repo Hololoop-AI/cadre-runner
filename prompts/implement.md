@@ -62,7 +62,10 @@ of "rounds after the first" below apply.
    shows it; quote it.
 5. You are headless: nobody can answer a question mid-run. Make the call and
    record it as a driver call on the page rather than stalling.
-6. Your final message is a one-paragraph summary for the runner log: what you
+6. Do not end your turn while work you started is still running: the turn
+   ending IS the process exiting, and anything left in the background is
+   killed with it. Wait for it in the foreground and write the page first.
+7. Your final message is a one-paragraph summary for the runner log: what you
    did, what you are waiting on.
 
 ## Rounds after the first
