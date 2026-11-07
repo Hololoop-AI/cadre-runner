@@ -67,7 +67,12 @@ def reap(monkeypatch):
 
     def fake_open(cfg_, path, kind, log, **m):
         s = surface.sessions(cfg_)
-        key = next(keys)
+        # one page, one key, as review-surface derives it from the path; the
+        # turn opens its page when it starts and the reap opens it again
+        prior = s.get(str(path)) or {}
+        key = prior.get("key") or next(keys)
+        m = {**{k: prior[k] for k in ("project", "title", "role")
+                if prior.get(k) and k not in m}, **m}   # as surface.open_session keeps them
         s[str(path)] = {"kind": kind, "key": key, "path": f"/session/{key}",
                         "open": True, "opened": 2.0, **m}
         surface._save_sessions(cfg_, s)

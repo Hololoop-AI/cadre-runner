@@ -271,7 +271,8 @@ def test_seed_command_uses_only_flags_the_claude_cli_accepts():
     the first real dialogue-task spawn died on a vestigial `--story`. Task
     text travels inside the rendered prompt, never as a flag."""
     cmd = seed_nodes.command_for("high")
-    allowed = {"-p", "--model", "--effort", "--output-format"}
+    allowed = {"-p", "--model", "--effort", "--output-format", "--verbose",
+               "--input-format", "--replay-user-messages", "--thinking-display"}
     flags = {tok for tok in cmd.split()
              if tok.startswith("-") and not tok.startswith("{")}
     assert flags <= allowed, f"unknown claude flags in seed command: {flags - allowed}"

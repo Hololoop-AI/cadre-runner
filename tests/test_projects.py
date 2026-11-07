@@ -39,7 +39,8 @@ def drive_recording_dirs(cfg, reg, b, spec, calls):
 
     def fake_spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
                    timeout, run_dir, session_id=None, resume=False,
-                   extra_env=None, argv=None, add_dirs=None):
+                   extra_env=None, argv=None, add_dirs=None,
+                   thinking_url=None):
         calls.append({"prompt": prompt, "argv": list(argv or []),
                       "add_dirs": add_dirs, "resume": resume})
         return 4242

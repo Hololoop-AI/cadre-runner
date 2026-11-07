@@ -481,6 +481,17 @@ def _handle_poll(cfg, reg, log, path: str, meta: dict, raw: str) -> None:
         # driver's words exist only in this response now. Keep them verbatim
         # and make the fleet say so; the board events below still fire.
         _dead_letter(cfg, log, path, meta, raw, payload, reason)
+    if meta.get("kind") == "task" and meta.get("task"):
+        from . import chat
+        if chat.is_direct_chat(payload):
+            # Enter in the page's own chat window: the driver is talking with
+            # the session, not handing back the page. The session answers in
+            # the chat and no round runs (runnerlib/chat.py).
+            text = "\n\n".join(i["text"] for i in free)
+            chat.ask(cfg, reg, log, meta["task"], text,
+                     str(meta.get("key") or chat.page_key(path)), path)
+            log(f"surface: direct chat on {Path(path).name}: {text[:120]}")
+            return
     if meta.get("kind") == "task":
         # Workflow #3 owns this page. Its feedback goes to the blackboard as
         # the dialogue's own commands and nowhere else.
@@ -1076,10 +1087,15 @@ def _tick(cfg, reg, log) -> None:
         by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
                   for p, m in sess.items()
                   if m.get("open") and m.get("kind") not in ("external", "study")}
+        from . import chat
         for key in signalled:
             hit = by_key.get(key)
             if hit:
                 _consume(cfg, reg, log, hit[0], hit[1])
+            elif reg is not None and (owner := chat.thread_owner(reg, key)):
+                # A thread an agent started, answered after its turn ended.
+                # While a turn runs the agent reads it itself; this waits.
+                chat.deliver_thread(cfg, reg, log, owner, key)
         sess = sessions(cfg)  # consuming may close sessions
 
     # 1a) a study thread whose engine has gone, with a message waiting, wakes
