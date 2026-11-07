@@ -55,8 +55,9 @@ def test_the_review_servers_controls_wear_the_theme():
 
 
 def test_statusd_writes_the_review_servers_theme(tmp_path):
-    statusd.install_surface_theme(tmp_path / "rs")
+    assert statusd.install_surface_theme(tmp_path / "rs") == tmp_path / "rs" / "theme.css"
     assert (tmp_path / "rs" / "theme.css").read_text() == theme.review_surface_css()
+    assert [p.name for p in (tmp_path / "rs").iterdir()] == ["theme.css"]  # no temp left behind
     blocked = tmp_path / "file"
     blocked.write_text("")
-    statusd.install_surface_theme(blocked)  # cannot write: logs, never raises
+    assert statusd.install_surface_theme(blocked) is None  # cannot write: logs, never raises
