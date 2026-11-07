@@ -13,12 +13,52 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 
 class RunsBusy(Exception):
     """Cap reached — backpressure, not failure."""
+
+
+# Feeds a session its messages and posts its thinking to the page
+# server (runnerlib/session_pump.py).
+SESSION_PUMP = Path(__file__).resolve().parent / "session_pump.py"
+INBOX = "in.jsonl"
+
+
+def stdin_fed(argv: list[str]) -> bool:
+    """The command reads its messages as stream-json on stdin."""
+    return any(a == "--input-format" and b == "stream-json"
+               for a, b in zip(argv, argv[1:]))
+
+
+def user_message(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def push(run: dict, text: str, reply_url: str = "", **fields) -> bool:
+    """Give a running session one more message, read at its next tool call.
+    `fields` ride along on the inbox line for whoever reads it back (`inbox`).
+    False when the run does not read stdin or has already stopped reading:
+    the caller keeps the message for a turn of its own."""
+    inbox = Path(run.get("run_dir") or "/nonexistent") / INBOX
+    if not inbox.exists() or Path(str(inbox) + ".closed").exists():
+        return False
+    with open(inbox, "a") as f:
+        f.write(json.dumps({"message": user_message(text), "text": text,
+                            "reply_url": reply_url, **fields}) + "\n")
+    return True
+
+
+def inbox(run: dict) -> list[dict]:
+    """Every line a run's inbox holds: its prompt first, then what was pushed."""
+    try:
+        text = (Path(run.get("run_dir") or "/nonexistent") / INBOX).read_text()
+    except OSError:
+        return []
+    return [json.loads(l) for l in text.splitlines() if l.strip()]
 
 
 # ------------------------------------------------------------------ processes
@@ -64,7 +104,8 @@ def expand_spawn_argv(argv: list[str], values: dict) -> list[str]:
 def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
           timeout, run_dir: Path, session_id: str | None = None,
           resume: bool = False, extra_env: dict | None = None,
-          argv: list[str] | None = None, add_dirs=None) -> int:
+          argv: list[str] | None = None, add_dirs=None,
+          thinking_url: str | None = None) -> int:
     """Detached agent session under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
     the outcome. Returns the wrapper pid.
@@ -85,12 +126,27 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
     `timeout` is not enforced here. The caller records `deadline(timeout)` on
     the run and the reap pass enforces it (`enforce_deadline`): the GNU
     `timeout` wrapper this used to prepend does not exist on macOS, where it
-    made every turn exit 127."""
+    made every turn exit 127.
+
+    A command that reads stream-json on stdin (`--input-format stream-json`,
+    the seeded node command) gets its prompt as the first message of the run's
+    inbox instead of as an argument, and `push` can add more while it runs
+    (runnerlib/session_pump.py). `thinking_url` is a page server's
+    `/api/<key>/agent-thinking`: the pump posts each thinking block there while
+    the session works. The wrapper waits for the agent alone, so the exit code
+    is still the agent's."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "prompt.txt").write_text(prompt)
+    fed = bool(argv) and stdin_fed(argv)
+    if fed:
+        # A revived run reuses its directory: last time's closed marker would
+        # make this one look finished before it starts.
+        (run_dir / (INBOX + ".closed")).unlink(missing_ok=True)
+        with open(run_dir / INBOX, "w") as f:
+            f.write(json.dumps({"message": user_message(prompt), "text": prompt}) + "\n")
     if argv:
         argv = expand_spawn_argv(argv, {
-            "prompt": prompt,
+            "prompt": [] if fed else prompt,
             "session": session_args(session_id, resume),
             "permission": permission_args(permission_mode),
             "dirs": dir_args(add_dirs)})
@@ -114,10 +170,25 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
            # gone long.
            "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",
            **(extra_env or {})}
+    script = '"$@" > "$CADRE_RUN_OUT" 2> "$CADRE_RUN_ERR"; echo $? > "$CADRE_RUN_EXIT"'
+    pump = {"CADRE_PUMP_PY": sys.executable or "python3", "CADRE_PUMP": str(SESSION_PUMP),
+            "CADRE_THINKING_URL": thinking_url or ""}
+    if fed:
+        # The session reads its messages from the pump through a named pipe:
+        # the prompt first, then whatever the driver says while it works
+        # (`push`). Only the agent is waited for, so its exit code is the run's.
+        env |= pump | {"CADRE_RUN_IN": str(run_dir / INBOX)}
+        script = ('rm -f "$CADRE_RUN_IN.fifo" && mkfifo "$CADRE_RUN_IN.fifo" && '
+                  '{ "$CADRE_PUMP_PY" "$CADRE_PUMP" > "$CADRE_RUN_IN.fifo" 2> /dev/null & } && '
+                  '"$@" < "$CADRE_RUN_IN.fifo" > "$CADRE_RUN_OUT" 2> "$CADRE_RUN_ERR"; '
+                  'echo $? > "$CADRE_RUN_EXIT"')
+    elif thinking_url:
+        env |= pump
+        script = ('"$@" > "$CADRE_RUN_OUT" 2> "$CADRE_RUN_ERR" & agent=$!; '
+                  '"$CADRE_PUMP_PY" "$CADRE_PUMP" > /dev/null 2>&1 & '
+                  'wait "$agent"; echo $? > "$CADRE_RUN_EXIT"')
     proc = subprocess.Popen(
-        ["/bin/sh", "-c",
-         '"$@" > "$CADRE_RUN_OUT" 2> "$CADRE_RUN_ERR"; echo $? > "$CADRE_RUN_EXIT"',
-         "sh"] + argv,
+        ["/bin/sh", "-c", script, "sh"] + argv,
         cwd=wt_path, env=env, start_new_session=True,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return proc.pid
@@ -236,17 +307,20 @@ def outcome(run: dict):
         "prompt_file": str(run_dir / "prompt.txt"),
     }
     result_text, usage = "", None
-    if stdout:
-        try:
-            payload = json.loads(stdout)
-            result_text = payload.get("result", "")
-            usage = {k: payload.get(k) for k in
-                     ("total_cost_usd", "usage", "num_turns", "duration_ms") if k in payload}
-            record["result"] = result_text
-            record["usage"] = usage
-        except json.JSONDecodeError:
-            record["raw_stdout"] = stdout[-8000:]
-    text = result_text or stdout
+    payload = final_payload(stdout) if stdout else None
+    if payload is not None:
+        result_text = payload.get("result", "")
+        usage = {k: payload.get(k) for k in
+                 ("total_cost_usd", "usage", "num_turns", "duration_ms") if k in payload}
+        record["result"] = result_text
+        record["usage"] = usage
+    elif stdout:
+        record["raw_stdout"] = stdout[-8000:]
+    # A stream's every line is the transcript, so only its non-JSON lines (an
+    # error banner) may be read for a limit — the work itself can say "rate
+    # limit" without the run having hit one.
+    text = result_text or "\n".join(
+        l for l in stdout.splitlines() if not l.startswith("{"))[-8000:]
     if record["timed_out"]:
         # a timeout is the run's own failure, never a pause to resume
         record["rate_limited"] = record["transient"] = False
@@ -256,6 +330,28 @@ def outcome(run: dict):
     record["rate_limited"] = rc != 0 and is_rate_limited(text)
     record["transient"] = rc != 0 and not record["rate_limited"] and is_transient(text)
     return rc == 0, result_text, usage, record
+
+
+def final_payload(stdout: str) -> dict | None:
+    """The run's closing record: the whole output under `--output-format
+    json`, or the `result` event that ends a `stream-json` transcript (one
+    JSON event per line). None when neither is there — a run that died before
+    it could say anything."""
+    try:
+        payload = json.loads(stdout)
+        return payload if isinstance(payload, dict) else None
+    except json.JSONDecodeError:
+        pass
+    for line in reversed(stdout.splitlines()):
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            return event
+    return None
 
 
 # "You've hit your session limit · resets 8pm (America/Chicago)" — the account

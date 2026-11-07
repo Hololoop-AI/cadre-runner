@@ -24,6 +24,7 @@ offset persisted next to it, so a daemon restart re-reads nothing and loses
 nothing. All entry points swallow exceptions — the surface must never take
 the daemon down."""
 
+import hashlib
 import json
 import os
 import re
@@ -60,8 +61,25 @@ def outbox_path() -> Path:
     machine read the first one's outbox and never saw its own annotations."""
     if os.environ.get("REVIEW_SURFACE_OUTBOX"):
         return Path(os.environ["REVIEW_SURFACE_OUTBOX"])
-    state = os.environ.get("REVIEW_SURFACE_STATE_DIR") or str(Path.home() / ".review-surface")
-    return Path(state) / "outbox.jsonl"
+    return state_dir() / "outbox.jsonl"
+
+
+def state_dir() -> Path:
+    """The page server's state directory: REVIEW_SURFACE_STATE_DIR, else
+    ~/.review-surface."""
+    return Path(os.environ.get("REVIEW_SURFACE_STATE_DIR") or Path.home() / ".review-surface")
+
+
+def conversations_dir() -> Path:
+    """Where the page server writes message-thread placeholder files."""
+    return state_dir() / "conversations"
+
+
+def page_key(path) -> str:
+    """The page server's session key for a file: sha256 of its canonical path,
+    first 16 hex characters (review-surface `sessionKey`). Known before the
+    page's session exists, which a first round's thinking needs."""
+    return hashlib.sha256(os.path.realpath(str(path)).encode()).hexdigest()[:16]
 
 
 DEFAULT_UPSTREAM = "http://127.0.0.1:4387"
@@ -295,6 +313,43 @@ def end_session(cfg, path: str, log) -> None:
     log(f"surface: ended session for {Path(path).name}")
 
 
+# A turn's page until the turn writes its own. Opening the page when the turn
+# STARTS is what gives a first round somewhere to be talked to: the chat window,
+# its thinking, and the threads its agent asks questions in all hang off a page
+# the page server knows. The marker is how the reap tells "the turn never wrote
+# its page" from "it did".
+PLACEHOLDER_MARK = "<!-- cadre:placeholder -->"
+PLACEHOLDER = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/surface-theme.css"><title>{title}</title></head><body>
+""" + PLACEHOLDER_MARK + """
+<main class="wrap"><h1>{title}</h1>
+<p>{body}</p></main></body></html>
+"""
+
+
+def write_placeholder(page: Path, title: str, body: str) -> None:
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(PLACEHOLDER.format(title=escape(title), body=escape(body)))
+
+
+def is_placeholder(page: Path) -> bool:
+    try:
+        return PLACEHOLDER_MARK in page.read_text(errors="replace")[:2000]
+    except OSError:
+        return False
+
+
+def open_early(cfg, page: Path, log, title: str, body: str, **meta) -> None:
+    """Open a page before the turn that writes it runs, writing a placeholder
+    when it has none yet. A page that is already open is left as it is."""
+    if not page.exists():
+        write_placeholder(page, title, body)
+    if (sessions(cfg).get(str(page)) or {}).get("open"):
+        return
+    open_session(cfg, page, "task", log, **meta)
+
+
 def agent_reply(cfg, reg, log, path: Path, message: str) -> bool:
     """Answer the driver where they asked (audit 2026-09-15: feedback was
     one-way — annotations went out to GitHub and nothing ever came back on the
@@ -481,6 +536,17 @@ def _handle_poll(cfg, reg, log, path: str, meta: dict, raw: str) -> None:
         # driver's words exist only in this response now. Keep them verbatim
         # and make the fleet say so; the board events below still fire.
         _dead_letter(cfg, log, path, meta, raw, payload, reason)
+    if meta.get("kind") == "task" and meta.get("task"):
+        from . import chat   # chat builds on this module, so it is imported at call time
+        if chat.is_direct_chat(payload):
+            # Enter in the page's own chat window: the driver is talking with
+            # the session, not handing back the page. The session answers in
+            # the chat and no round runs (runnerlib/chat.py).
+            text = "\n\n".join(i["text"] for i in free)
+            chat.ask(cfg, reg, log, meta["task"], text,
+                     str(meta.get("key") or page_key(path)), path)
+            log(f"surface: direct chat on {Path(path).name}: {text[:120]}")
+            return
     if meta.get("kind") == "task":
         # Workflow #3 owns this page. Its feedback goes to the blackboard as
         # the dialogue's own commands and nowhere else.
@@ -1076,10 +1142,16 @@ def _tick(cfg, reg, log) -> None:
         by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
                   for p, m in sess.items()
                   if m.get("open") and m.get("kind") not in ("external", "study")}
+        from . import threads   # threads builds on this module, so it is imported at call time
         for key in signalled:
             hit = by_key.get(key)
             if hit:
                 _consume(cfg, reg, log, hit[0], hit[1])
+            elif reg is not None and (owner := threads.thread_owner(reg, key)):
+                # A thread an agent started, answered after its turn ended.
+                # While a turn runs the agent reads it itself; the reap of
+                # that turn delivers it instead.
+                threads.deliver_thread(cfg, reg, log, owner, key)
         sess = sessions(cfg)  # consuming may close sessions
 
     # 1a) a study thread whose engine has gone, with a message waiting, wakes

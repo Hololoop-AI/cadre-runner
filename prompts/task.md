@@ -22,9 +22,10 @@ $task_text
 ## Round rules
 
 1. **Do the work first.** Read what you need, make the change, run whatever
-   proves it (tests, the command itself, a script). You are headless: nobody can
-   answer a question mid-run, so make the call and record it as a driver call on
-   the page rather than stalling on it.
+   proves it (tests, the command itself, a script). You are headless: never
+   stall waiting on the driver. A quick question can go to them as a message
+   (below) while you keep working; anything you must settle before an answer
+   comes, make the call and record it as a driver call on the page.
 2. Prefer the smallest honest result. A finished small thing the driver can rule
    on beats a large thing they have to take on faith.
 3. Verify before you claim. "Tests pass" means you ran them in `$cwd` this
@@ -34,6 +35,32 @@ $task_text
    your own initiative. Otherwise leave the work in the tree.
 5. Your final message is a one-paragraph summary for the runner log: what you
    did, what you are waiting on.
+
+## Asking the driver something quick
+
+When one short answer from the driver would change what you do — not a
+decision the page should put to them — ask it as a message instead of a page:
+
+    review-surface message "$CADRE_SURFACE_OUT" "<the question, one or two sentences>" --title "<a few words>"
+
+It appears as a thread in the footer of your page, and the command prints the
+thread's file. Keep working; do not wait on it. When you reach the point where
+the answer matters, read it without blocking:
+
+    review-surface poll <thread file> --timeout-ms 0 --json
+
+An answer comes back as prompts; none yet means carry on with your own call.
+Add to the thread with `review-surface message --thread <thread file> "..."`.
+If the driver answers after this turn ends, the runner brings their answer back
+to this session as a short chat turn that replies in the thread. Say on your
+page what you asked and what you assumed meanwhile. Your page is open from
+the moment this turn starts (a placeholder until you write it), so this works
+in the first round too.
+
+The driver can also talk to you while you work, in your page's chat window:
+such a message reaches you mid-turn, marked as sent from the chat, with the
+exact command to answer it. Answer with that command straight away, briefly —
+only what you send with it reaches the chat — then carry on with the round.
 
 ## Rounds after the first
 
