@@ -14,3 +14,15 @@ import pytest
 def _clean_cadre_env(monkeypatch):
     for name in [k for k in os.environ if k.startswith("CADRE_")]:
         monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _python_fleet_pages(monkeypatch):
+    """The fleet's screens are the React app's when a build sits in web/dist,
+    so a checkout that has built it would answer / with the app's index.html.
+    The suite tests the Python pages at their own paths; tests of the switch
+    set FLEET_UI themselves."""
+    import sys
+    statusd = sys.modules.get("statusd")
+    if statusd is not None:
+        monkeypatch.setattr(statusd, "FLEET_UI", "python")

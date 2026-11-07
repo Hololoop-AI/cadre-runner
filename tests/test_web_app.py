@@ -157,3 +157,44 @@ def test_backend_origins_come_from_the_configured_urls():
     assert backends_mod.origins([{"url": None}, {"url": "http://box.ts.net:8183/"},
                                  {"url": "https://team.example/fleet"}, {"url": "ftp://x"}]) == \
         {"http://box.ts.net:8183", "https://team.example"}
+
+
+# The paths the React app draws (web/src/ui/router.ts route()), and some it does not.
+REACT_PATHS = ["/", "/library", "/costs", "/runs", "/tree", "/tree/task-a", "/project/cadre", "/page/abcd"]
+PYTHON_PATHS = ["/costs.json", "/view/abcd", "/history/abcd", "/stranded/x.json", "/cards", "/tree/", "/fs"]
+
+
+def test_react_routes_are_the_screens_the_app_draws():
+    assert all(statusd.REACT_ROUTE.match(p) for p in REACT_PATHS)
+    assert not any(statusd.REACT_ROUTE.match(p) for p in PYTHON_PATHS)
+
+
+def test_the_fleet_serves_react_where_it_draws_and_the_python_pages_under_classic(monkeypatch, tmp_path):
+    (tmp_path / "index.html").write_text("<!doctype html>react")
+    monkeypatch.setattr(statusd, "APP_DIR", tmp_path)
+    monkeypatch.setattr(statusd, "FLEET_UI", "react")
+    monkeypatch.setattr(statusd, "render_home", lambda *a, **k: "<!doctype html>python home")
+    monkeypatch.setattr(statusd, "render_runs", lambda *a, **k: "<!doctype html>python runs")
+    monkeypatch.setattr(statusd, "fleet_parts", lambda *a, **k: ("running", "work"))
+    monkeypatch.setattr(statusd.backends_mod, "fleet", lambda b, now=None: ({}, None))
+    monkeypatch.setattr(statusd, "load_runs", lambda **k: ([], {}, {}))
+    srv, url = _serve()
+
+    def get(path):
+        with urllib.request.urlopen(url + path, timeout=5) as r:
+            return r.read().decode()
+    try:
+        assert get("/") == "<!doctype html>react"
+        assert get("/runs?view=turns") == "<!doctype html>react"
+        assert get("/classic/") == "<!doctype html>python home"
+        assert get("/classic/runs?view=turns") == "<!doctype html>python runs"
+        # the Python home's own live refresh keeps working from /classic/
+        assert "running" in get("/?partial=1")
+        monkeypatch.setattr(statusd, "FLEET_UI", "python")
+        assert get("/") == "<!doctype html>python home"
+        monkeypatch.setattr(statusd, "FLEET_UI", "react")
+        (tmp_path / "index.html").unlink()      # no build: the Python pages, not an error
+        assert get("/") == "<!doctype html>python home"
+    finally:
+        srv.shutdown()
+        srv.server_close()

@@ -150,6 +150,17 @@ STREAM_PATH = "/fleet/events"
 # survive a reload.
 APP_PATH = "/app"
 APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
+# Which UI the fleet's own paths serve. "react" (the default): the React app
+# draws /, /library, /costs, /runs, /tree, /project/<id> and /page/<key>
+# whenever its build is present, and every Python page stays reachable under
+# /classic (/classic/ is the old home). "python": the Python pages, as before.
+# Pages React does not draw yet (/view, /history, /stranded, /cards) are
+# Python either way.
+FLEET_UI = (os.environ.get("CADRE_FLEET_UI") or (_CFG.runner if _CFG else {}).get("fleet_ui")
+            or "react").strip().lower()
+CLASSIC_PATH = "/classic"
+# the React app's screens, as web/src/ui/router.ts routes them
+REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree)$|^/(tree|project|page)/[^/]+$")
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -3885,6 +3896,13 @@ class Handler(BaseHTTPRequestHandler):
             return p
         return None
 
+    def _react_draws(self, path: str, query: dict) -> bool:
+        """Whether this GET is a page the React app draws in place of the
+        Python one: FLEET_UI is react, the build exists, and the path is one
+        of its screens. The Python home's own refresh (?partial=1) stays Python."""
+        return (FLEET_UI == "react" and bool(REACT_ROUTE.match(path)) and not query.get("partial")
+                and (APP_DIR / "index.html").is_file())
+
     def _serve_app(self, rel: str):
         """A built file of the React app, or index.html for one of the app's own
         routes. A missing file (a path with an extension, such as an old
@@ -4472,6 +4490,13 @@ class Handler(BaseHTTPRequestHandler):
             backends_mod.forget()       # the next read shows what this write did
         path, _, raw_query = self.path.partition("?")
         query = urllib.parse.parse_qs(raw_query)
+        if self.command in ("GET", "HEAD"):
+            if path == CLASSIC_PATH or path.startswith(CLASSIC_PATH + "/"):
+                # the Python page at the path after /classic, whatever FLEET_UI says
+                path = path[len(CLASSIC_PATH):] or HOME_PATH
+            elif self._react_draws(path, query):
+                self._serve_app("")
+                return
         if path == TASKS_PATH and self.command == "POST":
             self._new_task()
             return

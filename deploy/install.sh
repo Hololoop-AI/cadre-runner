@@ -83,7 +83,11 @@ node_major=$(node -p 'process.versions.node.split(".")[0]')
 ok "git, node $(node -v), $("$PY" -V) ($PY), claude"
 
 # ------------------------------------------------------------------- setup steps
-setup_runner() { :; }
+setup_runner() {
+  # The fleet page at / is the React app in web/; statusd serves its build
+  # (web/dist, not checked in) and falls back to the Python pages without it.
+  (cd "$RUNNER_DIR/web" && npm ci --silent && npm run build --silent >/dev/null) && ok "built the fleet web app"
+}
 
 setup_surface() {
   (cd "$SURFACE_DIR" && npm install --omit=dev --silent) && ok "npm install (review-surface)"

@@ -47,6 +47,8 @@ def main():
     peers = [u for u in sys.argv[4].split(",") if u] if len(sys.argv) > 4 else []
     os.environ["CADRE_STATUS_PORT"] = str(port)
     os.environ["CADRE_STATUS_BIND"] = "127.0.0.1"
+    # the comparison wants the Python pages at their own paths and React at /app/
+    os.environ["CADRE_FLEET_UI"] = "python"
     import statusd
     from runnerlib import backends as backends_mod
     from runnerlib import items as items_mod

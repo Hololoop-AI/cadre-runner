@@ -13,7 +13,10 @@ python3 pipeline.py up        # everything, in one terminal; Ctrl-C stops it
 ```
 
 Then open **http://127.0.0.1:8181**. Linux and macOS, no admin rights needed,
-safe to re-run. Preflight is the gate: if it fails, its table names the check
+safe to re-run. The page is the React app in `web/`; after a `git pull`, rebuild
+it with `(cd web && npm ci && npm run build)` (re-running `install.sh` does the
+same). The old Python pages stay at `/classic/…`, and `CADRE_FLEET_UI=python`
+(or `fleet_ui = "python"` under `[runner]`) serves them at `/` again. Preflight is the gate: if it fails, its table names the check
 and the fix, and nothing claims to have worked when it did not.
 
 **Read [docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md) first** — it lists the

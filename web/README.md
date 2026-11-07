@@ -10,7 +10,13 @@ browser today; the same build is meant to go into a Tauri (desktop) or
 Capacitor (phone) shell later.
 
 The Python fleet server serves the built `dist/` at **`/app/`**, so Vite
-builds with `base: '/app/'`, and its screens live at `/app/library` and so on.
+builds with `base: '/app/'`. It is also what `/`, `/library`, `/costs`,
+`/runs`, `/tree`, `/tree/<id>`, `/project/<id>` and `/page/<key>` answer with
+(`statusd.REACT_ROUTE`); the Python pages for them stay at `/classic/…`. Set
+`CADRE_FLEET_UI=python` (or `fleet_ui = "python"` under `[runner]`) to serve
+the Python pages at `/` instead; without a build in `dist/` statusd serves them
+anyway. Screens the app does not draw yet (`/view`, `/history`, `/stranded`,
+`/cards`, `/study`) are still the Python pages.
 The calls (all declared in `contracts/statusd.openapi.json`):
 `GET /api/fleet` (everything the list is drawn from), `GET /api/newwork` (the
 home directory and the skill picker's library), `GET /fs` (folder
