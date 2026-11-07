@@ -26,3 +26,13 @@ def _python_fleet_pages(monkeypatch):
     statusd = sys.modules.get("statusd")
     if statusd is not None:
         monkeypatch.setattr(statusd, "FLEET_UI", "python")
+
+
+@pytest.fixture(autouse=True)
+def _no_fleet_payload_carried_over():
+    """statusd keeps one built /api/fleet per version (fleet_payload_bytes).
+    Each test's fixture is its own machine, so none sees the last one's copy."""
+    import sys
+    statusd = sys.modules.get("statusd")
+    if statusd is not None:
+        statusd.forget_payload()
