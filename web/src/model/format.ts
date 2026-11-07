@@ -32,6 +32,18 @@ export function usd(x: number): string {
   return '$' + whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (cents ? '.' + cents : '');
 }
 
+/**
+ * Python's `escape(text)[:n]` as the browser then shows it: the cut falls on
+ * the escaped text, so an apostrophe (&#x27;) uses six of the n characters.
+ * render_page cuts its "replaced by" titles this way.
+ */
+export function escapedCut(text: string, n: number): string {
+  const esc: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
+  const cut = [...text.replace(/[&<>"']/g, (c) => esc[c])].slice(0, n).join('');
+  const back: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#x27;': "'" };
+  return cut.replace(/&(amp|lt|gt|quot|#x27);/g, (m) => back[m]);
+}
+
 /** Python's int(text): an integer written in full (spaces, sign and _ allowed), else null. */
 export function pyInt(text: string): number | null {
   const m = /^\s*([+-]?\d+(?:_\d+)*)\s*$/.exec(text);

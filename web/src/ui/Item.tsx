@@ -31,7 +31,7 @@ function HistoryLink({ sf, ctx }: { sf: Surface; ctx: Ctx }) {
 }
 
 /** _page_link: the earlier-rounds link and the ⋮ menu (Archive) */
-function Menu({ sf, rounds = true }: { sf: Surface; rounds?: boolean }) {
+export function Menu({ sf, rounds = true }: { sf: Surface; rounds?: boolean }) {
   const key = keyOf(sf);
   const n = (sf.earlier || []).length;
   return (

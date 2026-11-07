@@ -5,19 +5,20 @@
 // proves the copies still agree.
 
 export type {
-  Backend, Backends, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
-  TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
+  Backend, Backends, ClosedPage, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
+  PageOwner, PagePayload, ProjectContext, ProjectPayload, TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
   RunningCard, SessionStatus, Surface, TreeNode,
 } from './payload';
-export { cmp, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';
-export { findPages, keyOf, statusOf, type Hit } from './conversations';
+export { cmp, escapedCut, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';
+export { collapse, findPages, keyOf, statusOf, type Hit } from './conversations';
+export { isoEpoch } from './format';
 export {
   answered, catchUpText, DONE, endingPhrase, HIDDEN, LABELS, pagelessPhrase, pageState, SORTS, WORKING,
   type Item, type State,
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
 export { liveProjects } from './projects';
-export { ancestors, descendants, parentsOf } from './tree';
+export { ancestors, clean, descendants, kidsOf, parentsOf } from './tree';
 export type { Tree } from './tree';
 export {
   CHIPS, effectiveView, layout, loadSel, saveSel, serverView, tagChips, type LayoutInput, type Placed, type Sel, type ServerView,
@@ -25,3 +26,4 @@ export {
 export { buildHome, limitChoices, staleCode, type Home, type ItemContext } from './home';
 export { findEntries, folderPicks, projectHint } from './picker';
 export { plural, pyRound, RUN_SORTS, RUN_VIEWS, runsHref, runsSel, runsView, treeRoots, type RunsSel } from './screens';
+export { externalProjects, groupRows, liveBadge, projectSection, runLibrary, startingWhat, touchedAt, type SectionPart } from './sections';

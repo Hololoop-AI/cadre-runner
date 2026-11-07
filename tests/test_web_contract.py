@@ -31,7 +31,9 @@ CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
 GETS = ["/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
-        "/api/library", "/api/costs", "/api/runs", "/api/tree"]
+        "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}"]
+# what a path parameter is filled with when a case is requested
+EXAMPLES = {"/api/project/{id}": "/api/project/research", "/api/page/{key}": "/api/page/aaaa"}
 POSTS = {"/tasks": "text=&cwd=/tmp",
          "/items": "item=task-a&action=tag&tag=cadre",
          "/repair": "action=move&key=nosuchkey&project=cadre",
@@ -95,7 +97,9 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setattr(statusd, "running_agents", lambda **k: RUNNING)
     monkeypatch.setattr(statusd, "pageless_tasks", lambda *a, **k: PAGELESS)
     monkeypatch.setattr(statusd, "fetch_agent_statuses", lambda *a, **k: STATUSES)
-    monkeypatch.setattr(statusd, "closed_pages", lambda *a, **k: {"research": [{}, {}]})
+    monkeypatch.setattr(statusd, "closed_pages", lambda *a, **k: {"research": [
+        {"key": "cccc", "title": "Pantry plan, round 1", "task": "task-c", "opened": NOW - 90000},
+        {"key": "dddd", "title": None, "task": "task-d", "opened": NOW - 80000}]})
     monkeypatch.setattr(statusd, "live_turns", lambda: {"task-a": "1 agent · Bash, just now"})
     monkeypatch.setattr(statusd, "journal_batches", lambda a, *r: [{}, {}])
     monkeypatch.setattr(statusd, "_known_keys", lambda: (set(), [], {}))
@@ -131,7 +135,7 @@ def test_every_operation_in_the_contract_has_a_case_here():
 def test_get_answers_fit_the_contract(server, path):
     url, tmp = server
     query = "?q=" + urllib.parse.quote(str(tmp) + "/") if path == "/fs" else ""
-    with urllib.request.urlopen(url + path + query, timeout=5) as r:
+    with urllib.request.urlopen(url + EXAMPLES.get(path, path) + query, timeout=5) as r:
         assert r.headers["Content-Type"] == "application/json"
         assert r.headers["Cache-Control"] == "no-store"
         body = json.loads(r.read())
@@ -240,7 +244,10 @@ def test_the_app_calls_only_declared_paths():
     # runs filter) the app keeps for their markup; it navigates instead of
     # submitting them. They are HTML pages, not part of this contract.
     assert {"/api/fleet", "/api/newwork", "/fs", "/fleet/events", "/tasks", "/items"} <= calls
-    assert calls - {"/", "/runs"} - set(CONTRACT["paths"]) == set()
+    # a path the app builds by appending a parameter ("/api/project/" + id)
+    # matches the contract's templated path ("/api/project/{id}")
+    templated = {p.split("{", 1)[0] for p in CONTRACT["paths"] if "{" in p}
+    assert calls - {"/", "/runs"} - set(CONTRACT["paths"]) - templated == set()
 
 
 @pytest.mark.parametrize("fixture", sorted((ROOT / "web" / "parity").glob("fixture*.json")),

@@ -14,7 +14,9 @@ import { useFind } from './useFind';
 import { useFleet } from './useFleet';
 import { CostsScreen } from './Costs';
 import { LibraryScreen } from './Library';
-import { current, keepLinksInApp } from './router';
+import { current, keepLinksInApp, postScreenForms } from './router';
+import { PageScreen } from './Page';
+import { ProjectScreen } from './Project';
 import { RunsScreen } from './Runs';
 import { TreeScreen } from './Tree';
 import { MachineSwitch, ServerProvider, useMachines, useServer, type Machines } from './server';
@@ -44,9 +46,19 @@ export function App() {
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
           : here.screen === 'costs' ? <CostsScreen key={machines.base} />
             : here.screen === 'runs' ? <RunsScreen key={machines.base} />
-              : <TreeScreen key={machines.base} task={here.task} />}
+              : here.screen === 'project' ? <ProjectScreen key={machines.base} id={here.id} />
+                : here.screen === 'page' ? <PageScreen key={machines.base} pageKey={here.key} />
+                  : <TreeScreen key={machines.base} task={here.task} />}
+      <ScreenForms />
     </ServerProvider>
   );
+}
+
+/** Posts the screens' forms through the chosen machine's API (router.postScreenForms). */
+function ScreenForms() {
+  const server = useServer();
+  useEffect(() => postScreenForms(server), [server]);
+  return null;
 }
 
 function Home({ machines }: { machines: Machines }) {

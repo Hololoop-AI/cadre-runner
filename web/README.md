@@ -1,8 +1,9 @@
 # Cadre fleet web app
 
-The fleet home page and the library, costs, runs and session-tree screens as a
-React app (Vite + React + TypeScript), drawn to be identical to the pages
-`statusd.py` serves at `/`, `/library`, `/costs`, `/runs` and `/tree`: the same elements, the same
+The fleet home page and the library, costs, runs, session-tree, project and
+manage screens as a React app (Vite + React + TypeScript), drawn to be
+identical to the pages `statusd.py` serves at `/`, `/library`, `/costs`,
+`/runs`, `/tree`, `/project/<id>` and `/page/<key>`: the same elements, the same
 classes, and the Python page's own stylesheet (`src/ui/fleet.css`, copied from
 `statusd._CSS + _HOME_CSS` by `scripts/sync_fleet_css.py`). It runs in a
 browser today; the same build is meant to go into a Tauri (desktop) or
@@ -13,8 +14,8 @@ builds with `base: '/app/'`, and its screens live at `/app/library` and so on.
 The calls (all declared in `contracts/statusd.openapi.json`):
 `GET /api/fleet` (everything the list is drawn from), `GET /api/newwork` (the
 home directory and the skill picker's library), `GET /fs` (folder
-completion), `GET /api/library`, `/api/costs`, `/api/runs`, `/api/tree` (the
-other screens), `GET /api/backends` (the machine switcher), the
+completion), `GET /api/library`, `/api/costs`, `/api/runs`, `/api/tree`,
+`/api/project/<id>`, `/api/page/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
 `GET /fleet/events` stream (re-fetch on `change`), and the Python page's own
 form posts: `/tasks`, `/items`, `/repair`, `/projects`. With another machine
 chosen, every call goes to that machine directly.

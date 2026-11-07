@@ -29,3 +29,13 @@ def test_the_fleet_page_and_the_framed_view_take_their_colours_from_the_theme():
 def test_every_role_is_a_colour_of_the_palette():
     for name in theme.THEMES:
         assert all(re.fullmatch(r"#[0-9a-f]{6}", v) for v in theme.colours(name).values())
+
+
+def test_the_daemons_own_pages_wear_the_theme():
+    """An agent's question, a notice and a risk hold are written by the
+    daemon from runnerlib/surface.py's template, not by an agent."""
+    from runnerlib import surface
+    stray = set(re.findall(r"#[0-9a-fA-F]{6}\b", surface._PAGE)) - set(theme.colours().values())
+    assert not stray, f"colours outside the theme: {stray}"
+    for var, val in theme.surface_vars().items():
+        assert f"{var}:{val};" in surface._PAGE

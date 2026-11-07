@@ -4,16 +4,16 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-/** `<div class="wrap"><header><h1>Name.</h1></header>…` with the tab title. */
-export function Screen({ name, after = '', tab, children }: {
-  name: string; after?: string; tab: string; children: ReactNode;
+/** `<div class="wrap"><header><h1>Name.</h1></header>…` with the tab title (`dot` false: no accent dot, as the manage page). */
+export function Screen({ name, after = '', dot = true, tab, children }: {
+  name: string; after?: string; dot?: boolean; tab: string; children: ReactNode;
 }) {
   useEffect(() => {
     document.title = tab;
   }, [tab]);
   return (
     <div className="wrap">
-      <header><h1>{name}<span className="dot">.</span>{after}</h1></header>
+      <header><h1>{name}{dot && <span className="dot">.</span>}{after}</h1></header>
       {children}
     </div>
   );

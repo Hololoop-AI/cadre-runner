@@ -35,6 +35,7 @@ from html import escape
 from pathlib import Path
 
 from . import board_events
+from . import theme as theme_mod
 
 CLI = "review-surface"
 # Workflow #3's verdict (prompts/task.md).
@@ -104,23 +105,29 @@ def _save_sessions(cfg, data: dict) -> None:
 
 # ------------------------------------------------------------------ templates
 
-_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+# The daemon's own pages (an agent's question, a notice, a risk hold) wear
+# the same theme as every other page: its colours come from runnerlib/theme.py,
+# written into the page so it reads right wherever it is opened.
+_PAGE = ("""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>
-  body{{margin:0;background:#0f1115;color:#f7f3ea;font:14px/1.5 ui-sans-serif,system-ui,sans-serif;padding:36px 24px}}
-  .wrap{{max-width:880px;margin:0 auto}} h1{{font-size:24px;color:#fffbf3;margin:0 0 6px}}
-  .meta{{font-family:ui-monospace,monospace;font-size:12px;color:#8c96aa;margin-bottom:20px}}
-  .meta a{{color:#f4c95d}} .card{{background:#11141a;border:1px solid #303745;border-radius:12px;padding:16px 18px;margin:12px 0}}
+  :root{{color-scheme:dark;""" + "".join(f"{k}:{v};" for k, v in theme_mod.surface_vars().items()) + """}}
+  body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui,sans-serif;padding:36px 24px}}
+  .wrap{{max-width:880px;margin:0 auto}} h1{{font-size:24px;color:var(--text);margin:0 0 6px}}
+  .meta{{font-family:ui-monospace,monospace;font-size:12px;color:var(--label);margin-bottom:20px}}
+  .meta a{{color:var(--accent)}} .card{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:12px 0}}
   .chip{{display:inline-block;font-family:ui-monospace,monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
-        border-radius:5px;padding:2px 8px;margin-bottom:8px;background:rgba(244,201,93,.1);color:#f4c95d;border:1px solid rgba(244,201,93,.4)}}
-  pre{{background:#0f1115;border:1px solid #2a2f3a;border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;color:#d8deea;font-size:12.5px}}
-  label{{display:block;padding:8px 10px;border:1px solid #2a2f3a;border-radius:8px;margin:6px 0;cursor:pointer;color:#d8deea;background:#0f1115}}
-  label:has(input:checked){{border-color:#f4c95d;color:#fffbf3}}
-  input[type=radio]{{accent-color:#f4c95d;margin-right:8px}}
-  textarea{{width:100%;min-height:70px;background:#0f1115;color:#f7f3ea;border:1px solid #303745;border-radius:8px;padding:8px;font:inherit}}
-  button{{margin-top:10px;font-weight:600;font-size:13px;background:#f4c95d;color:#17130a;border:0;border-radius:8px;padding:9px 16px;cursor:pointer}}
-  button:hover{{background:#ffd877}} .dim{{color:#aeb6c6}} .why{{font-size:12px;color:#8c96aa;margin-left:24px;display:block}}
-</style></head><body><div class="wrap">{body}</div></body></html>"""
+        border-radius:5px;padding:2px 8px;margin-bottom:8px;background:color-mix(in srgb,var(--accent) 10%,transparent);
+        color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent)}}
+  pre{{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;color:var(--text);font-size:12.5px}}
+  label{{display:block;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin:6px 0;cursor:pointer;color:var(--text);background:var(--bg)}}
+  label:has(input:checked){{border-color:var(--accent);color:var(--text)}}
+  input[type=radio]{{accent-color:var(--accent);margin-right:8px}}
+  textarea{{width:100%;min-height:70px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;font:inherit}}
+  button{{margin-top:10px;font-weight:600;font-size:13px;background:var(--accent);color:var(--on-accent);border:0;border-radius:8px;padding:9px 16px;cursor:pointer}}
+  button:hover{{background:color-mix(in srgb,var(--accent) 85%,white)}} .dim{{color:var(--muted)}} .why{{font-size:12px;color:var(--label);margin-left:24px;display:block}}
+  .add{{color:var(--good)}} .del{{color:var(--bad)}}
+</style></head><body><div class="wrap">{body}</div></body></html>""")
 
 
 def _write_artifact(cfg, name: str, title: str, body: str) -> Path:

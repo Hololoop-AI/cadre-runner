@@ -8,10 +8,12 @@ import { DirField } from './DirField';
 
 const NOBODY = 'the session picks its own skill — click to choose one yourself';
 
-function RunPicker({ lib }: { lib: LibraryEntry[] }) {
+/** statusd._run_picker: pick a skill to force; `current` (kind:name) starts chosen and open. */
+export function RunPicker({ lib, current = '' }: { lib: LibraryEntry[]; current?: string }) {
+  const chosen = lib.find((e) => e.v === current);
   const [q, setQ] = useState('');
-  const [val, setVal] = useState('');
-  const [summary, setSummary] = useState(NOBODY);
+  const [val, setVal] = useState(current);
+  const [summary, setSummary] = useState(chosen ? 'run ' + chosen.i : NOBODY);
   const [items, setItems] = useState<LibraryEntry[] | null>(null);
   const [shown, setShown] = useState(false);
   const [cur, setCur] = useState(-1);
@@ -36,7 +38,7 @@ function RunPicker({ lib }: { lib: LibraryEntry[] }) {
     setSummary('run ' + e.i);
   };
   return (
-    <details className="pick">
+    <details className="pick" open={chosen ? true : undefined}>
       <summary>{summary}</summary>
       <input type="hidden" name="run" id="runval" value={val} />
       <div className="dirwrap">

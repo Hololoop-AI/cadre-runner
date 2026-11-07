@@ -34,9 +34,17 @@ def main():
     entries = statusd.library_mod.scan(dirs=[], skills_source=statusd._skills_source())
     # what the library, costs and runs screens read off this machine's disk
     turns, owners, pages = statusd.load_runs()
+    # the project and repair pages read live state (open pages, agents,
+    # ownership): freeze every project's and every known page's payload
+    projects = {pid: statusd.project_payload(pid) for pid in (fleet.get("projs") or {})}
+    keys = {str(m.get("key")) for m in pages.values() if m.get("key")}
+    keys |= {str(sf.get("path") or "").rsplit("/", 1)[-1]
+             for sf in (fleet.get("snap") or {}).get("surfaces") or [] if sf.get("path")}
+    page_data = {k: statusd.page_payload(k) for k in sorted(keys - {""})}
     out.write_text(json.dumps({"now": now, "fleet": fleet, "newwork": newwork, "entries": entries,
                                "library": statusd.library_payload(),
-                               "runs": {"turns": turns, "owners": owners, "pages": pages}},
+                               "runs": {"turns": turns, "owners": owners, "pages": pages},
+                               "projects": projects, "pages": page_data},
                               default=str))
     print(f"wrote {out}: {len((fleet.get('snap') or {}).get('surfaces') or [])} surfaces")
 

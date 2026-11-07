@@ -70,6 +70,8 @@ def main():
     statusd.load_costs = lambda *a, **k: (runs["turns"], runs["owners"])
     statusd.load_tree = lambda *a, **k: data.get("tree") or {}
     statusd.costs_mod.time = FrozenTime(now)       # "last 24 hours" from the frozen instant
+    statusd.project_payload = lambda pid: (fixture.get("projects") or {}).get(pid)
+    statusd.page_payload = lambda key: (fixture.get("pages") or {}).get(key)
     backends_mod.fleet = lambda b, now=None: (data, None)
     backends_mod.signature = lambda backends, now=None: ("frozen", True)
 

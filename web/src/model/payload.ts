@@ -5,6 +5,8 @@
 /** A review page the runner registered (status.json surfaces), as collapse() leaves it. */
 export interface Surface {
   kind?: string | null;
+  /** "orchestrator" for a terminal session that runs others, else a free label */
+  role?: string | null;
   path?: string | null;
   /** epoch seconds */
   opened?: number | null;
@@ -58,6 +60,12 @@ export interface LinkRecord {
 
 /** A durable project (projects.json). */
 export interface Project {
+  /** a folder holding brief.md and decisions/ */
+  context?: string;
+  /** skills every task launched here is told to use */
+  skills?: string[];
+  /** the kind:name a launch here runs unless another is picked */
+  launch?: string;
   id: string;
   name: string;
   dirs?: string[];
@@ -267,4 +275,71 @@ export interface Runs {
 /** GET /api/tree: every session that launched or was launched, by task. */
 export interface TreePayload {
   nodes: Record<string, TreeNode>;
+}
+
+/** A page of a project that has ended (statusd.closed_pages). */
+export interface ClosedPage {
+  key: string;
+  title?: string | null;
+  task?: string | null;
+  opened?: number | null;
+}
+
+/** A project's context store: where it is, its brief, its decision files. */
+export interface ProjectContext {
+  path: string;
+  /** the brief's first 4000 characters, "" when there is none */
+  brief: string;
+  /** decision file names, newest first */
+  decisions: string[];
+}
+
+/** GET /api/project/<id>: everything the project page draws. */
+export interface ProjectPayload {
+  project: Project;
+  /** the project and its members, by id: what its running section is drawn from */
+  mine: Record<string, Project>;
+  group: { id: string; name: string } | null;
+  members: Project[];
+  /** its open conversations, rounds folded (conversations.collapse) */
+  rows: Surface[];
+  statuses: Record<string, SessionStatus>;
+  doing: Record<string, string>;
+  spent: Record<string, number>;
+  returned: Record<string, number>;
+  tree: Record<string, TreeNode>;
+  /** answer batches per page artifact */
+  histories: Record<string, number>;
+  closed: ClosedPage[];
+  /** work launched here with no page yet (statusd.starting_tasks) */
+  starting: Pageless[];
+  /** where launched work runs, "" when nowhere */
+  where: string;
+  /** what a task launched here is told */
+  prompt: string;
+  context: ProjectContext | null;
+  /** what the launcher's skill picker offers (unfiltered library.scan) */
+  library: InstalledEntry[];
+  fleet_page_code: { stale?: boolean; since?: number; head?: string };
+}
+
+/** Who answers a page's feedback (surface.ownership). */
+export interface PageOwner {
+  state: string;
+  task?: string;
+  kind?: string;
+  why?: string;
+  error?: string;
+}
+
+/** GET /api/page/<key>: one conversation and the repairs that apply to it. */
+export interface PagePayload {
+  key: string;
+  /** the conversation: its newest round, with the rest as `earlier` */
+  row: Surface;
+  /** every project a page can be moved to */
+  projects: string[];
+  /** conversations that can replace it, same project first */
+  candidates: { key: string; title: string }[];
+  owner: PageOwner | null;
 }

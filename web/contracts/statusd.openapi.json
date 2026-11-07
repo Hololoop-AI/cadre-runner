@@ -400,6 +400,68 @@
           }
         }
       }
+    },
+    "/api/project/{id}": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The project page's data: the project, its group and members, its open conversations with what the fleet reads about them, what finished and is starting, its context store, what a task launched here is told, and the library its launcher offers. The Python /project/<id> renders from the same function.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPayload"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such project"
+          }
+        }
+      }
+    },
+    "/api/page/{key}": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The manage page's data for any round of a conversation: the conversation, the projects it can move to, the conversations that can replace it, and who owns the page. The Python /page/<key> renders from the same function.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the screen's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagePayload"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such page"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -743,6 +805,13 @@
           },
           "ended": {
             "type": "boolean"
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"orchestrator\" for a terminal session that runs others"
           }
         }
       },
@@ -862,6 +931,18 @@
           },
           "archived": {
             "type": "boolean"
+          },
+          "context": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "launch": {
+            "type": "string"
           }
         }
       },
@@ -1656,6 +1737,284 @@
             ]
           }
         }
+      },
+      "ProjectPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "x-ts": "ProjectPayload",
+        "required": [
+          "project",
+          "mine",
+          "group",
+          "members",
+          "rows",
+          "statuses",
+          "doing",
+          "spent",
+          "returned",
+          "tree",
+          "histories",
+          "closed",
+          "starting",
+          "where",
+          "prompt",
+          "context",
+          "library",
+          "fleet_page_code"
+        ],
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Project"
+          },
+          "mine": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "group": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Surface"
+            }
+          },
+          "statuses": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SessionStatus"
+            }
+          },
+          "doing": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "spent": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "returned": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "tree": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TreeNode"
+            }
+          },
+          "histories": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "closed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosedPage"
+            }
+          },
+          "starting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Pageless"
+            }
+          },
+          "where": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ProjectContext"
+          },
+          "library": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstalledEntry"
+            }
+          },
+          "fleet_page_code": {
+            "type": "object",
+            "properties": {
+              "stale": {
+                "type": "boolean"
+              },
+              "since": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "ClosedPage": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "x-ts": "ClosedPage",
+        "description": "a page of the project that has ended (statusd.closed_pages; open: built from the page server's records)",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "opened": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "PagePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "row",
+          "projects",
+          "candidates",
+          "owner"
+        ],
+        "x-ts": "PagePayload",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "row": {
+            "type": "object",
+            "description": "the conversation's head row as conversations.conversation_of returns it (a Surface with earlier, page_title and ended; open)"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "title"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "owner": {
+            "$ref": "#/components/schemas/PageOwner"
+          }
+        }
+      },
+      "ProjectContext": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string"
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "x-ts": "ProjectContext",
+        "required": [
+          "path",
+          "brief",
+          "decisions"
+        ],
+        "additionalProperties": false
+      },
+      "PageOwner": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "x-ts": "PageOwner",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ]
       }
     }
   }

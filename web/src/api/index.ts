@@ -3,7 +3,9 @@
 // whichever machine is chosen, directly (the server allows its configured
 // peers' pages: statusd.CORS_ORIGINS); `connect` binds the calls to one
 // machine. This file is the module's only public entry.
-import type { Backend, Backends, CostSummary, Dirs, Fleet, Library, NewWorkInfo, Runs, TreePayload } from '../model';
+import type {
+  Backend, Backends, CostSummary, Dirs, Fleet, Library, NewWorkInfo, PagePayload, ProjectPayload, Runs, TreePayload,
+} from '../model';
 
 /** GET a JSON endpoint; a non-2xx answer is an error naming it. */
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -39,6 +41,10 @@ export interface Server {
   fetchRuns(search: string): Promise<Runs>;
   /** GET /api/tree: which session launched which */
   fetchTree(): Promise<TreePayload>;
+  /** GET /api/project/<id>: everything the project page draws */
+  fetchProject(id: string): Promise<ProjectPayload>;
+  /** GET /api/page/<key>: one conversation and the repairs that apply to it */
+  fetchPage(key: string): Promise<PagePayload>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
@@ -58,6 +64,8 @@ export function connect(base: string): Server {
     fetchCosts: () => getJson<CostSummary>(at('/api/costs')),
     fetchRuns: (search) => getJson<Runs>(at('/api/runs' + search)),
     fetchTree: () => getJson<TreePayload>(at('/api/tree')),
+    fetchProject: (id) => getJson<ProjectPayload>(at('/api/project/' + encodeURIComponent(id))),
+    fetchPage: (key) => getJson<PagePayload>(at('/api/page/' + encodeURIComponent(key))),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };
@@ -96,10 +104,10 @@ export async function postForm(action: string, form: HTMLFormElement | URLSearch
   return { notice: noticeOf(res.url), path: url?.pathname ?? '/', location: url ? url.pathname + url.search : '/' };
 }
 
-/** A form's fields as the urlencoded body the browser would post. */
-export function formBody(form: HTMLFormElement): URLSearchParams {
+/** A form's fields as the urlencoded body the browser would post, with the button that sent it. */
+export function formBody(form: HTMLFormElement, submitter?: HTMLElement | null): URLSearchParams {
   const body = new URLSearchParams();
-  for (const [k, v] of new FormData(form)) if (typeof v === 'string') body.append(k, v);
+  for (const [k, v] of new FormData(form, submitter ?? undefined)) if (typeof v === 'string') body.append(k, v);
   return body;
 }
 

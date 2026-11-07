@@ -10,6 +10,13 @@ export interface Backend {
 export interface Backends {
     backends: Backend[];
 }
+/** A page of a project that has ended (statusd.closed_pages). */
+export interface ClosedPage {
+    key: string;
+    title?: string | null;
+    task?: string | null;
+    opened?: number | null;
+}
 /** One way of cutting spend (costs._bucket): by node, by project or by task. */
 export interface CostBucket {
     key: string;
@@ -130,6 +137,71 @@ export interface Runs {
     projects: string[];
     nodes: string[];
 }
+/** Who answers a page's feedback (surface.ownership). */
+export interface PageOwner {
+    state: string;
+    task?: string;
+    kind?: string;
+    why?: string;
+    error?: string;
+}
+/** GET /api/page/<key>: one conversation and the repairs that apply to it. */
+export interface PagePayload {
+    key: string;
+    /** the conversation: its newest round, with the rest as `earlier` */
+    row: Surface;
+    /** every project a page can be moved to */
+    projects: string[];
+    /** conversations that can replace it, same project first */
+    candidates: {
+        key: string;
+        title: string;
+    }[];
+    owner: PageOwner | null;
+}
+/** A project's context store: where it is, its brief, its decision files. */
+export interface ProjectContext {
+    path: string;
+    /** the brief's first 4000 characters, "" when there is none */
+    brief: string;
+    /** decision file names, newest first */
+    decisions: string[];
+}
+/** GET /api/project/<id>: everything the project page draws. */
+export interface ProjectPayload {
+    project: Project;
+    /** the project and its members, by id: what its running section is drawn from */
+    mine: Record<string, Project>;
+    group: {
+        id: string;
+        name: string;
+    } | null;
+    members: Project[];
+    /** its open conversations, rounds folded (conversations.collapse) */
+    rows: Surface[];
+    statuses: Record<string, SessionStatus>;
+    doing: Record<string, string>;
+    spent: Record<string, number>;
+    returned: Record<string, number>;
+    tree: Record<string, TreeNode>;
+    /** answer batches per page artifact */
+    histories: Record<string, number>;
+    closed: ClosedPage[];
+    /** work launched here with no page yet (statusd.starting_tasks) */
+    starting: Pageless[];
+    /** where launched work runs, "" when nowhere */
+    where: string;
+    /** what a task launched here is told */
+    prompt: string;
+    context: ProjectContext | null;
+    /** what the launcher's skill picker offers (unfiltered library.scan) */
+    library: InstalledEntry[];
+    fleet_page_code: {
+        stale?: boolean;
+        since?: number;
+        head?: string;
+    };
+}
 /** GET /api/tree: every session that launched or was launched, by task. */
 export interface TreePayload {
     nodes: Record<string, TreeNode>;
@@ -191,6 +263,12 @@ export interface Pageless {
 }
 /** A durable project (projects.json). */
 export interface Project {
+    /** a folder holding brief.md and decisions/ */
+    context?: string;
+    /** skills every task launched here is told to use */
+    skills?: string[];
+    /** the kind:name a launch here runs unless another is picked */
+    launch?: string;
     id: string;
     name: string;
     dirs?: string[];
@@ -226,6 +304,8 @@ export interface SessionStatus {
 /** A review page the runner registered (status.json surfaces), as collapse() leaves it. */
 export interface Surface {
     kind?: string | null;
+    /** "orchestrator" for a terminal session that runs others, else a free label */
+    role?: string | null;
     path?: string | null;
     /** epoch seconds */
     opened?: number | null;
@@ -260,6 +340,12 @@ export interface TreeNode {
 /** Python's string ordering, for sorted() over names */
 export declare function cmp(a: string, b: string): number;
 /**
+ * Python's `escape(text)[:n]` as the browser then shows it: the cut falls on
+ * the escaped text, so an apostrophe (&#x27;) uses six of the n characters.
+ * render_page cuts its "replaced by" titles this way.
+ */
+export declare function escapedCut(text: string, n: number): string;
+/**
  * `key in obj` without the prototype, as a Python dict sees it: a project
  * or task named "constructor" is not Object's constructor.
  */
@@ -288,6 +374,8 @@ export declare function usd(x: number): string;
 /** view_href: a review-surface session opens in the fleet's frame */
 export declare function viewHref(path: unknown): string;
 // --- from conversations.ts
+/** collapse: snapshot surface rows in, one row per conversation out. */
+export declare function collapse(surfaces: Surface[], records?: LinkRecord[], holders?: Record<string, string>, pages?: Record<string, PageInfo>): Surface[];
 /** find: every page ever opened that matches all the words. */
 export declare function findPages(query: string, surfaces: Surface[], records: LinkRecord[], holders: Record<string, string>, pages: Record<string, PageInfo>, limit?: number): Hit[];
 /** A surface's session key: the last part of its /session/<key> path. */
@@ -305,6 +393,9 @@ export interface Hit {
     updated: number;
     title_hit: boolean;
 }
+// --- from format.ts
+/** _iso_epoch, in seconds */
+export declare function isoEpoch(iso: string | null | undefined): number;
 // --- from items.ts
 /** _answered: the driver closed this page, or it is titled DECIDED */
 export declare function answered(sf: Surface, statuses: Record<string, SessionStatus>): boolean;
@@ -395,8 +486,12 @@ export declare function liveProjects(projs: Record<string, Project>): Project[];
 // --- from tree.ts
 /** ancestors: root first, ending at task's parent */
 export declare function ancestors(task: string, parents: Record<string, string>): string[];
+/** clean: drop non-dict nodes, blank a non-string parent and a non-number since */
+export declare function clean(nodes: unknown): Tree;
 /** descendants: how many sessions sit anywhere under task */
 export declare function descendants(task: string, kids: Record<string, string[]>): number;
+/** kids_of: {parent: [children, oldest launch first]} */
+export declare function kidsOf(nodes: Tree): Record<string, string[]>;
 /** {child: parent} from the tree, for the roots-first walk up from a session. */
 export declare function parentsOf(nodes: Tree): Record<string, string>;
 // --- from tree.ts
@@ -560,4 +655,43 @@ export interface RunsSel {
     project: string;
     node: string;
     q: string;
+}
+// --- from sections.ts
+/** statusd.external_projects: open conversations grouped by project, busiest first. */
+export declare function externalProjects(rows: Surface[]): {
+    project: string;
+    rows: Surface[];
+/** statusd._group_rows: orchestrators (the byline), live rows, and settled (DECIDED) rows. */
+export declare function groupRows(src: Surface[]): {
+    byline: Surface[];
+    rows: Surface[];
+    decided: Surface[];
+};
+/** statusd._live's state badge: what the agent on a page is doing, from the driver's side. */
+export declare function liveBadge(sf: Surface, statuses: Record<string, SessionStatus>, doing: Record<string, string>): [string, string];
+/**
+ * render_fleet's durable section for project `top` drawn from `mine` (the
+ * project, ungrouped and live, and its members): its parts, how many rows
+ * run and how many settled, and the groups no part claimed.
+ */
+export declare function projectSection(top: Project, mine: Record<string, Project>, rows: Surface[]): {
+    parts: SectionPart[];
+    live: number;
+    done: number;
+    unclaimed: {
+        project: string;
+        rows: Surface[];
+    }[];
+};
+/** statusd.run_library: what a skill picker offers from a library scan. */
+export declare function runLibrary(entries: InstalledEntry[]): LibraryEntry[];
+/** statusd.starting_rows: what became of a launch with no page yet, in words. */
+export declare function startingWhat(st: Pageless, now: number, doing: Record<string, string>): string;
+/** When anything last touched a page (the page server's updated_at), epoch seconds. */
+export declare function touchedAt(sf: Surface, statuses: Record<string, SessionStatus>): number;
+/** One project's part of the section: the project or a member, and its rows. */
+export interface SectionPart {
+    project: Project;
+    byline: Surface[];
+    rows: Surface[];
 }

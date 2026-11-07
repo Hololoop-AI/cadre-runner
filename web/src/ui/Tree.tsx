@@ -11,7 +11,7 @@ import { useServer } from './server';
 const RESULT_CHARS = 1500;
 
 /** statusd._tree_node: one session, what it is and how it stands. */
-function Node({ task, node, now }: { task: string; node: TreeNode; now: number }) {
+export function Node({ task, node, now }: { task: string; node: TreeNode; now: number }) {
   return (
     <div className="tnode">
       <a className="ttitle" href={treeHref(task)}>{s(node.title || task)}</a>
@@ -25,7 +25,7 @@ function Node({ task, node, now }: { task: string; node: TreeNode; now: number }
 }
 
 /** statusd.tree_list: `task`'s children as nested lists, each with its last result's first line. */
-function Kids({ task, nodes, kids, now, seen = new Set() }: {
+export function Kids({ task, nodes, kids, now, seen = new Set() }: {
   task: string; nodes: Record<string, TreeNode>; kids: Record<string, string[]>; now: number; seen?: Set<string>;
 }) {
   const next = new Set([...seen, task]);

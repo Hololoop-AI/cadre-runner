@@ -65,6 +65,8 @@ function serialize() {
     for (const a of n.attributes) {
       let v = a.value;
       if (a.name === 'selected' || (a.name === 'value' && typed(n))) continue;
+      // inline handlers (render_page's onsubmit confirm) are behaviour, written as React handlers
+      if (a.name.startsWith('on')) continue;
       if (a.name === 'style') v = v.replace(/\s+/g, '').replace(/;$/, '');
       if (BOOL.has(a.name)) v = '';
       if (a.name === 'class') v = v.split(/\s+/).filter(Boolean).join(' ');

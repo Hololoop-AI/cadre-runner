@@ -3206,6 +3206,75 @@ def runs_payload(query: dict) -> dict:
             "nodes": sorted({r["node"] for r in everything if r["node"]})}
 
 
+def project_payload(pid: str) -> dict | None:
+    """/project/<id>'s data, or None for no such project: the project and its
+    group and members, its open conversations with what render_fleet reads
+    about them, what finished and what is starting, its context store, what a
+    task launched here is told, and the skills the launcher offers."""
+    projs = load_projects()
+    p = projects_mod.resolve(projs, pid)
+    if p is None:
+        return None
+    mine = {m["id"]: m for m in [p, *projects_mod.members(projs, p["id"])]}
+    names = set().union(*(projects_mod.names_of(projs, k) for k in mine))
+    snap = read_snapshot()
+    graph = load_graph()
+    rows = [r for r in conv_mod.collapse(snap.get("surfaces") or [], *graph)
+            if str(r.get("project") or "") in names and conv_mod.key_of(r) not in _ARCHIVED]
+    turns, _, pages = load_runs(titles=graph[2])
+    closed_all = closed_pages(projs)
+    start_all = starting_tasks(projs)
+    dirs = [d for m in mine.values() for d in m.get("dirs") or ()]
+    try:
+        where = projects_mod.workdir(projs, p["id"])
+    except projects_mod.ProjectError:
+        where = ""
+    ctx = projects_mod.context_path(projs, p["id"])
+    group = projs.get(p.get("group") or "")
+    arts = {str(r.get("artifact") or "") for r in rows} - {""}
+    return {
+        "project": p, "mine": mine,
+        "group": {"id": group["id"], "name": group["name"]} if group else None,
+        "members": projects_mod.members(projs, p["id"]),
+        "rows": rows, "statuses": fetch_agent_statuses(rows), "doing": live_turns(),
+        "spent": costs_mod.per_task(turns), "returned": recent_mod.last_returned(turns),
+        "tree": load_tree(pages), "histories": {a: len(journal_batches(a)) for a in arts},
+        "closed": sorted((m for k in mine for m in closed_all.get(k, [])),
+                         key=lambda m: -(m.get("opened") or 0)),
+        "starting": sorted((s for k in mine for s in start_all.get(k, [])),
+                           key=lambda s: -(s.get("since") or 0)),
+        "where": where,
+        "prompt": projects_mod.prompt_block(projs, p["id"], where),
+        "context": ({"path": ctx, "brief": projects_mod.brief(ctx)[1][:4000],
+                     "decisions": [Path(d).name for d in projects_mod.decisions(ctx)]} if ctx else None),
+        "library": library_mod.scan(dirs=dirs[:1], skills_source=_skills_source()),
+        "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since, "head": _CODE.head},
+    }
+
+
+def page_payload(key: str) -> dict | None:
+    """/page/<key>'s data, or None for an unknown page: the conversation the
+    key belongs to (its newest round as the head, the rest as `earlier`),
+    the projects it can move to, the conversations that can replace it (same
+    project first) and who owns the page."""
+    snap = read_snapshot()
+    records, holders, pages = load_graph()
+    surfaces = snap.get("surfaces") or []
+    row = conv_mod.conversation_of(key, surfaces, records, holders, pages)
+    if row is None:
+        return None
+    rows = conv_mod.collapse(surfaces, records, holders, pages)
+    projects = sorted({str(r["project"]) for r in rows if r.get("project")}
+                      | {h for h in holders if h not in conv_mod.ROOT_HOLDERS})
+    cands = sorted((r for r in rows if conv_mod.key_of(r)),
+                   key=lambda r: (r.get("project") != row.get("project"), -(r.get("opened") or 0)))
+    return {"key": key, "row": row, "projects": projects,
+            "candidates": [{"key": conv_mod.key_of(r), "title": r.get("title") or conv_mod.key_of(r)}
+                           for r in cands],
+            "owner": (surface_mod.ownership(_CFG, str(row["artifact"]))
+                      if _CFG and row.get("artifact") else None)}
+
+
 def tree_payload() -> dict:
     """/tree's data: every session that launched or was launched, by task."""
     return {"nodes": load_tree()}
@@ -3999,37 +4068,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"cards": cards_mod.export_team(_CFG.cards_dir)})
 
     def _serve_project(self, pid: str, query: dict):
-        projs = load_projects()
-        p = projects_mod.resolve(projs, pid)
-        if p is None:
+        d = project_payload(pid)
+        if d is None:
             self.send_error(404, "no such project")
             return
-        mine = {m["id"]: m for m in [p, *projects_mod.members(projs, p["id"])]}
-        names = set().union(*(projects_mod.names_of(projs, k) for k in mine))
-        snap = read_snapshot()
-        graph = load_graph()
-        rows = [r for r in conv_mod.collapse(snap.get("surfaces") or [], *graph)
-                if str(r.get("project") or "") in names]
+        p = d["project"]
         # This project's section exactly as the fleet draws it, without the
         # finished count (the page lists finished work itself).
-        doing = live_turns()
-        turns, _, pages = load_runs(titles=graph[2])
-        rows_html = render_fleet({"surfaces": rows}, statuses=fetch_agent_statuses(rows),
-                                 projs={**mine, p["id"]: {**p, "group": None, "archived": False}},
-                                 doing=doing, spent=costs_mod.per_task(turns),
-                                 returned=recent_mod.last_returned(turns),
-                                 tree=load_tree(pages)) if rows else ""
-        closed_all = closed_pages(projs)
-        closed = sorted((m for k in mine for m in closed_all.get(k, [])),
-                        key=lambda m: -(m.get("opened") or 0))
-        dirs = [d for m in mine.values() for d in m.get("dirs") or ()]
-        entries = library_mod.scan(dirs=dirs[:1], skills_source=_skills_source())
-        start_all = starting_tasks(projs)
-        starting = [s for k in mine for s in start_all.get(k, [])]
-        starting.sort(key=lambda s: -(s.get("since") or 0))
-        self._send_html(render_project(p, projs, rows_html, closed, entries,
+        rows_html = render_fleet({"surfaces": d["rows"]}, statuses=d["statuses"],
+                                 projs={**d["mine"], p["id"]: {**p, "group": None, "archived": False}},
+                                 doing=d["doing"], spent=d["spent"], returned=d["returned"],
+                                 histories=d["histories"], tree=d["tree"]) if d["rows"] else ""
+        self._send_html(render_project(p, load_projects(), rows_html, d["closed"], d["library"],
                                        notice=(query.get("notice") or [""])[0],
-                                       starting=starting, doing=doing))
+                                       starting=d["starting"], doing=d["doing"]))
 
     def _serve_view(self, key: str, query: dict | None = None):
         key = urllib.parse.unquote(key).strip("/")
@@ -4233,27 +4285,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send_html(render_found(q, hits))
 
     def _serve_page(self, key: str, query: dict):
-        snap = read_snapshot()
-        records, holders, pages = load_graph()
-        surfaces = snap.get("surfaces") or []
-        row = conv_mod.conversation_of(key, surfaces, records, holders, pages)
-        if row is None:
+        d = page_payload(key)
+        if d is None:
             self.send_error(404, "unknown page")
             return
-        rows = conv_mod.collapse(surfaces, records, holders, pages)
-        projects = sorted({str(r["project"]) for r in rows if r.get("project")}
-                          | {h for h in holders if h not in conv_mod.ROOT_HOLDERS})
-        # "replaced by" offers the other live conversations, same project first
-        cands = sorted((r for r in rows if conv_mod.key_of(r)),
-                       key=lambda r: (r.get("project") != row.get("project"),
-                                      -(r.get("opened") or 0)))
-        cands = [{"key": conv_mod.key_of(r), "title": r.get("title") or conv_mod.key_of(r)}
-                 for r in cands]
-        notice = (query.get("notice") or [""])[0]
-        owner = (surface_mod.ownership(_CFG, str(row["artifact"]))
-                 if _CFG and row.get("artifact") else None)
-        self._send_html(render_page(key, row, projects, cands, notice=notice,
-                                    owner=owner))
+        self._send_html(render_page(key, d["row"], d["projects"], d["candidates"],
+                                    notice=(query.get("notice") or [""])[0], owner=d["owner"]))
 
     def _serve_stream(self):
         """The fleet stream: one SSE connection per open panel. It says
@@ -4467,6 +4504,14 @@ class Handler(BaseHTTPRequestHandler):
         if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
+            return
+        if path.startswith(("/api/project/", "/api/page/")) and self.command in ("GET", "HEAD"):
+            which, _, ref = path[len("/api/"):].partition("/")
+            d = (project_payload if which == "project" else page_payload)(urllib.parse.unquote(ref))
+            if d is None:
+                self.send_error(404, f"no such {which}")
+            else:
+                self._send_json(d)
             return
         if path in SCREEN_API_PATHS and self.command in ("GET", "HEAD"):
             screen = SCREEN_API_PATHS[path]

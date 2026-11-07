@@ -24,6 +24,10 @@ export interface Server {
     fetchRuns(search: string): Promise<Runs>;
     /** GET /api/tree: which session launched which */
     fetchTree(): Promise<TreePayload>;
+    /** GET /api/project/<id>: everything the project page draws */
+    fetchProject(id: string): Promise<ProjectPayload>;
+    /** GET /api/page/<key>: one conversation and the repairs that apply to it */
+    fetchPage(key: string): Promise<PagePayload>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */
@@ -48,8 +52,8 @@ export interface Landing {
  * cross-origin, 413 too large) throw. It never re-sends.
  */
 export declare function postForm(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
-/** A form's fields as the urlencoded body the browser would post. */
-export declare function formBody(form: HTMLFormElement): URLSearchParams;
+/** A form's fields as the urlencoded body the browser would post, with the button that sent it. */
+export declare function formBody(form: HTMLFormElement, submitter?: HTMLElement | null): URLSearchParams;
 /** The `?notice=` a redirect landed on, '' when none. */
 export declare function noticeOf(url: string): string;
 /** on = every machine answering · half = one is not · off = stream lost */
