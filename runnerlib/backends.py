@@ -85,6 +85,17 @@ def configured(raw: dict) -> list[dict]:
     return out
 
 
+def origins(backends: list[dict]) -> set[str]:
+    """The origins (scheme://host[:port]) of backends that have a URL: what a
+    page served by one of them sends as its Origin header."""
+    out = set()
+    for b in backends:
+        u = urllib.parse.urlsplit(str(b.get("url") or ""))
+        if u.scheme in ("http", "https") and u.netloc:
+            out.add(f"{u.scheme}://{u.netloc}")
+    return out
+
+
 def version(b: dict, now: float | None = None) -> tuple[dict | None, str | None]:
     """({version, instance, machine}, error) for one backend, cached for
     VERSION_TTL — failures included, so a backend that is down costs one
