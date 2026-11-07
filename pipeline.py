@@ -4,7 +4,6 @@
 """
 
 import argparse
-import html
 import json
 import os
 import shutil
@@ -32,6 +31,7 @@ from runnerlib import messages
 from runnerlib import runs as runs_mod
 from runnerlib import status as status_mod
 from runnerlib import tasks as tasks_mod
+from runnerlib import threads as threads_mod
 from runnerlib import wake as wake_mod
 from runnerlib.nodes import NodeError, Nodes
 from runnerlib.registry import Registry
@@ -356,51 +356,27 @@ def _surface_page(cfg, task_id, rec) -> Path | None:
     return task_page(cfg, task_id, rec.get("page"))
 
 
-# A turn's page until the turn writes its own. Opening the page when the turn
-# STARTS is what gives a first round somewhere to be talked to: the chat window,
-# its thinking, and the threads its agent asks questions in all hang off a page
-# the page server knows. The marker is how the reap tells "the turn never wrote
-# its page" from "it did".
-PLACEHOLDER_MARK = "<!-- cadre:placeholder -->"
-PLACEHOLDER = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/surface-theme.css"><title>{title}</title></head><body>
-""" + PLACEHOLDER_MARK + """
-<main class="wrap"><h1>{title}</h1>
-<p>{body}</p></main></body></html>
-"""
-
-
-def _placeholder(page: Path, title: str, body: str) -> None:
-    page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_text(PLACEHOLDER.format(title=html.escape(title), body=html.escape(body)))
-
-
-def _is_placeholder(page: Path) -> bool:
-    try:
-        return PLACEHOLDER_MARK in page.read_text(errors="replace")[:2000]
-    except OSError:
-        return False
+def _page_meta(cfg, rec, task_id, stage, page) -> dict:
+    """What a task page's session records when it opens: the task, its
+    directory, the node when it is not the default, and its project."""
+    return {"task": task_id, "cwd": rec.get("cwd", ""),
+            **({"node": stage} if stage != tasks_mod.NODE else {}),
+            **(_inherited(cfg, rec, page) or _project_of(cfg, rec, page))}
 
 
 def _open_page_now(cfg, rec, task_id, stage, page: Path | None) -> None:
-    """Open the turn's page before the turn runs, writing a placeholder when it
-    has none yet (a first round, or the first turn of a node it was handed to).
-    A page that is already open is left as it is."""
+    """Open the turn's page before the turn runs, with a placeholder when it
+    has none yet (a first round, or the first turn of a node it was handed
+    to), so the driver can talk with the agent while it works."""
     if not page or not surface_mod.available():
         return
-    if not page.exists():
-        _placeholder(page, f"Working on it: {rec.get('title') or task_id}",
-                     f"The {stage} agent is on round {rec.get('iteration') or 1} and "
-                     "replaces this page when it finishes. You can talk with it now: "
-                     "type in This page in the footer, and it reads your message at "
-                     "its next step and answers there.")
-    if (surface_mod.sessions(cfg).get(str(page)) or {}).get("open"):
-        return
-    surface_mod.open_session(
-        cfg, page, "task", log, task=task_id, cwd=rec.get("cwd", ""),
-        **({"node": stage} if stage != tasks_mod.NODE else {}),
-        **(_inherited(cfg, rec, page) or _project_of(cfg, rec, page)))
+    surface_mod.open_early(
+        cfg, page, log, f"Working on it: {rec.get('title') or task_id}",
+        f"Round {rec.get('iteration') or 1} is under way, and this page is "
+        "replaced when it finishes. You can talk with the agent now: type in "
+        "This page in the footer, and it reads your message at its next step "
+        "and answers there.",
+        **_page_meta(cfg, rec, task_id, stage, page))
 
 
 def _run_task(cfg, reg, task_id, action, skip_cap=False):
@@ -468,7 +444,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          argv=action.get("argv"),
                          # the page shows the session's thinking while it works;
                          # a first round's page is not open yet and answers 404
-                         thinking_url=(chat_mod.api(chat_mod.page_key(page), "agent-thinking")
+                         thinking_url=(chat_mod.api(surface_mod.page_key(page), "agent-thinking")
                                        if page else None),
                          # only when a project gives some: absent, the
                          # spawn is exactly what it was before projects
@@ -500,7 +476,7 @@ def _reap_tasks(cfg, reg):
     neither here. What a turn ending MEANS in this workflow is that the page is
     ready, so the reap's one real job is opening the surface session — without
     it the driver is never shown the answer and the feedback bridge has nothing
-    to poll.
+    to poll. A chat turn's ending means its answer goes into the chat.
     """
     for task_id, rec in list(tasks_mod.records(reg).items()):
         for rid, run in list((rec.get("active_runs") or {}).items()):
@@ -509,21 +485,6 @@ def _reap_tasks(cfg, reg):
             if not runs_mod.finished(run):
                 continue
             ok, result, usage, record = runs_mod.outcome(run)
-            if run.get("kind") == chat_mod.STAGE:
-                # A direct chat: its answer goes into the chat it was asked
-                # in, and nothing else — no page opens, no round is counted.
-                status_mod.append_history(cfg, {
-                    "ended": time.time(), "story": task_id, "stage": run["stage"],
-                    "slice": None, "pr": None, "ok": ok,
-                    "seconds": round(time.time() - run["started"], 1),
-                    "model": run.get("model"),
-                    "cost_usd": (usage or {}).get("total_cost_usd"),
-                })
-                del rec["active_runs"][rid]
-                chat_mod.finish(log, task_id, run, ok, result)
-                chat_mod.requeue_unread(cfg, reg, log, task_id, run,
-                                        str(_surface_page(cfg, task_id, rec) or ""))
-                continue
             log_path = cfg.data_dir / "logs" / task_id / f"{rid}.json"
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(json.dumps(record, indent=2))
@@ -535,55 +496,28 @@ def _reap_tasks(cfg, reg):
                 "cost_usd": (usage or {}).get("total_cost_usd"),
             })
             del rec["active_runs"][rid]
-            chat_mod.requeue_unread(cfg, reg, log, task_id, run,
-                                    str(_surface_page(cfg, task_id, rec) or ""))
-            rec["last_result"] = (result or "")[:500]
-            log(f"{task_id}: turn {run.get('iteration')} "
-                f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
-            art = task_page(cfg, task_id, rec.get("page"))
-            if rec.pop("closing", False):
-                # The driver approved AND annotated: this turn existed only to
-                # act on those last words and write the decision onto the page.
-                # The approval was always final, so it lands now rather than
-                # asking again — the page is reopened either way, because it is
-                # the record of what was settled and the driver may want to
-                # read what his own notes produced.
-                tasks_mod.write_verdict(cfg, task_id, "approve")
-                log(f"{task_id}: closing turn done — approved, dialogue closed")
-                if ok and art and art.exists() and surface_mod.available():
-                    surface_mod.end_session(cfg, str(art), log)
-                continue
-            if art and _is_placeholder(art):
-                # The turn ended without writing its page: say so on the page
-                # the driver may already be watching, instead of "working".
-                _placeholder(art, f"No page from this round: {rec.get('title') or task_id}",
-                             f"Round {run.get('iteration') or 1} "
-                             f"{'finished without writing its page' if ok else 'failed'}"
-                             f": {(result or 'no result')[:300]}")
-                log(f"{task_id}: turn ended but wrote no page at {art} — the "
-                    f"placeholder now says so")
-            elif ok and art and art.exists() and not surface_mod.available():
-                log(f"{task_id}: page {art.name} written but not opened — "
-                    f"review-surface is not on the daemon's PATH")
-            elif ok and art and art.exists():
-                # `task` is the meta the feedback bridge scopes on: only a
-                # session opened here is a dialogue turn's page.
-                surface_mod.open_session(
-                    cfg, art, "task", log, task=task_id, cwd=rec.get("cwd", ""),
-                    **({"node": run["stage"]} if run["stage"] != tasks_mod.NODE else {}),
-                    **(_inherited(cfg, rec, art) or _project_of(cfg, rec, art)))
-                _link_handoff_page(cfg, rec, art, task_id)
-            elif ok and art and not art.exists():
-                log(f"{task_id}: turn finished but wrote no page at {art} — "
-                    f"nothing for the driver to rule on")
-            if art and surface_mod.available():
-                # Questions the agent asked in message threads and the
-                # driver answered after it stopped reading them.
+            page = _surface_page(cfg, task_id, rec)
+            chat_mod.requeue_unread(cfg, reg, log, task_id, run, str(page or ""))
+            if run.get("kind") == chat_mod.STAGE:
+                # A direct chat: its answer goes into the chat it was asked
+                # in, and nothing else — no page opens, no round is counted.
+                chat_mod.finish(reg, log, task_id, run, ok, result)
+            else:
+                _reap_round(cfg, rec, task_id, run, ok, result, page)
+            if page and surface_mod.available():
+                # Questions the agent asked in message threads and the driver
+                # answered while this turn ran, or after it stopped reading
+                # them: nothing was polling them for it until now.
                 try:
-                    chat_mod.watch_threads(cfg, reg, log, task_id, art)
+                    threads_mod.watch_threads(cfg, reg, log, task_id, page)
                 except Exception as e:
                     log(f"{task_id}: watching its message threads failed: {e}")
         for task_id, rec in list(tasks_mod.records(reg).items()):
+            if rec.get("replies"):
+                try:
+                    chat_mod.send_kept(reg, log, task_id)
+                except Exception as e:
+                    log(f"{task_id}: sending kept answers failed: {e}")
             # A chat that waited for a turn starts once the task is free —
             # before any deferred round, because the driver is waiting on it.
             if rec.get("chats") and not rec.get("active_runs"):
@@ -591,6 +525,48 @@ def _reap_tasks(cfg, reg):
                     chat_mod.start_next(cfg, reg, log, task_id)
                 except Exception as e:
                     log(f"{task_id}: chat turn could not start: {e}")
+
+
+def _reap_round(cfg, rec, task_id, run, ok, result, art):
+    """A page round ended: open the page it wrote, or say on its placeholder
+    that it wrote none."""
+    rec["last_result"] = (result or "")[:500]
+    log(f"{task_id}: turn {run.get('iteration')} "
+        f"{'done' if ok else 'FAILED'} — {(result or '')[:200]}")
+    if rec.pop("closing", False):
+        # The driver approved AND annotated: this turn existed only to
+        # act on those last words and write the decision onto the page.
+        # The approval was always final, so it lands now rather than
+        # asking again — the page is reopened either way, because it is
+        # the record of what was settled and the driver may want to
+        # read what his own notes produced.
+        tasks_mod.write_verdict(cfg, task_id, "approve")
+        log(f"{task_id}: closing turn done — approved, dialogue closed")
+        if ok and art and art.exists() and surface_mod.available():
+            surface_mod.end_session(cfg, str(art), log)
+        return
+    if art and surface_mod.is_placeholder(art):
+        # The turn ended without writing its page: say so on the page
+        # the driver may already be watching, instead of "working".
+        surface_mod.write_placeholder(
+            art, f"No page from this round: {rec.get('title') or task_id}",
+            f"Round {run.get('iteration') or 1} "
+            f"{'finished without writing its page' if ok else 'failed'}"
+            f": {(result or 'no result')[:300]}")
+        log(f"{task_id}: turn ended but wrote no page at {art} — the "
+            f"placeholder now says so")
+    elif ok and art and art.exists() and not surface_mod.available():
+        log(f"{task_id}: page {art.name} written but not opened — "
+            f"review-surface is not on the daemon's PATH")
+    elif ok and art and art.exists():
+        # `task` is the meta the feedback bridge scopes on: only a
+        # session opened here is a dialogue turn's page.
+        surface_mod.open_session(cfg, art, "task", log,
+                                 **_page_meta(cfg, rec, task_id, run["stage"], art))
+        _link_handoff_page(cfg, rec, art, task_id)
+    elif ok and art and not art.exists():
+        log(f"{task_id}: turn finished but wrote no page at {art} — "
+            f"nothing for the driver to rule on")
 
 
 def _inherited(cfg, rec, art) -> dict:
@@ -805,7 +781,7 @@ def cmd_chat_reply(cfg, args):
     """A session's answer to a chat message pushed into its turn (runnerlib/chat.py).
     Posting it is the session's own act, so the answer is exactly what it chose
     to say — a model mid-round may write no text at all between tool calls."""
-    if not chat_mod.answer(args.key, args.text):
+    if not chat_mod.answer(args.key, args.text, args.id or ""):
         sys.exit(f"could not post the answer to {args.key}: is the page server up?")
     print(f"answered in the chat ({args.key})")
 
@@ -1153,6 +1129,7 @@ def main():
                                           "message in the chat it came from")
     p.add_argument("key", help="the page-server session the answer goes to (the "
                                "pushed message names it)")
+    p.add_argument("--id", help="the message being answered (the pushed message names it)")
     p.add_argument("text", help="the answer")
     p = sub.add_parser("promote", help="activate a dialogue node's prompt as it is "
                                        "on disk (seeding records edits, never activates them)")

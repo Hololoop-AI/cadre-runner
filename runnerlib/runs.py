@@ -22,7 +22,7 @@ class RunsBusy(Exception):
     """Cap reached — backpressure, not failure."""
 
 
-# Feeds a session its messages and posts its thinking and answers to the page
+# Feeds a session its messages and posts its thinking to the page
 # server (runnerlib/session_pump.py).
 SESSION_PUMP = Path(__file__).resolve().parent / "session_pump.py"
 INBOX = "in.jsonl"
@@ -38,8 +38,9 @@ def user_message(text: str) -> dict:
     return {"type": "user", "message": {"role": "user", "content": text}}
 
 
-def push(run: dict, text: str, reply_url: str = "") -> bool:
+def push(run: dict, text: str, reply_url: str = "", **fields) -> bool:
     """Give a running session one more message, read at its next tool call.
+    `fields` ride along on the inbox line for whoever reads it back (`inbox`).
     False when the run does not read stdin or has already stopped reading:
     the caller keeps the message for a turn of its own."""
     inbox = Path(run.get("run_dir") or "/nonexistent") / INBOX
@@ -47,7 +48,7 @@ def push(run: dict, text: str, reply_url: str = "") -> bool:
         return False
     with open(inbox, "a") as f:
         f.write(json.dumps({"message": user_message(text), "text": text,
-                            "reply_url": reply_url}) + "\n")
+                            "reply_url": reply_url, **fields}) + "\n")
     return True
 
 
@@ -59,17 +60,6 @@ def inbox(run: dict) -> list[dict]:
         return []
     return [json.loads(l) for l in text.splitlines() if l.strip()]
 
-
-def unread(run: dict) -> list[dict]:
-    """Pushed lines the session never read: appended after the pump closed its
-    stdin, or left when the session died."""
-    inbox = Path(run.get("run_dir") or "/nonexistent") / INBOX
-    try:
-        lines = [json.loads(l) for l in inbox.read_text().splitlines() if l.strip()]
-        forwarded = int(Path(str(inbox) + ".closed").read_text().strip() or 0)
-    except (OSError, ValueError):
-        return []
-    return lines[forwarded:]
 
 # ------------------------------------------------------------------ processes
 
