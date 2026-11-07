@@ -39,3 +39,25 @@ def test_the_daemons_own_pages_wear_the_theme():
     assert not stray, f"colours outside the theme: {stray}"
     for var, val in theme.surface_vars().items():
         assert f"{var}:{val};" in surface._PAGE
+
+
+def test_the_review_servers_controls_wear_the_theme():
+    """review-surface reads theme.css from its state directory on every page
+    load; statusd writes it there from the theme on every start."""
+    css = theme.review_surface_css()
+    stray = set(re.findall(r"#[0-9a-fA-F]{6}\b", css)) - set(theme.colours().values())
+    assert not stray, f"colours outside the theme: {stray}"
+    # :root is the chrome around a page; :host is the annotation card, which
+    # lives in a shadow root inside the page
+    assert ":root, :host {" in css
+    for name in ("--ink-950", "--ink-900", "--steel-600", "--brass-500", "--accent", "--danger", "--bg-frame"):
+        assert f"  {name}: " in css
+
+
+def test_statusd_writes_the_review_servers_theme(tmp_path):
+    assert statusd.install_surface_theme(tmp_path / "rs") == tmp_path / "rs" / "theme.css"
+    assert (tmp_path / "rs" / "theme.css").read_text() == theme.review_surface_css()
+    assert [p.name for p in (tmp_path / "rs").iterdir()] == ["theme.css"]  # no temp left behind
+    blocked = tmp_path / "file"
+    blocked.write_text("")
+    assert statusd.install_surface_theme(blocked) is None  # cannot write: logs, never raises

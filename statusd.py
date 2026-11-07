@@ -478,6 +478,35 @@ def _journal_index(journal: Path) -> dict[str, list[dict]]:
         return index
 
 
+def surface_state_dir() -> Path:
+    """review-surface's state directory: the page server this fleet proxies
+    to shares its environment, so the same variable names it."""
+    return Path(os.environ.get("REVIEW_SURFACE_STATE_DIR") or Path.home() / ".review-surface")
+
+
+def install_surface_theme(state_dir: Path | None = None) -> Path | None:
+    """Write the theme for the review server's own controls (its bar, panel,
+    menus and annotation card) where it reads it on every page load, so the
+    pages and what frames them wear one theme; return where it went. Best
+    effort: a page server that cannot be themed still serves pages. The temp
+    name is per process, so two fleets sharing a state directory cannot
+    publish each other's half-written file."""
+    d = Path(state_dir) if state_dir is not None else surface_state_dir()
+    tmp = d / f"theme.css.{os.getpid()}.tmp"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(theme_mod.review_surface_css(), encoding="utf-8")
+        tmp.replace(d / "theme.css")
+        return d / "theme.css"
+    except OSError as e:
+        print(f"statusd: could not write the review server's theme in {d}: {e}", file=sys.stderr)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+
+
 def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
     """The per-surface answer history: every feedback batch the driver ever
     sent, from the feedback journal review-surface writes at accept time
@@ -487,9 +516,7 @@ def journal_batches(artifact: str, state_dir: Path | None = None) -> list[dict]:
     artifact path it belongs to — filter, don't glob."""
     if not artifact:
         return []
-    root = Path(state_dir) if state_dir is not None else Path(
-        os.environ.get("REVIEW_SURFACE_STATE_DIR")
-        or Path.home() / ".review-surface")
+    root = Path(state_dir) if state_dir is not None else surface_state_dir()
     return list(_journal_index(root / "feedback-journal.jsonl").get(artifact, []))
 
 
@@ -4610,8 +4637,10 @@ def start_servers(bind=None, port=None) -> list:
     thread: one process is both the API and the thing that starts sessions,
     so a request is acted on in the same process that took it."""
     servers = [ThreadingHTTPServer((addr, port or PORT), Handler) for addr in (bind or BIND)]
+    theme = install_surface_theme()
     print(f"statusd: serving {STATUS_DIR} on {', '.join(bind or BIND)} port {port or PORT}, "
           f"proxying the rest to {SURFACE}"
+          + (f"; its theme in {theme}" if theme else "")
           + f"; machine {MACHINE}; other backends: "
           + (", ".join(b["url"] for b in BACKENDS[1:]) or "none"),
           file=sys.stderr)

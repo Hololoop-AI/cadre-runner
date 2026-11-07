@@ -1,8 +1,10 @@
 """The colour theme every Cadre page wears: the fleet page, the framed page
 view, the React app (its stylesheet is generated from the fleet page's) and
-every review surface (surface-theme.css). One palette, one mapping from
-palette colours to roles, and two renderings of those roles, because the
-fleet page and surface-theme.css name their CSS variables differently.
+every review surface (surface-theme.css), and the review server's own
+controls around those pages (review_surface_css). One palette, one mapping
+from palette colours to roles, and a rendering of those roles for each set of
+CSS variable names: the fleet page's, surface-theme.css's and the review
+server's.
 
 Only one theme exists today. A user setting picks a name from THEMES later;
 until then DEFAULT is the theme. Direction (the driver, 2026-11-06): settings
@@ -69,4 +71,43 @@ def surface_vars(name: str = DEFAULT) -> dict[str, str]:
     c = colours(name)
     return {"--bg": c["bg"], "--panel": c["card"], "--panel-2": c["card2"], "--border": c["border"],
             "--text": c["fg"], "--muted": c["muted"], "--label": c["label"], "--accent": c["accent"],
-            "--good": c["ok"], "--bad": c["hot"], "--code-bg": c["sunk"], "--on-accent": c["on_accent"]}
+            "--good": c["ok"], "--bad": c["hot"], "--code-bg": c["sunk"], "--on-accent": c["on_accent"],
+            # The outline review-surface draws round what you are annotating.
+            "--review-surface-accent": c["accent"]}
+
+
+def _mix(colour: str, pct: int, other: str) -> str:
+    return f"color-mix(in srgb, {colour} {pct}%, {other})"
+
+
+def review_surface_vars(name: str = DEFAULT) -> dict[str, str]:
+    """The review server's custom properties (the token block at the top of
+    review-surface's src/chrome.css), so its bar, panel, menus and annotation
+    card wear this theme. Its rules use both the raw scale (ink, steel, cream,
+    brass, sage, amber, rust) and the names built on it, so both are set."""
+    c = colours(name)
+    hover = _mix(c["accent"], 85, "white")
+    return {
+        # darkest to lightest grounds: the bar sinks, menus rise
+        "--ink-950": c["sunk"], "--ink-900": c["sunk"], "--ink-800": c["bg"], "--ink-700": c["card"], "--ink-600": c["card2"],
+        "--steel-700": c["card2"], "--steel-600": c["border"], "--steel-500": _mix(c["border"], 70, c["fg"]),
+        "--steel-400": c["label"], "--steel-300": c["muted"], "--steel-200": c["muted"], "--steel-100": c["fg"],
+        "--cream-50": c["fg"], "--cream-100": c["fg"], "--cream-200": c["fg"],
+        "--brass-500": c["accent"], "--brass-400": hover, "--brass-ink": c["on_accent"],
+        "--sage-900": _mix(c["ok"], 15, c["bg"]), "--sage-700": _mix(c["ok"], 45, c["bg"]), "--sage-300": c["ok"],
+        "--amber-900": _mix(c["run"], 15, c["bg"]), "--amber-700": _mix(c["run"], 40, c["bg"]),
+        "--rust-500": c["hot"],
+        # names the annotation card sets to literals rather than to the scale
+        "--accent": c["accent"], "--accent-hover": hover, "--accent-ink": c["on_accent"],
+        "--danger": c["hot"], "--danger-fg": c["hot"],
+        # behind the page while it loads: the page's own ground, not white
+        "--bg-frame": c["bg"],
+    }
+
+
+def review_surface_css(name: str = DEFAULT) -> str:
+    """review-surface's theme.css: read from its state directory on every page
+    load, it restyles the chrome (`:root`) and the annotation card (`:host`)."""
+    body = "".join(f"  {k}: {v};\n" for k, v in review_surface_vars(name).items())
+    return ("/* Written by Cadre (runnerlib/theme.py) on every fleet start; edit the theme there. */\n"
+            f":root, :host {{\n  color-scheme: dark;\n{body}}}\n")
