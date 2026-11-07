@@ -89,7 +89,7 @@ def review_surface_vars(name: str = DEFAULT) -> dict[str, str]:
     hover = _mix(c["accent"], 85, "white")
     return {
         # darkest to lightest grounds: the bar sinks, menus rise
-        "--ink-900": c["sunk"], "--ink-800": c["bg"], "--ink-700": c["card"], "--ink-600": c["card2"],
+        "--ink-950": c["sunk"], "--ink-900": c["sunk"], "--ink-800": c["bg"], "--ink-700": c["card"], "--ink-600": c["card2"],
         "--steel-700": c["card2"], "--steel-600": c["border"], "--steel-500": _mix(c["border"], 70, c["fg"]),
         "--steel-400": c["label"], "--steel-300": c["muted"], "--steel-200": c["muted"], "--steel-100": c["fg"],
         "--cream-50": c["fg"], "--cream-100": c["fg"], "--cream-200": c["fg"],

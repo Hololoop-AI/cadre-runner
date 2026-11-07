@@ -50,7 +50,7 @@ def test_the_review_servers_controls_wear_the_theme():
     # :root is the chrome around a page; :host is the annotation card, which
     # lives in a shadow root inside the page
     assert ":root, :host {" in css
-    for name in ("--ink-900", "--steel-600", "--brass-500", "--accent", "--danger", "--bg-frame"):
+    for name in ("--ink-950", "--ink-900", "--steel-600", "--brass-500", "--accent", "--danger", "--bg-frame"):
         assert f"  {name}: " in css
 
 
