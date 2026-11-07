@@ -54,7 +54,7 @@ Answer them. Your final message is posted into the chat verbatim as your reply, 
 so make it the answer itself, in plain words. Do not rewrite the page unless \
 they ask you to: their full review of it arrives separately, when they press \
 Send page. Take no step with effects outside this conversation, such as \
-committing, sending or handing the work on, unless they ask."""
+publishing, sending or handing the work on, unless they ask."""
 
 PUSH_PROMPT = ("The driver sent this in your page's chat window while you work:\n\n"
                "{text}\n\n(Answer them right now, before anything else, in a few "
@@ -73,7 +73,7 @@ Your final message is posted into that thread verbatim as your reply: \
 acknowledge the answer and say in a line or two what it changes. Do not \
 rewrite your page now; if the answer changes your work, it carries into your \
 next page round. Take no step with effects outside this conversation, such as \
-committing, sending or handing the work on, unless they ask."""
+publishing, sending or handing the work on, unless they ask."""
 
 
 # --------------------------------------------------------------------------- the page server

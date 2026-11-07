@@ -352,10 +352,6 @@ def task_page(cfg, task_id, page=None) -> Path:
     return Path(page) if page else surface_mod._dir(cfg) / f"task-{task_id}.html"
 
 
-def _surface_page(cfg, task_id, rec) -> Path | None:
-    return task_page(cfg, task_id, rec.get("page"))
-
-
 def _page_meta(cfg, rec, task_id, stage, page) -> dict:
     """What a task page's session records when it opens: the task, its
     directory, the node when it is not the default, and its project."""
@@ -429,7 +425,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
     session_id = action["session_id"]
     model = action.get("model") or cfg.model_for(stage)
     effort = action.get("effort") or cfg.effort_for(stage)
-    page = _surface_page(cfg, task_id, rec)
+    page = task_page(cfg, task_id, rec.get("page"))
     if not rec.get("title") and (v.get("title") or v.get("task_text")):
         # what the placeholder calls the page until the session names it
         rec["title"] = str(v.get("title") or v["task_text"]).strip().splitlines()[0][:100]
@@ -496,7 +492,7 @@ def _reap_tasks(cfg, reg):
                 "cost_usd": (usage or {}).get("total_cost_usd"),
             })
             del rec["active_runs"][rid]
-            page = _surface_page(cfg, task_id, rec)
+            page = task_page(cfg, task_id, rec.get("page"))
             chat_mod.requeue_unread(cfg, reg, log, task_id, run, str(page or ""))
             if run.get("kind") == chat_mod.STAGE:
                 # A direct chat: its answer goes into the chat it was asked
