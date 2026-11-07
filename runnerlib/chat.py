@@ -44,6 +44,8 @@ CHANNEL = "chat"
 ANSWERED = "answered.txt"
 STAGE = "chat"
 REPLY_LIMIT = 20000
+# How long an answer the page server refused is kept for another try.
+KEEP_SECONDS = 6 * 3600
 
 CHAT_PROMPT = """The driver is talking with you directly in the chat window of your page, \
 {page}. This is a conversation, not a page round. Their message:
@@ -127,16 +129,31 @@ def _reply(reg, log, task_id: str, key: str, text: str, msg_id=None) -> bool:
 
 
 def send_kept(reg, log, task_id: str) -> int:
-    """Send the answers the page server missed, oldest first, stopping at the
-    first it still refuses. Returns how many went."""
-    kept = tasks.record(reg, task_id).get("replies") or []
-    sent = 0
-    while kept and post_reply(kept[0]["key"], kept[0]["text"]):
-        kept.pop(0)
-        sent += 1
-    if sent:
+    """Send the answers the page server missed, oldest first. A chat that
+    still refuses keeps its answers, in order, without holding up any other
+    chat's; one kept longer than KEEP_SECONDS is given up, since its chat is
+    most likely gone. Returns how many went."""
+    rec = tasks.record(reg, task_id)
+    kept, refused, sent, dropped = rec.get("replies") or [], set(), 0, 0
+    still = []
+    for r in kept:
+        if r["key"] in refused:
+            still.append(r)
+        elif post_reply(r["key"], r["text"]):
+            sent += 1
+        elif time.time() - r.get("at", time.time()) > KEEP_SECONDS:
+            dropped += 1
+        else:
+            refused.add(r["key"])
+            still.append(r)
+    if sent or dropped:
+        rec["replies"] = still
         _save(reg)
+    if sent:
         log(f"{task_id}: {sent} kept answer(s) delivered")
+    if dropped:
+        log(f"{task_id}: gave up on {dropped} kept answer(s) the page server "
+            f"refused for over {KEEP_SECONDS // 3600} hours")
     return sent
 
 

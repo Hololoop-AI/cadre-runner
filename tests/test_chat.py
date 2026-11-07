@@ -676,6 +676,44 @@ def test_an_answer_the_page_server_missed_is_kept_and_sent_on_a_later_pass(monke
     assert sent == [{"text": "The answer."}] and rec["replies"] == []
 
 
+def test_a_chat_that_is_gone_holds_up_only_its_own_answers(monkeypatch):
+    d, work = scratch(), scratch()
+    cfg, reg, rec = task_with_session(d, work)
+    sent = []
+    monkeypatch.setattr(chat, "_post", lambda url, body: "/dead/" not in url and (sent.append(body) or True))
+    rec["replies"] = [{"key": "dead", "text": "first", "at": time.time()},
+                      {"key": "dead", "text": "second", "at": time.time()},
+                      {"key": "k1", "text": "for a live chat", "at": time.time()}]
+    assert chat.send_kept(reg, lambda m: None, "task-demo") == 1
+    assert sent == [{"text": "for a live chat"}]
+    assert [r["text"] for r in rec["replies"]] == ["first", "second"], "kept, in order"
+
+
+def test_a_kept_answer_is_given_up_after_a_while(monkeypatch):
+    d, work = scratch(), scratch()
+    cfg, reg, rec = task_with_session(d, work)
+    logged = []
+    monkeypatch.setattr(chat, "_post", lambda url, body: False)
+    rec["replies"] = [{"key": "k1", "text": "stale", "at": time.time() - chat.KEEP_SECONDS - 1},
+                      {"key": "k1", "text": "fresh", "at": time.time()}]
+    chat.send_kept(reg, logged.append, "task-demo")
+    assert [r["text"] for r in rec["replies"]] == ["fresh"]
+    assert any("gave up" in m for m in logged)
+
+
+def test_a_reap_pass_tries_each_kept_answer_once(monkeypatch, posts):
+    import pipeline
+    d, work = scratch(), scratch()
+    cfg, reg, rec = task_with_session(d, work)
+    for other in ("task-b", "task-c"):
+        tasks.record(reg, other).update({"id": other})
+    tries = []
+    monkeypatch.setattr(chat, "_post", lambda url, body: tries.append(url) and False)
+    rec["replies"] = [{"key": "k1", "text": "waiting", "at": time.time()}]
+    pipeline._reap_tasks(cfg, reg)
+    assert len(tries) == 1
+
+
 def test_the_reap_pass_retries_a_kept_answer(monkeypatch, posts):
     import pipeline
     d, work = scratch(), scratch()

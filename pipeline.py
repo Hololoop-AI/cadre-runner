@@ -508,19 +508,19 @@ def _reap_tasks(cfg, reg):
                     threads_mod.watch_threads(cfg, reg, log, task_id, page)
                 except Exception as e:
                     log(f"{task_id}: watching its message threads failed: {e}")
-        for task_id, rec in list(tasks_mod.records(reg).items()):
-            if rec.get("replies"):
-                try:
-                    chat_mod.send_kept(reg, log, task_id)
-                except Exception as e:
-                    log(f"{task_id}: sending kept answers failed: {e}")
-            # A chat that waited for a turn starts once the task is free —
-            # before any deferred round, because the driver is waiting on it.
-            if rec.get("chats") and not rec.get("active_runs"):
-                try:
-                    chat_mod.start_next(cfg, reg, log, task_id)
-                except Exception as e:
-                    log(f"{task_id}: chat turn could not start: {e}")
+    for task_id, rec in list(tasks_mod.records(reg).items()):
+        if rec.get("replies"):
+            try:
+                chat_mod.send_kept(reg, log, task_id)
+            except Exception as e:
+                log(f"{task_id}: sending kept answers failed: {e}")
+        # A chat that waited for a turn starts once the task is free —
+        # before any deferred round, because the driver is waiting on it.
+        if rec.get("chats") and not rec.get("active_runs"):
+            try:
+                chat_mod.start_next(cfg, reg, log, task_id)
+            except Exception as e:
+                log(f"{task_id}: chat turn could not start: {e}")
 
 
 def _reap_round(cfg, rec, task_id, run, ok, result, art):
