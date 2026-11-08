@@ -696,8 +696,28 @@ def load_projects(data_dir: Path | None = None) -> dict:
 STARTUP_GRACE = 300.0
 
 
+_REQUESTED: dict = {}
+
+
+def _board_stamp(db: Path) -> tuple:
+    """The board's size and mtime, its write-ahead log's included: a write
+    lands in board.db-wal first, so board.db alone can look unchanged."""
+    out = []
+    for f in (db, db.with_name(db.name + "-wal")):
+        try:
+            st = os.stat(f)
+            out.append((st.st_size, st.st_mtime_ns))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
 def requested_tasks(data_dir) -> dict:
     """{task id: registry-shaped record} for task requests on the board.
+
+    Kept until the board changes (_board_stamp): one fleet build asks three
+    times, and the board is the daemon's whole event log (hundreds of
+    thousands of rows), which these queries scan; each read cost ~25 ms.
 
     Carries `failed` when the action the request triggered failed: the board
     records the reason, and a request that could not start is the one case
@@ -712,6 +732,10 @@ def requested_tasks(data_dir) -> dict:
     db = Path(data_dir) / "board.db"
     if not db.exists():
         return {}
+    stamp = _board_stamp(db)
+    hit = _REQUESTED.get(db)
+    if hit and hit[0] == stamp:
+        return {k: {**v, "active_runs": {}} for k, v in hit[1].items()}
     out: dict[str, dict] = {}
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
@@ -737,7 +761,8 @@ def requested_tasks(data_dir) -> dict:
             "title": str(p.get("title") or ""),
             "project": p.get("project") or "", "since": ts,
             "active_runs": {}, "failed": failed.get(eid, "")})
-    return out
+    _REQUESTED[db] = (stamp, out)
+    return {k: {**v, "active_runs": {}} for k, v in out.items()}
 
 
 def pageless_tasks(projs: dict, data_dir: Path | None = None) -> list[dict]:
@@ -3612,7 +3637,9 @@ def _local_signature() -> str:
     """What the fleet looks like from this machine's files, as one hash: the
     runner's snapshot minus its heartbeat fields (it is rewritten every pass
     whether or not anything moved), plus the size and mtime of every link
-    store, the project store and the item store (tags, done, hidden)."""
+    store, the project store, the item store (tags, done, hidden) and the run
+    log, which gains a line each time a turn finishes (its cost, Recent, the
+    item's last-returned time)."""
     h = hashlib.sha1()
     try:
         snap = json.loads((STATUS_DIR / "status.json").read_text(encoding="utf-8"))
@@ -3623,7 +3650,7 @@ def _local_signature() -> str:
     except (OSError, ValueError):
         h.update(b"no-snapshot")
     for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE,
-              DATA_DIR / items_mod.FILE]:
+              DATA_DIR / items_mod.FILE, DATA_DIR / "history.jsonl"]:
         try:
             st = os.stat(f)
             h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
