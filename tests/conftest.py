@@ -12,8 +12,34 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _clean_cadre_env(monkeypatch):
-    for name in [k for k in os.environ if k.startswith("CADRE_")]:
+    for name in [k for k in os.environ if k.startswith(("CADRE_", "REVIEW_SURFACE_"))]:
         monkeypatch.delenv(name)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "own_page_server_fakes: the test fakes the review-surface CLI or "
+                   "server underneath surface._run_cli itself, so it keeps the real functions")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_page_server(monkeypatch, request):
+    """No test reaches a real review-surface server. Opening a page falls back
+    to the `review-surface` CLI, which talks to whatever REVIEW_SURFACE_PORT
+    names; run from inside a Cadre turn that was the live backend's, and 273 of
+    its 488 pages were test scratch pages from /tmp, flooding the driver's
+    notification bell with "New page: Working on it: do the thing" (found
+    8 Nov 2026). Tests that need the CLI or the server fake them themselves,
+    which overrides this."""
+    if request.node.get_closest_marker("own_page_server_fakes"):
+        return
+    from runnerlib import surface
+
+    def refused(*args, **kwargs):
+        raise OSError("the test suite never talks to a real page server")
+
+    monkeypatch.setattr(surface, "_run_cli", refused)
+    monkeypatch.setattr(surface, "_create_session_quietly", refused)
 
 
 @pytest.fixture(autouse=True)

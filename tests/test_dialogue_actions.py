@@ -792,3 +792,20 @@ def test_tick_pass_reopens_the_node_registry_every_pass():
         engine_seam.reset()
 
     assert "--flag-added-later" in seen["command"]
+
+
+def test_an_approve_with_a_note_sent_from_a_thread_gets_its_closing_turn():
+    """A note a side thread carried to the page is the driver's words too: a
+    bare approve must not close past it (it would never be read)."""
+    d = scratch()
+    cfg, reg = FakeCfg(d), FakeReg()
+    tasks.carry_note(cfg, "task-demo", "Pick clinic B.", source="aftercare")
+    meta = {"kind": "task", "task": "task-demo", "cwd": "/tmp/work", "open": True}
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, lambda *a: None,
+                             str(d / "task-task-demo.html"), meta, poll_json(
+            note("CADRE_DECISION gate=task story=task-demo task=task-demo "
+                 "verdict=approve")))
+    sent = commands(cfg)
+    assert [c["target"] for c in sent] == ["task:feedback"] and sent[0]["closing"] == "1"
+    assert "Pick clinic B." in sent[0]["feedback"]

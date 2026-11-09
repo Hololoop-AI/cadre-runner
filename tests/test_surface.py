@@ -3,6 +3,7 @@ authoritative, everything else is driver feedback. The old TOON parsing lost
 real feedback twice (digit-only uid assumption, unquoted bare cells) — JSON
 exists so that class of bug cannot recur."""
 
+import pytest
 import json
 import unittest
 from pathlib import Path
@@ -582,6 +583,7 @@ def _fake_cli(tmp_path, monkeypatch, body):
     return Cfg()
 
 
+@pytest.mark.own_page_server_fakes
 def test_a_tool_that_cannot_start_is_logged_not_read_as_an_empty_reply(tmp_path, monkeypatch):
     """The daemon's PATH without `node` on it: the tool's shim exits 127. That
     used to come back as the error text, which a poll read as "no feedback"."""
@@ -601,6 +603,7 @@ def test_a_tool_that_cannot_start_is_logged_not_read_as_an_empty_reply(tmp_path,
     assert any(m.startswith("surface: end failed for page.html") for m in logs), logs
 
 
+@pytest.mark.own_page_server_fakes
 def test_a_session_that_is_over_is_an_answer_even_on_a_non_zero_exit(tmp_path, monkeypatch):
     """`poll` on an ended session exits 1 and says so. That reply closes the
     session record; raising on it would leave the record open forever."""
@@ -667,6 +670,7 @@ def test_a_cold_start_still_opens_a_collected_page_as_push(tmp_path, monkeypatch
     assert sf.sessions(Cfg())[str(tmp_path / "task.html")]["path"] == "/session/k1"
 
 
+@pytest.mark.own_page_server_fakes
 def test_the_quiet_open_asks_the_server_for_the_delivery_mode(monkeypatch):
     from runnerlib import surface as sf
     import urllib.request
