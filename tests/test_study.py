@@ -114,8 +114,9 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
     monkeypatch.setattr(surface, "agent_reply",
                         lambda cfg, reg, log, path, msg: replies.append(msg))
     monkeypatch.setattr(study_thread, "start",
-                        lambda cfg, reg, topic, task, page, passage="", cwd="", log=None:
-                        started.append((topic, task, page, passage)) or {"id": "thread-x"})
+                        lambda cfg, reg, topic, task, page, passage="", cwd="", log=None,
+                        mode="learn": started.append((topic, task, page, passage, mode))
+                        or {"id": "thread-x", "title": study_thread.thread_title(mode, topic, passage)})
     art = str(d / "task-task-parent.html")
     meta = {"kind": "task", "task": "task-parent", "cwd": str(work), "open": True}
 
@@ -123,9 +124,10 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
         surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
             note("Study: why is the lock taken here?", "with reg.lock(): reg.save()")))
     assert started == [("why is the lock taken here?", "task-parent", art,
-                        "with reg.lock(): reg.save()")]
+                        "with reg.lock(): reg.save()", "learn")]
     assert commands(cfg) == [], "no dialogue round, and no slow tutor session"
-    assert replies[0].startswith("Study thread open")
+    assert replies[0].startswith("Learning thread open"), \
+        "a hand-typed `study:` still works, as a thread that starts out teaching"
 
     # beside an ordinary annotation: the thread opens, the round gets only the rest
     with jsonl_board(d):
@@ -134,13 +136,27 @@ def test_a_study_annotation_opens_a_thread_on_the_passage_and_costs_no_round(mon
     assert [c["feedback"] for c in commands(cfg)] == ["drop the second table"]
     assert len(started) == 2
 
+    # the Thread button: the same side chat, opened to talk; nothing typed
+    # names it by the passage
+    with jsonl_board(d):
+        surface._handle_poll(cfg, reg, lambda *a: None, art, meta, poll_json(
+            note("thread: this passage", "Clinic B includes aftercare")))
+    assert started[-1] == ("this passage", "task-parent", art,
+                           "Clinic B includes aftercare", "talk")
+    assert replies[-1].startswith("Thread open on “Clinic B includes aftercare”")
+    assert [c["feedback"] for c in commands(cfg)] == ["drop the second table"], \
+        "a thread costs the dialogue no round"
+    # a note that only mentions threads is an ordinary annotation
+    assert surface._side_thread({"text": "the thread: model is wrong"}) is None
+    assert surface._side_thread({"text": "thread:   "}) is None
+
     # a thread that cannot start says why, on the page
     monkeypatch.setattr(study_thread, "start", lambda *a, **k: (_ for _ in ()).throw(
         ValueError("task 'task-parent' has no working directory to study in")))
     with jsonl_board(d):
         surface._handle_poll(cfg, reg, lambda *a: None, art, meta,
                              poll_json(note("study: x")))
-    assert replies[-1].startswith("Study not started: task 'task-parent' has no working")
+    assert replies[-1].startswith("Learning not started: task 'task-parent' has no working")
 
 
 # --------------------------------------------------------------------------- from the UI

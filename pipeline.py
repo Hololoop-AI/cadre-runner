@@ -184,7 +184,7 @@ def cmd_up(cfg, args):
     env = {**os.environ, "REVIEW_SURFACE_NO_OPEN": "1",
            # the dialogue daemon, as the service unit runs it
            "CADRE_ENGINE": os.environ.get("CADRE_ENGINE") or "only",
-           # the Study button on the annotation popup; an operator's own value wins
+           # the Thread button on the annotation popup; an operator's own value wins
            "REVIEW_SURFACE_ANNOTATION_ACTIONS": (os.environ.get("REVIEW_SURFACE_ANNOTATION_ACTIONS")
                                                  or surface_mod.ANNOTATION_ACTIONS),
            **({"CADRE_CONFIG": args.config} if args.config else {}),
@@ -836,14 +836,24 @@ def cmd_task(cfg, args):
 
 
 def cmd_study_thread(cfg, args):
-    """Study threads: side chats beside a page, with an agent kept awake.
-    `start` opens one from a task (what the Study button does); `run` is the
+    """Threads: side chats beside a page, with an agent kept awake.
+    `start` opens a learning one from a task; `promote` is how a thread's
+    agent carries a settled note to its page's next round; `run` is the
     engine itself, which `start` launches detached; `list` shows them."""
     from runnerlib import study_thread
     if args.action == "run":
         if not args.rest:
             sys.exit("study-thread run: give the thread id")
         print(study_thread.run(cfg, args.rest[0]))
+        return
+    if args.action == "promote":
+        if len(args.rest) < 2:
+            sys.exit('study-thread promote <thread id> "the note for the page"')
+        try:
+            note = study_thread.promote(cfg, args.rest[0], " ".join(args.rest[1:]))
+        except (OSError, ValueError) as e:
+            sys.exit(f"promote refused: {e}")
+        print(f"queued for {note['task']}'s next round: {note['text'][:200]}")
         return
     if args.action == "list":
         for t in study_thread.listing(cfg):
@@ -1068,10 +1078,11 @@ def main():
                                                     "session runs in its directory")
     p.add_argument("--cwd", help="the repo to study (default: the --from task's "
                                  "directory, else here)")
-    p = sub.add_parser("study-thread", help="study threads: a side chat beside a page "
-                                            "whose agent stays awake (start, list, run)")
-    p.add_argument("action", choices=["start", "list", "run"])
-    p.add_argument("rest", nargs="*", help="start: what to understand · run: the thread id")
+    p = sub.add_parser("study-thread", help="threads: a side chat beside a page "
+                                            "whose agent stays awake (start, list, run, promote)")
+    p.add_argument("action", choices=["start", "list", "run", "promote"])
+    p.add_argument("rest", nargs="*", help="start: what to understand · run: the thread id · "
+                                           "promote: the thread id, then the note for its page")
     p.add_argument("--from", dest="from_task", help="start: the task whose page it sits beside")
     p.add_argument("--model", default="", help="start: who answers (default: [learning] "
                                                "thread_model); `/model <name>` in the chat switches it later")
