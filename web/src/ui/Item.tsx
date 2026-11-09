@@ -113,7 +113,10 @@ function Cell({ r, width }: { r: GraphRow; width: number }) {
  */
 function HistoryToggle({ r, onToggle }: { r: GraphRow; onToggle: (task: string) => void }) {
   if (!r.history) return null;
-  const what = `${r.history} earlier page${r.history !== 1 ? 's' : ''} on this branch`;
+  const n = (r.page?.threads || []).length;
+  const pages = r.history - n;
+  const what = [pages ? `${pages} earlier page${pages !== 1 ? 's' : ''}` : '', n ? `${n} thread${n !== 1 ? 's' : ''}` : '']
+    .filter(Boolean).join(' and ') + ' on this branch';
   return (
     <button type="button" className="hcaret" data-beyond-parity="" aria-expanded={r.open}
       title={r.open ? `hide the ${what}` : `show the ${what}`} onClick={() => onToggle(r.task)}>
@@ -122,15 +125,18 @@ function HistoryToggle({ r, onToggle }: { r: GraphRow; onToggle: (task: string) 
   );
 }
 
-/** An earlier round of the page above it, drawn as a graph row of its own. */
-function RoundRow({ r, width, of, ctx }: { r: GraphRow; width: number; of: number; ctx: Ctx }) {
-  const e = r.round!;
+/**
+ * A row hung under the page above it: one of its earlier rounds, or a side
+ * thread about it (a chat beside the page, not a round).
+ */
+function HistoryRow({ r, width, label, ctx }: { r: GraphRow; width: number; label: string; ctx: Ctx }) {
+  const e = (r.round || r.thread)!;
   return (
     <div className="page grow done" data-beyond-parity-row="">
       <Cell r={r} width={width} />
       <a className="t" href={viewHref(e.path)} title={e.title}>{e.title}</a>
-      <span className="rn">{`round ${of}`}</span>
-      <span className="badge" title="when this round was written">{relTime(e.opened, ctx.now)}</span>
+      <span className="rn">{label}</span>
+      <span className="badge" title={`when this ${r.round ? 'round was written' : 'thread was opened'}`}>{relTime(e.opened, ctx.now)}</span>
     </div>
   );
 }
@@ -156,7 +162,8 @@ function ItemGraph({ it, ctx }: { it: Item; ctx: Ctx }) {
       {g.loose.map((sf) => <PRow key={keyOf(sf)} sf={sf} ctx={ctx} o={head} />)}
       <div className="graph">
         {g.rows.map((r) => {
-          if (r.round) return <RoundRow key={r.task} r={r} width={g.width} of={roundNo(r)} ctx={ctx} />;
+          if (r.round) return <HistoryRow key={r.task} r={r} width={g.width} label={`round ${roundNo(r)}`} ctx={ctx} />;
+          if (r.thread) return <HistoryRow key={r.task} r={r} width={g.width} label="thread" ctx={ctx} />;
           const st = r.state;
           const more = r.hidden ? <span className="badge" title={`${r.hidden} more, all answered`}>{`+${r.hidden}`}</span> : null;
           if (r.page) {

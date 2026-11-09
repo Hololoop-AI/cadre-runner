@@ -36,6 +36,9 @@ from datetime import datetime
 from pathlib import Path
 
 LINK_TYPES = ("child-of", "supersedes", "derived-from")
+# A side thread's session kind (runnerlib/study_thread.py). Pages opened before
+# 9 Nov 2026 say "study", from when the only thread was a study thread.
+THREAD_KINDS = ("thread", "study")
 # A holder that only anchors the tree ("Home") is not a project.
 ROOT_HOLDERS = {"root", "home"}
 _SESSION_KEY = re.compile(r"^[0-9a-f]{16}$")
@@ -154,6 +157,16 @@ def collapse(surfaces: list[dict], records: list[dict] | None = None,
     records = records or []
     holders = holders or {}
     pages = pages or {}
+    # A side thread carries its dialogue's task id but is not a round of it:
+    # grouped by task it became the dialogue's newest page and took over its
+    # row (driver, 9 Nov 2026). It rides on that row as `threads` instead. One
+    # whose dialogue has no row of its own keeps a row, so nothing hides.
+    dialogue_tasks = {str(sf["task"]) for sf in surfaces
+                      if key_of(sf) and sf.get("task") and sf.get("kind") not in THREAD_KINDS}
+    side = [sf for sf in surfaces if key_of(sf) and sf.get("kind") in THREAD_KINDS
+            and str(sf.get("task") or "") in dialogue_tasks]
+    side_ids = {id(sf) for sf in side}
+    surfaces = [sf for sf in surfaces if id(sf) not in side_ids]
     parent, replaced_by = build_graph(records)
     by_key = {key_of(sf): sf for sf in surfaces if key_of(sf)}
 
@@ -210,6 +223,7 @@ def collapse(surfaces: list[dict], records: list[dict] | None = None,
         return "" if _SESSION_KEY.match(target) else target
 
     out = [sf for sf in surfaces if not key_of(sf)]
+    row_of: dict[str, dict] = {}
     for members in groups.values():
         order = sorted(members, key=lambda k: -_when(k, by_key, pages))
         live = [k for k in order if k not in replaced_by] or order
@@ -246,7 +260,20 @@ def collapse(surfaces: list[dict], records: list[dict] | None = None,
                           or (by_key.get(k) or {}).get("title") or k),
              "opened": _when(k, by_key, pages)}
             for k in order if k != head_key]
+        # a row collapsed again (the project page does) keeps the threads it had
+        head["threads"] = list({t["key"]: t for sf in member_rows
+                                for t in (sf.get("threads") or [])}.values())
+        for sf in member_rows:
+            row_of.setdefault(str(sf.get("task") or ""), head)
         out.append(head)
+    for sf in sorted(side, key=lambda sf: -float(sf.get("opened") or 0)):
+        key, row = key_of(sf), row_of.get(str(sf["task"]))
+        if row is None:
+            out.append({**sf, "earlier": [], "threads": []})
+            continue
+        row["threads"].append(
+            {"key": key, "path": f"/session/{key}", "title": str(sf.get("title") or key),
+             "opened": float(sf.get("opened") or 0)})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
 
 
@@ -257,6 +284,11 @@ def conversation_of(key: str, surfaces: list[dict], records: list[dict],
     for row in collapse(surfaces, records, holders, pages):
         if key_of(row) == key or any(e["key"] == key for e in row.get("earlier") or []):
             return row
+        if any(t["key"] == key for t in row.get("threads") or []):
+            # a side thread is its own page, filed with its dialogue
+            sf = next(sf for sf in surfaces if key_of(sf) == key)
+            return {**sf, "project": row.get("project"), "earlier": [], "threads": [],
+                    "stranded": sf.get("stranded") or []}
     if key in pages:
         pg = pages[key]
         return {"kind": "page", "path": f"/session/{key}", "title": pg.get("title") or key,
@@ -281,7 +313,7 @@ def find(query: str, surfaces: list[dict], records: list[dict], holders: dict,
     head_of = {}
     for row in rows:
         head_of[key_of(row)] = row
-        for e in row.get("earlier") or []:
+        for e in [*(row.get("earlier") or []), *(row.get("threads") or [])]:
             head_of[e["key"]] = row
     by_key = {key_of(sf): sf for sf in surfaces if key_of(sf)}
     hits = []

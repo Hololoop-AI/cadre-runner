@@ -66,6 +66,46 @@ def test_pages_of_one_dialogue_task_fold_without_any_link():
     assert rows[0]["project"] == "hitl"
 
 
+THREAD, LONE = "d" * 16, "e" * 16
+
+
+def test_a_side_thread_rides_on_its_dialogue_row_instead_of_taking_it_over():
+    """"The thread is created, and it's seen as a node on the original task
+    graph" (driver, 9 Nov 2026). A thread's page carries its dialogue's task
+    id, so grouped by task it became the newest round. It stays off the row's
+    rounds and rides on it; an old "study" page counts as a thread too."""
+    surfaces = _discussion() + [
+        {"kind": "thread", "path": f"/session/{THREAD}", "opened": 300.0,
+         "title": "Thread: why SQLite", "task": "task-sqlite-1"},
+        {"kind": "study", "path": f"/session/{OTHER}", "opened": 250.0,
+         "title": "Learn: WAL mode", "task": "task-sqlite-1"},
+    ]
+    rows = conv.collapse(surfaces, SUPERSEDES)
+    assert len(rows) == 1
+    row = rows[0]
+    assert conv.key_of(row) == ROUND and [e["key"] for e in row["earlier"]] == [ORIG]
+    assert [t["key"] for t in row["threads"]] == [THREAD, OTHER]   # newest first
+    assert row["threads"][0] == {"key": THREAD, "path": f"/session/{THREAD}",
+                                 "title": "Thread: why SQLite", "opened": 300.0}
+
+
+def test_a_thread_page_is_still_found_and_filed_with_its_dialogue():
+    surfaces = _discussion() + [
+        {"kind": "thread", "path": f"/session/{THREAD}", "opened": 300.0,
+         "title": "Thread: why SQLite", "task": "task-sqlite-1"}]
+    row = conv.conversation_of(THREAD, surfaces, SUPERSEDES, {}, {})
+    assert conv.key_of(row) == THREAD and row["project"] == "hitl" and row["earlier"] == []
+    hits = conv.find("why sqlite", surfaces, SUPERSEDES, {}, {})
+    assert [(h["key"], h["project"]) for h in hits] == [(THREAD, "hitl")]
+
+
+def test_a_thread_whose_dialogue_has_no_row_keeps_its_own():
+    lone = {"kind": "thread", "path": f"/session/{LONE}", "opened": 300.0,
+            "title": "Thread: orphan", "task": "task-gone"}
+    rows = conv.collapse(_discussion() + [lone], SUPERSEDES)
+    assert sorted(conv.key_of(r) for r in rows) == sorted([ROUND, LONE])
+
+
 def test_a_closed_newest_round_still_heads_the_row():
     """The approved design page was a CLOSED session superseding an open one:
     the row must still point at the newest page, titled from its file."""

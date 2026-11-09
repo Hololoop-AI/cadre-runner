@@ -44,7 +44,7 @@ from pathlib import Path
 from string import Template
 
 PROMPT = Path(__file__).resolve().parent.parent / "prompts" / "thread.md"
-KIND = "study"                     # the session kind the daemon leaves alone
+KIND = "thread"                    # the session kind the daemon leaves alone (surface.THREAD_KINDS)
 # How the agent opens: `talk` (the Thread button) discusses whatever the driver
 # brings and offers options when they have not said; `learn` starts out
 # teaching. Records written before 8 Nov 2026 say `study`, which is `learn`.
@@ -574,7 +574,7 @@ def wake(cfg, log, sessions: dict, status=None, spawn=None) -> list[str]:
     status = status or surface.agent_status
     woken = []
     for path, meta in sessions.items():
-        if meta.get("kind") != KIND or not meta.get("open") or not meta.get("thread"):
+        if meta.get("kind") not in surface.THREAD_KINDS or not meta.get("open") or not meta.get("thread"):
             continue
         try:
             rec = load(cfg, meta["thread"])

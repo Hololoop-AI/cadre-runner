@@ -35,6 +35,8 @@ export interface GraphRow {
   open: boolean;
   /** set on a row that is an earlier round of the task above it */
   round: Earlier | null;
+  /** set on a row that is a side thread about the task above it */
+  thread: Earlier | null;
 }
 
 /** An item drawn as the tree that made it. */
@@ -72,9 +74,11 @@ export function buildItemGraph(
   };
 
   // Opening a row (beyond the Python page, which has no such control) hangs
-  // its page's earlier rounds under it, newest first, and keeps a settled
-  // branch under it unfolded. A round is a row of its own, keyed round:<key>.
+  // its page's earlier rounds under it, newest first, then its side threads,
+  // and keeps a settled branch under it unfolded. A round is a row of its own,
+  // keyed round:<key>; a thread, thread:<key>.
   const roundOf = new Map<string, Earlier>();
+  const threadOf = new Map<string, Earlier>();
   const folds = new Map<string, number>();
   const seen = new Set<string>();
   type Raw = [string, number, string[], number];
@@ -90,10 +94,16 @@ export function buildItemGraph(
         me[2].push(k);
         rows.push([k, depth + 1, [], 0]);
       }
+      for (const e of sfOf.get(t)?.threads || []) {
+        const k = `thread:${e.key}`;
+        threadOf.set(k, e);
+        me[2].push(k);
+        rows.push([k, depth + 1, [], 0]);
+      }
     }
     for (const c of kin) {
       let sub = walk(c, depth + 1);
-      const tasks = sub.filter((r) => !roundOf.has(r[0]));
+      const tasks = sub.filter((r) => !roundOf.has(r[0]) && !threadOf.has(r[0]));
       if (tasks.length > 1 && tasks.every((r) => state(r[0]) === 'done')) {
         folds.set(c, tasks.slice(1).reduce((a, r) => a + 1 + r[3], 0));
         if (!open.has(c)) {
@@ -134,11 +144,12 @@ export function buildItemGraph(
     width,
     rows: rows.map(([t, d, , hidden], i) => {
       const round = roundOf.get(t) ?? null;
-      const page = round ? null : sfOf.get(t) ?? null;
+      const thread = threadOf.get(t) ?? null;
+      const page = round || thread ? null : sfOf.get(t) ?? null;
       return {
-        task: t, depth: d, hidden, state: round ? 'done' : state(t), lines: lines[i], page, round,
-        history: round ? 0 : (page?.earlier || []).length + (folds.get(t) ?? 0),
-        open: !round && open.has(t),
+        task: t, depth: d, hidden, state: round || thread ? 'done' : state(t), lines: lines[i], page, round, thread,
+        history: round || thread ? 0 : (page?.earlier || []).length + (page?.threads || []).length + (folds.get(t) ?? 0),
+        open: !round && !thread && open.has(t),
       };
     }),
     loose: [...sfOf.entries()].filter(([t]) => !seen.has(t)).map(([, sf]) => sf),

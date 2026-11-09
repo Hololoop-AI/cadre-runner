@@ -318,6 +318,8 @@ export interface Surface {
     ended?: boolean;
     /** added by collapse() */
     earlier?: Earlier[];
+    /** side threads about this conversation's pages, newest first */
+    threads?: Earlier[];
     page_title?: string;
     [k: string]: unknown;
 }
@@ -479,6 +481,8 @@ export interface GraphRow {
     open: boolean;
     /** set on a row that is an earlier round of the task above it */
     round: Earlier | null;
+    /** set on a row that is a side thread about the task above it */
+    thread: Earlier | null;
 }
 // --- from projects.ts
 /** projects.live: not archived, by name */
