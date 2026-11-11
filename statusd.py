@@ -26,6 +26,7 @@ Streams responses chunk-by-chunk so the surface's SSE channel (/events/:key)
 works through the proxy.
 """
 
+import gzip
 import hashlib
 import json
 import os
@@ -37,6 +38,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -312,24 +314,30 @@ def read_snapshot(status_dir: Path | None = None) -> dict:
     return snap if isinstance(snap, dict) else {}
 
 
+STATUS_FETCHERS = 16
+
+
 def fetch_agent_statuses(surfaces: list[dict], base: str | None = None) -> dict:
     """Live agent state per session key, from review-surface's read-only
-    /api/:key/agent-status (never consumes — safe on every render). One
-    connection failure short-circuits the rest of the batch: if the surface
-    server is down, eight sequential timeouts would stall the page render."""
-    out = {}
+    /api/:key/agent-status (never consumes — safe on every render). Asked
+    STATUS_FETCHERS at a time: one after another, a hundred pages cost half a
+    second of round trips on every fleet build. A key that fails is left out;
+    with the surface server down every ask fails within the same 0.5 s
+    timeout, together rather than one after another."""
     root = (base or SURFACE).rstrip("/")
-    for sf in surfaces:
-        key = str(sf.get("path") or "").rsplit("/", 1)[-1]
-        if not key:
-            continue
+    keys = [k for k in (str(sf.get("path") or "").rsplit("/", 1)[-1] for sf in surfaces) if k]
+
+    def one(key):
         try:
-            with urllib.request.urlopen(f"{root}/api/{key}/agent-status",
-                                        timeout=0.5) as resp:
-                out[key] = json.loads(resp.read().decode())
+            with urllib.request.urlopen(f"{root}/api/{key}/agent-status", timeout=0.5) as resp:
+                return key, json.loads(resp.read().decode())
         except Exception:
-            break
-    return out
+            return key, None
+
+    if not keys:
+        return {}
+    with ThreadPoolExecutor(min(STATUS_FETCHERS, len(keys))) as pool:
+        return {k: st for k, st in pool.map(one, keys) if st is not None}
 
 
 def agent_state_badge(st: dict | None, now: float | None = None,
@@ -688,8 +696,28 @@ def load_projects(data_dir: Path | None = None) -> dict:
 STARTUP_GRACE = 300.0
 
 
+_REQUESTED: dict = {}
+
+
+def _board_stamp(db: Path) -> tuple:
+    """The board's size and mtime, its write-ahead log's included: a write
+    lands in board.db-wal first, so board.db alone can look unchanged."""
+    out = []
+    for f in (db, db.with_name(db.name + "-wal")):
+        try:
+            st = os.stat(f)
+            out.append((st.st_size, st.st_mtime_ns))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
 def requested_tasks(data_dir) -> dict:
     """{task id: registry-shaped record} for task requests on the board.
+
+    Kept until the board changes (_board_stamp): one fleet build asks three
+    times, and the board is the daemon's whole event log (hundreds of
+    thousands of rows), which these queries scan; each read cost ~25 ms.
 
     Carries `failed` when the action the request triggered failed: the board
     records the reason, and a request that could not start is the one case
@@ -704,6 +732,10 @@ def requested_tasks(data_dir) -> dict:
     db = Path(data_dir) / "board.db"
     if not db.exists():
         return {}
+    stamp = _board_stamp(db)
+    hit = _REQUESTED.get(db)
+    if hit and hit[0] == stamp:
+        return {k: {**v, "active_runs": {}} for k, v in hit[1].items()}
     out: dict[str, dict] = {}
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
@@ -729,7 +761,8 @@ def requested_tasks(data_dir) -> dict:
             "title": str(p.get("title") or ""),
             "project": p.get("project") or "", "since": ts,
             "active_runs": {}, "failed": failed.get(eid, "")})
-    return out
+    _REQUESTED[db] = (stamp, out)
+    return {k: {**v, "active_runs": {}} for k, v in out.items()}
 
 
 def pageless_tasks(projs: dict, data_dir: Path | None = None) -> list[dict]:
@@ -3604,7 +3637,9 @@ def _local_signature() -> str:
     """What the fleet looks like from this machine's files, as one hash: the
     runner's snapshot minus its heartbeat fields (it is rewritten every pass
     whether or not anything moved), plus the size and mtime of every link
-    store, the project store and the item store (tags, done, hidden)."""
+    store, the project store, the item store (tags, done, hidden) and the run
+    log, which gains a line each time a turn finishes (its cost, Recent, the
+    item's last-returned time)."""
     h = hashlib.sha1()
     try:
         snap = json.loads((STATUS_DIR / "status.json").read_text(encoding="utf-8"))
@@ -3615,7 +3650,7 @@ def _local_signature() -> str:
     except (OSError, ValueError):
         h.update(b"no-snapshot")
     for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE,
-              DATA_DIR / items_mod.FILE]:
+              DATA_DIR / items_mod.FILE, DATA_DIR / "history.jsonl"]:
         try:
             st = os.stat(f)
             h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
@@ -3739,6 +3774,52 @@ def fleet_payload() -> dict:
             "items": items_mod.load(DATA_DIR),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
+
+
+# /api/fleet, built once per version and kept warm. Building it reads the
+# registry, the run log and every page's agent state (~0.1-0.5 s); every
+# request used to pay that. The copy is keyed by fleet_version, which moves
+# whenever anything the fleet shows moved — the same test the fleet stream
+# uses to tell browsers to re-fetch — and is rebuilt anyway once PAYLOAD_TTL
+# old, for what moves without a version (a running agent's "doing" clause),
+# on the same clock the Python fleet keeps its copy (backends.FLEET_TTL).
+# A warmer thread rebuilds it as soon as the version moves, so the request
+# that follows a change, or the first look after a quiet hour, finds it ready.
+# A build is ~0.2 s of CPU: idle, that is 1% of a core.
+PAYLOAD_TTL = backends_mod.FLEET_TTL
+PAYLOAD_TICK = 1.0
+_PAYLOAD = {"version": None, "at": 0.0, "body": b"", "gz": b""}
+_PAYLOAD_LOCK = threading.Lock()
+
+
+def fleet_payload_bytes(now: float | None = None) -> tuple[bytes, bytes]:
+    """(JSON, the same gzipped) of fleet_payload(), from the copy when it is
+    still this version's and young enough, else built now. One build at a
+    time: a request that arrives during a build waits for it, not a second."""
+    with _PAYLOAD_LOCK:
+        version = fleet_version()["version"]
+        now = time.time() if now is None else now
+        if _PAYLOAD["version"] == version and now - _PAYLOAD["at"] < PAYLOAD_TTL:
+            return _PAYLOAD["body"], _PAYLOAD["gz"]
+        body = json.dumps(fleet_payload(), default=str).encode()
+        _PAYLOAD.update(version=version, at=now, body=body, gz=gzip.compress(body, 6))
+        return body, _PAYLOAD["gz"]
+
+
+def forget_payload():
+    """Drop the copy: after a write through this server, the next read shows it."""
+    with _PAYLOAD_LOCK:
+        _PAYLOAD["version"] = None
+
+
+def _warm_payload(stop: threading.Event):
+    """Keep fleet_payload_bytes' copy current, once a PAYLOAD_TICK; a build
+    that fails is retried on the next tick and costs no request anything."""
+    while not stop.wait(PAYLOAD_TICK):
+        try:
+            fleet_payload_bytes()
+        except Exception as e:                  # a bad read must not end the warmer
+            print(f"statusd: fleet payload build failed: {e}", file=sys.stderr)
 
 
 def _backend_name(b: dict, data: dict | None) -> str:
@@ -3910,6 +3991,46 @@ def apply_repair(action: str, key: str, form: dict) -> str:
     raise conv_mod.LinkRefused(f"unknown repair {action!r}")
 
 
+# Text answers are gzipped for a browser that takes it (Handler._send_bytes):
+# the fleet is read over a tailnet, often a phone's, and the React bundle,
+# /api/fleet and the Python home are each hundreds of KB as plain text.
+GZIP_MIN = 1024
+COMPRESSIBLE = ("text/", "application/json", "application/javascript", "image/svg+xml")
+_STATIC: dict[Path, tuple[tuple, bytes, bytes]] = {}
+_INDEX: dict = {}
+INLINE_FLEET_ID = "cadre-fleet"
+
+
+def static_bytes(p: Path) -> tuple[bytes, bytes | None]:
+    """(a file's bytes, the same gzipped) — the gzip kept until the file
+    changes, so a static file is compressed once, not per request."""
+    st = p.stat()
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _STATIC.get(p)
+    if hit and hit[0] == stamp:
+        return hit[1], hit[2]
+    data = p.read_bytes()
+    gz = gzip.compress(data, 9) if TYPES.get(p.suffix, "").startswith(COMPRESSIBLE) else None
+    _STATIC[p] = (stamp, data, gz)
+    return data, gz
+
+
+def index_with_fleet(index: Path) -> tuple[bytes, bytes]:
+    """The React app's index.html with this machine's /api/fleet inside it,
+    as <script type="application/json" id="cadre-fleet"> (the app reads it in
+    place of its first GET /api/fleet: web/src/ui/useFleet.ts). Every "<"
+    in the JSON is written \u003c, so nothing in a title can close the tag.
+    Kept per payload build; (html, gzipped html)."""
+    body, _ = fleet_payload_bytes()
+    html, _ = static_bytes(index)
+    if _INDEX.get("body") is not body or _INDEX.get("index") != html:
+        tag = (f'<script type="application/json" id="{INLINE_FLEET_ID}">'.encode()
+               + body.replace(b"<", b"\\u003c") + b"</script>\n")
+        out = html.replace(b"</head>", tag + b"</head>", 1)
+        _INDEX.update(body=body, index=html, html=out, gz=gzip.compress(out, 6))
+    return _INDEX["html"], _INDEX["gz"]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -3930,11 +4051,13 @@ class Handler(BaseHTTPRequestHandler):
         return (FLEET_UI == "react" and bool(REACT_ROUTE.match(path)) and not query.get("partial")
                 and (APP_DIR / "index.html").is_file())
 
-    def _serve_app(self, rel: str):
+    def _serve_app(self, rel: str, with_fleet: bool = False):
         """A built file of the React app, or index.html for one of the app's own
         routes. A missing file (a path with an extension, such as an old
         build's hashed chunk) is a 404: index.html served as JavaScript only
-        breaks the page with a MIME error."""
+        breaks the page with a MIME error. `with_fleet` (the home page)
+        carries this machine's /api/fleet inside index.html, so the list draws
+        as soon as the app runs instead of a round trip after it."""
         root = APP_DIR.resolve()
         target = (root / rel).resolve() if rel else root / "index.html"
         if not target.is_relative_to(root):
@@ -3948,19 +4071,17 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():
             self.send_error(404, "the React UI is not built — cd web && npm run build")
             return
+        if with_fleet and target == root / "index.html":
+            html, gz = index_with_fleet(target)
+            self._send_bytes(html, TYPES[".html"], gz=gz)
+            return
         # Vite names every built asset by its content hash, so it never changes
         hashed = target.parent == root / "assets"
         self._serve_static(target, "public, max-age=31536000, immutable" if hashed else "no-store")
 
     def _serve_static(self, p: Path, cache: str = "no-store"):
-        data = p.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", TYPES.get(p.suffix, "application/octet-stream"))
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", cache)
-        self.end_headers()
-        if self.command != "HEAD":   # a HEAD body puts stray bytes on the wire
-            self.wfile.write(data)
+        data, gz = static_bytes(p)
+        self._send_bytes(data, TYPES.get(p.suffix, "application/octet-stream"), cache, gz=gz)
 
     def _proxy(self):
         if self.path.split("?", 1)[0] in BLOCKED:
@@ -4035,16 +4156,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- home
 
     def _send_html(self, body: str, code: int = 200, headers: dict | None = None):
-        data = body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        for k, v in (headers or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(data)
+        self._send_bytes(body.encode("utf-8"), TYPES[".html"], code=code, headers=headers)
 
     def _serve_home(self, query: dict):
         """The fleet: every backend — this machine's included — fetched through
@@ -4075,7 +4187,11 @@ class Handler(BaseHTTPRequestHandler):
         return backends_mod.with_self(BACKENDS, self.server.server_address)
 
     def _serve_api_fleet(self, version_only: bool):
-        self._send_json(fleet_version() if version_only else fleet_payload())
+        if version_only:
+            self._send_json(fleet_version())
+            return
+        body, gz = fleet_payload_bytes()
+        self._send_bytes(body, "application/json", gz=gz, cors=True)
 
     def _cors_origin(self) -> str:
         """The request's Origin when it is another origin allowed to use this
@@ -4093,14 +4209,39 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, data):
         """200 with `data` as JSON, never cached; HEAD gets the headers only."""
-        body = json.dumps(data, default=str).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self._send_bytes(json.dumps(data, default=str).encode(), "application/json", cors=True)
+
+    def _accepts_gzip(self) -> bool:
+        for part in (self.headers.get("Accept-Encoding") or "").lower().split(","):
+            name, _, params = part.strip().partition(";")
+            if name.strip() in ("gzip", "*"):
+                return params.replace(" ", "") not in ("q=0", "q=0.0", "q=0.00", "q=0.000")
+        return False
+
+    def _send_bytes(self, body: bytes, ctype: str, cache: str = "no-store", gz: bytes | None = None,
+                    cors: bool = False, code: int = 200, headers: dict | None = None):
+        """One answer, gzipped when it is text worth compressing and the
+        browser takes gzip (`gz` is the body already compressed, when the
+        caller keeps a copy). Over a tailnet link the bytes are the cost:
+        /api/fleet is 240 KB as JSON and about a tenth of that gzipped."""
+        text = ctype.startswith(COMPRESSIBLE)
+        squeeze = text and len(body) >= GZIP_MIN and self._accepts_gzip()
+        if squeeze:
+            body = gz if gz is not None else gzip.compress(body, 6)
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self._send_cors()
+        self.send_header("Cache-Control", cache)
+        if text:
+            self.send_header("Vary", "Accept-Encoding")
+        if squeeze:
+            self.send_header("Content-Encoding", "gzip")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        if cors:
+            self._send_cors()
         self.end_headers()
-        if self.command != "HEAD":
+        if self.command != "HEAD":   # a HEAD body puts stray bytes on the wire
             self.wfile.write(body)
 
     def _serve_api_cards(self):
@@ -4515,6 +4656,7 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self):
         if self.command == "POST":
             backends_mod.forget()       # the next read shows what this write did
+            forget_payload()
         path, _, raw_query = self.path.partition("?")
         query = urllib.parse.parse_qs(raw_query)
         if self.command in ("GET", "HEAD"):
@@ -4522,7 +4664,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the Python page at the path after /classic, whatever FLEET_UI says
                 path = path[len(CLASSIC_PATH):] or HOME_PATH
             elif self._react_draws(path, query):
-                self._serve_app("")
+                self._serve_app("", with_fleet=path in ("", HOME_PATH))
                 return
         if path == TASKS_PATH and self.command == "POST":
             self._new_task()
@@ -4637,6 +4779,8 @@ def start_servers(bind=None, port=None) -> list:
     thread: one process is both the API and the thing that starts sessions,
     so a request is acted on in the same process that took it."""
     servers = [ThreadingHTTPServer((addr, port or PORT), Handler) for addr in (bind or BIND)]
+    threading.Thread(target=_warm_payload, args=(threading.Event(),), daemon=True,
+                     name="fleet payload").start()
     theme = install_surface_theme()
     print(f"statusd: serving {STATUS_DIR} on {', '.join(bind or BIND)} port {port or PORT}, "
           f"proxying the rest to {SURFACE}"

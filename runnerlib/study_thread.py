@@ -1,6 +1,10 @@
-"""Study threads: a side chat beside a page, with an agent that stays awake.
+"""Threads: a side chat beside a page, with an agent that stays awake.
 
-The driver selects a passage on a dialogue page and presses Study. A Cadre
+The driver selects a passage on a dialogue page and presses Thread. The agent
+talks about whatever they bring, teaches when they ask to learn, and carries a
+note to the page when they settle something (`promote`), all inside the same
+chat (prompts/thread.md). `mode` is only how it opens: `learn` starts out
+teaching (`pipeline.py study-thread start`, or a note typed `learn:`). A Cadre
 study *session* answers that in rounds of a minute or more, each one a cold
 start; the driver wanted "an agent that then polled back to the study session
 so it stayed awake and ready" (2026-10-23), without losing the review page.
@@ -39,9 +43,29 @@ import uuid
 from pathlib import Path
 from string import Template
 
-PROMPT = Path(__file__).resolve().parent.parent / "prompts" / "study-thread.md"
+PROMPT = Path(__file__).resolve().parent.parent / "prompts" / "thread.md"
 KIND = "study"                     # the session kind the daemon leaves alone
-DEFAULT_MODEL = "sonnet"
+# How the agent opens: `talk` (the Thread button) discusses whatever the driver
+# brings and offers options when they have not said; `learn` starts out
+# teaching. Records written before 8 Nov 2026 say `study`, which is `learn`.
+MODES = ("talk", "learn")
+OPENING = {
+    "talk": ("The driver selected a passage and started a thread on it: they want "
+             "to talk about that passage, or the page, or whatever they bring up. "
+             "Follow their lead. When they ask to learn or understand something, "
+             "teach (see Teaching, below)."),
+    "learn": ("The driver asked to learn about this: something on the page they do "
+              "not know well enough yet. Teach from the first message (see "
+              "Teaching, below)."),
+}
+
+
+def _mode(mode: str) -> str:
+    return "learn" if mode == "study" else mode
+# What the card sends when they typed nothing (REVIEW_SURFACE_ANNOTATION_ACTIONS
+# `fallback`): the passage is the subject, so it names the thread instead.
+FALLBACK_TOPIC = "this passage"
+DEFAULT_MODEL = "opus"
 # An engine with nothing to do for this long exits; the next message wakes it.
 IDLE_LIMIT_S = 2 * 3600
 POLL_CHUNK_MS = 10 * 60 * 1000     # one long poll; re-armed until the idle limit
@@ -88,17 +112,20 @@ def listing(cfg) -> list[dict]:
 
 
 def start(cfg, reg, topic: str, from_task: str, from_page: str, passage: str = "",
-          cwd: str = "", log=print, spawn=None, model: str = "") -> dict:
+          cwd: str = "", log=print, spawn=None, model: str = "", mode: str = "learn") -> dict:
     """Open a thread on `topic` beside `from_task`'s page and start its engine.
 
     The thread forks the task's own Claude session; a task with none yet (it
     never ran) gets a fresh session told about the page instead. Raises
     ValueError when there is nothing to study in. `model` overrides
-    `[learning] thread_model`."""
+    `[learning] thread_model`; `mode` is how the agent opens (MODES)."""
     from . import surface, tasks as tasks_mod
     topic = (topic or "").strip()
     if not topic:
         raise ValueError("name what you want to understand")
+    mode = _mode(mode)
+    if mode not in MODES:
+        raise ValueError(f"not a thread mode: {mode!r}")
     task = tasks_mod.records(reg).get(from_task) or {}
     cwd = str(task.get("cwd") or cwd or "")
     if not cwd.startswith("/"):
@@ -107,8 +134,10 @@ def start(cfg, reg, topic: str, from_task: str, from_page: str, passage: str = "
     d = thread_dir(cfg, thread_id)
     d.mkdir(parents=True, exist_ok=True)
     page = d / "page.html"
-    page.write_text(_first_page(topic, passage))
+    title = thread_title(mode, topic, passage)
+    page.write_text(_first_page(title, mode, passage))
     rec = {"id": thread_id, "topic": topic, "passage": passage, "task": from_task,
+           "mode": mode, "title": title,
            "from_page": from_page, "cwd": cwd, "page": str(page),
            "fork_from": task.get("session_id") or "", "session_id": "",
            "model": model or (getattr(cfg, "learning", {}) or {}).get("thread_model")
@@ -116,27 +145,70 @@ def start(cfg, reg, topic: str, from_task: str, from_page: str, passage: str = "
            "created": time.time(), "status": "open", "pid": 0}
     save(cfg, rec)
     surface.open_session(cfg, page, KIND, log, task=from_task, thread=thread_id,
-                         cwd=cwd, title=f"Study: {topic}"[:80], role="study thread")
+                         cwd=cwd, title=title[:80],
+                         role="learning thread" if mode == "learn" else "thread")
     _link_child(from_page, page, log)
     rec["pid"] = (spawn or launch)(cfg, thread_id)
     save(cfg, rec)
-    log(f"study thread {thread_id} on {topic[:60]!r} beside {from_task}")
+    log(f"{mode} thread {thread_id} on {topic[:60]!r} beside {from_task}")
     return rec
 
 
-def _first_page(topic: str, passage: str) -> str:
+def thread_title(mode: str, topic: str, passage: str) -> str:
+    """`Learn: …` or `Thread: …`, named by what they wrote — or, when they wrote
+    nothing (the card's fallback), by the passage itself."""
+    subject = topic
+    if topic.strip().lower() == FALLBACK_TOPIC and passage.strip():
+        subject = " ".join(passage.split())
+        subject = subject if len(subject) <= 60 else subject[:59].rstrip() + "…"
+    return f"{'Learn' if _mode(mode) == 'learn' else 'Thread'}: {subject}"
+
+
+def promote(cfg, thread_id: str, text: str) -> dict:
+    """Carry a note the driver settled in this thread to its page's next round
+    (tasks.carry_note), and say so in that page's conversation, where they will
+    see it before they send. Raises ValueError on an empty note."""
+    from . import surface, tasks as tasks_mod
+    rec = load(cfg, thread_id)
+    name = (rec.get("title") or rec.get("topic") or "").split(": ", 1)[-1]
+    note = tasks_mod.carry_note(cfg, rec["task"], text, anchor=rec.get("passage") or "",
+                                source=name)
+    key = (surface.sessions(cfg).get(rec.get("from_page") or "") or {}).get("key") or ""
+    if key:
+        _post(f"{surface.upstream()}/api/{key}/agent-reply",
+              f"Queued for this page's next round, from the thread “{name[:80]}”: "
+              f"{note['text']}")
+    return {**note, "task": rec["task"]}
+
+
+def _post(url: str, text: str) -> bool:
+    import urllib.request
+    req = urllib.request.Request(url, data=json.dumps({"text": text}).encode(),
+                                 headers={"content-type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5):
+            return True
+    except Exception:
+        return False
+
+
+def _first_page(title: str, mode: str, passage: str) -> str:
     from html import escape
     quote = (f"<blockquote><p>{escape(passage[:1200])}</p></blockquote>"
              if passage.strip() else "")
+    study = ("" if _mode(mode) == "learn" else
+             "<p>Ask it to teach you something here at any point. When you settle "
+             "on something the page should change, ask it to send a note to the "
+             "page: it rides that page's next round.</p>")
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             '<link rel="stylesheet" href="/surface-theme.css">'
-            f"<title>Study: {escape(topic[:80])}</title></head><body><main class=\"wrap\">"
-            f"<h1>Study: {escape(topic)}</h1>{quote}"
+            f"<title>{escape(title[:80])}</title></head><body><main class=\"wrap\">"
+            f"<h1>{escape(title)}</h1>{quote}"
             "<p>The answer arrives in the Conversation panel. Reply there; select "
             "anything on this page to ask about it. The agent rewrites this page when "
-            "an answer needs more than chat.</p><p>Send <code>/model opus</code> for "
-            "deeper answers (it costs more), and <code>/model sonnet</code> to go "
+            f"an answer needs more than chat.</p>{study}<p>Send <code>/model sonnet</code> for "
+            "a cheaper model, and <code>/model opus</code> to go "
             "back. The thread keeps its history either way.</p></main></body></html>")
 
 
@@ -186,15 +258,25 @@ def claude_argv(cfg, rec: dict, claude_bin: str = "claude") -> list[str]:
     the first start forks the page agent's session instead."""
     from .engine_seam import pipeline_command
     page = rec["page"]
+    # Thinking as readable text (`--thinking-display summarized`, the flag the
+    # dialogue nodes carry, runnerlib/seed_nodes.py), streamed as it is written
+    # (`--include-partial-messages`): without both, the window sat silent.
+    effort = (getattr(cfg, "learning", {}) or {}).get("thread_effort") or "medium"
     argv = [claude_bin, "-p", "--input-format", "stream-json",
-            "--output-format", "stream-json", "--verbose", "--model", rec["model"]]
+            "--output-format", "stream-json", "--verbose", "--model", rec["model"],
+            "--effort", effort, "--thinking-display", "summarized",
+            "--include-partial-messages"]
     if rec.get("session_id"):
         argv += ["--resume", rec["session_id"]]
     elif rec.get("fork_from"):
         argv += ["--resume", rec["fork_from"], "--fork-session"]
-    # Read anything; write only the thread's own page; run only the cards CLI.
+    # Read anything; write only the thread's own page; run only the cards CLI,
+    # a study session beside the page when they ask for one, and the promote
+    # that carries a note to THIS thread's page.
     argv += ["--allowedTools", "Read", "Grep", "Glob", f"Edit(/{page})", f"Write(/{page})",
              f"Bash({pipeline_command(cfg)} cards propose:*)",
+             f"Bash({pipeline_command(cfg)} study:*)",
+             f"Bash({pipeline_command(cfg)} study-thread promote {rec['id']}:*)",
              "--append-system-prompt", system_prompt(cfg, rec)]
     return argv
 
@@ -205,22 +287,81 @@ def system_prompt(cfg, rec: dict) -> str:
     return Template(PROMPT.read_text()).safe_substitute(
         cwd=rec["cwd"], page=rec["page"], from_page=rec.get("from_page") or "(unknown)",
         topic=rec["topic"], passage="> " + passage.replace("\n", "\n> "),
-        pipeline=pipeline_command(cfg))
+        opening=OPENING.get(_mode(rec.get("mode") or "learn"), OPENING["learn"]),
+        task=rec.get("task") or "", thread_id=rec["id"], pipeline=pipeline_command(cfg))
+
+
+SENTENCE_END = re.compile(r"(?<=[.!?:])\s+")
+
+
+class ThinkingStream:
+    """Thinking arrives in pieces of a few words (`thinking_delta`). Each piece
+    posted alone would be a line of its own in the chat, so they are joined
+    and sent a sentence at a time, the rest when the block ends."""
+
+    def __init__(self):
+        self.buffer, self.seen = "", False
+
+    def feed(self, event: dict) -> list[str]:
+        if event.get("type") != "stream_event":
+            return []
+        inner = event.get("event") or {}
+        delta = inner.get("delta") or {}
+        if delta.get("type") == "thinking_delta" and delta.get("thinking"):
+            self.seen = True
+            self.buffer += delta["thinking"]
+            *done, self.buffer = SENTENCE_END.split(self.buffer)
+            return [s.strip() for s in done if s.strip()]
+        if inner.get("type") == "content_block_stop" and self.buffer.strip():
+            rest, self.buffer = self.buffer.strip(), ""
+            return [rest]
+        return []
+
+
+def progress_lines(event: dict, thinking: bool = True) -> list[str]:
+    """What the agent is doing, from one stream-json event, for the chat window
+    to show while the driver waits (dimmed, as thinking): its thinking, and a
+    short line per tool it reaches for. `thinking=False` when the thinking was
+    already streamed piece by piece (ThinkingStream)."""
+    if event.get("type") != "assistant":
+        return []
+    out = []
+    for b in (event.get("message") or {}).get("content") or []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "thinking" and str(b.get("thinking") or "").strip():
+            if not thinking:
+                continue
+            out.append(str(b["thinking"]).strip()[:4000])
+        elif b.get("type") == "tool_use":
+            name, args = b.get("name") or "", b.get("input") or {}
+            if name == "Read":
+                out.append(f"Reading {Path(str(args.get('file_path') or '')).name}…")
+            elif name in ("Grep", "Glob"):
+                out.append(f"Searching for {str(args.get('pattern') or '')[:80]}…")
+            elif name in ("Edit", "Write"):
+                out.append("Writing this thread's page…")
+            elif name:
+                out.append(f"Using {name}…")
+    return out
 
 
 class Agent:
-    """One Claude Code process held open across turns (stream-json in and out)."""
+    """One Claude Code process held open across turns (stream-json in and out).
+    `progress`, when set, gets each line of what it is doing while it answers."""
 
     def __init__(self, argv: list[str], cwd: str):
         self.proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      text=True, bufsize=1)
         self.session_id = ""
+        self.progress = None
 
     def ask(self, text: str) -> str:
         msg = {"type": "user", "message": {"role": "user", "content": text}}
         self.proc.stdin.write(json.dumps(msg) + "\n")
         self.proc.stdin.flush()
+        stream = ThinkingStream()
         for line in self.proc.stdout:
             try:
                 ev = json.loads(line)
@@ -228,6 +369,9 @@ class Agent:
                 continue
             if ev.get("session_id"):
                 self.session_id = ev["session_id"]
+            if self.progress:
+                for line in stream.feed(ev) + progress_lines(ev, thinking=not stream.seen):
+                    self.progress(line)
             if ev.get("type") == "result":
                 if ev.get("is_error"):
                     raise RuntimeError("the agent answered with an error: "
@@ -282,7 +426,19 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
     first_start = not rec.get("session_id")
     factory = agent_factory or (lambda argv, cwd: Agent(argv, cwd))
     claude_bin = (getattr(cfg, "claude", {}) or {}).get("bin") or "claude"
-    agent = factory(claude_argv(cfg, rec, claude_bin), rec["cwd"])
+    # While it answers, the chat window shows what it is doing: the driver
+    # waited on a silent window before (8 Nov 2026: "Does it show thinking? Or
+    # some kind of you're waiting indicator?").
+    key = (surface.sessions(cfg).get(rec["page"]) or {}).get("key") or ""
+    relay = ((lambda line: _post(f"{surface.upstream()}/api/{key}/agent-thinking", line))
+             if key else None)
+
+    def make():
+        a = factory(claude_argv(cfg, rec, claude_bin), rec["cwd"])
+        a.progress = relay
+        return a
+
+    agent = make()
 
     def restart():
         nonlocal agent
@@ -290,7 +446,7 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
             rec["session_id"] = agent.session_id
         agent.close()
         save(cfg, rec)
-        agent = factory(claude_argv(cfg, rec, claude_bin), rec["cwd"])
+        agent = make()
 
     def answer(text):
         # The poll has consumed the message, so it always gets a reply. A model
@@ -327,6 +483,10 @@ def run(cfg, thread_id: str, cli=None, agent_factory=None, clock=time.time,
     reply = ""
     try:
         if first_start:
+            # Loading the page's session takes a few seconds before any
+            # thinking arrives; say so at once rather than show a silent window.
+            if relay:
+                relay("Opening a copy of the page's own session to answer from…")
             # The brief rides the first message, not only the system prompt: a
             # resumed (forked) session keeps the system prompt it was born with,
             # so an appended one never reached it (seen 2026-10-23: the fork

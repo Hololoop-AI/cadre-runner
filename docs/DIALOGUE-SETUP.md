@@ -133,7 +133,7 @@ prefixes each line of their output with its name. To run them separately
 instead, one terminal each:
 
 ```bash
-# 1. page server, with the Study button on the annotation popup
+# 1. page server, with the Thread button on the annotation popup
 cd ~/Projects/cadre/cadre-runner
 REVIEW_SURFACE_NO_OPEN=1 \
 REVIEW_SURFACE_ANNOTATION_ACTIONS="$(python3 -c 'from runnerlib.surface import ANNOTATION_ACTIONS; print(ANNOTATION_ACTIONS)')" \
@@ -186,12 +186,18 @@ event: `python3 pipeline.py handoff <task-id> --node <node>`, which is also how
 you hand off a page whose form has no such line — any notes kept from an
 earlier plain approve ride along.
 
-**Study** a passage you do not understand by starting its note with `study:`
-(the **Study** button on the annotation popup does this for you) and sending.
-It costs the dialogue no round: a study thread opens beside the page, filed
-under it on the fleet, a chat whose agent stays awake and answers there. It
-answers with `[learning] thread_model` (default `sonnet`); `/model opus` typed
-in the thread switches it. What you learn becomes cards, reviewed at **/cards**
+**Talk about a passage** with **Thread** on the annotation popup (or a note
+starting `thread:`). It costs the dialogue no round: a thread opens beside the
+page, filed under it on the fleet, a chat whose agent (a copy of the page's
+own session) stays awake and answers there, showing what it is doing while you
+wait. With nothing typed, it offers you options. Ask it to teach you and it
+explains first, ties the idea to the decision on the page, then checks it
+landed. It reads the work but changes nothing: when you settle on something
+the page should act on, ask it to send a note to the page, and the note rides
+that page's next round beside your annotations. It
+answers with `[learning] thread_model` (default `opus`) at `[learning]
+thread_effort` (default `medium`); `/model sonnet` typed in the thread switches
+it. What you learn becomes cards, reviewed at **/cards**
 on the fleet page or with `python3 pipeline.py cards`; your deck lives outside
 every backend's data, in `[learning] cards_dir`.
 

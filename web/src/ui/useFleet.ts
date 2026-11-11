@@ -19,9 +19,27 @@ export interface FleetState {
   refetch: () => void;
 }
 
+/**
+ * The fleet the server put inside index.html (statusd.index_with_fleet), taken
+ * once: it is this machine's, as of the page load, so it stands in for the
+ * first GET only. Null when there is none, or it is not JSON.
+ */
+export function takeInlineFleet(doc: Document = document): Fleet | null {
+  const el = doc.getElementById('cadre-fleet');
+  if (!el) return null;
+  el.remove();
+  try {
+    return JSON.parse(el.textContent || '') as Fleet;
+  } catch {
+    return null;
+  }
+}
+
 /** The fleet of the machine `server` talks to; switching machines starts over. */
 export function useFleet(server: Server): FleetState {
-  const [got, setGot] = useState<{ fleet: Fleet | null; now: number }>({ fleet: null, now: Date.now() / 1000 });
+  // this machine's first payload came with the page; another machine's is fetched
+  const [got, setGot] = useState<{ fleet: Fleet | null; now: number }>(() => (
+    { fleet: server.base ? null : takeInlineFleet(), now: Date.now() / 1000 }));
   const [live, setLive] = useState<Live>('connecting');
   const [error, setError] = useState('');
   const inflight = useRef<AbortController | null>(null);
@@ -36,9 +54,14 @@ export function useFleet(server: Server): FleetState {
       if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     });
   }, [server]);
+  const inline = useRef(got.fleet !== null);
   useEffect(() => {
-    setGot({ fleet: null, now: Date.now() / 1000 });
-    refetch();
+    // the stream's hello re-fetches anyway, so an inline first payload is only refreshed by it
+    if (inline.current) inline.current = false;
+    else {
+      setGot({ fleet: null, now: Date.now() / 1000 });
+      refetch();
+    }
     const stop = server.subscribe(refetch, setLive);
     return () => {
       stop();

@@ -27,6 +27,7 @@ The dialogue nodes are seeded here, each from its own `prompts/<node>.md`
 alone — no shared briefing is prepended.
 """
 
+import json
 import os
 import re
 import time
@@ -335,6 +336,59 @@ def format_feedback(notes: list[dict]) -> str:
     return "\n\n---\n\n".join(out)
 
 
+# --------------------------------------------------------------------------- carried from threads
+#
+# A side thread (runnerlib/study_thread.py) cannot change its page: only the
+# dialogue can. When the driver settles something there, the thread's agent
+# carries it here — `pipeline.py study-thread promote` — and it rides the next
+# round the driver sends from the page (or the closing turn, or the handoff),
+# beside their own annotations. A file per task, not the registry: the promote
+# runs in its own process while the daemon owns the registry in memory.
+
+def _carried_path(cfg, task_id: str) -> Path:
+    return Path(cfg.data_dir) / "carried" / f"{slugify(task_id)}.jsonl"
+
+
+def carry_note(cfg, task_id: str, text: str, anchor: str = "", source: str = "") -> dict:
+    """Queue one note from a side thread for the dialogue's next round."""
+    note = {"text": text.strip(), "anchor": anchor.strip(), "source": source.strip(),
+            "at": time.time()}
+    if not note["text"]:
+        raise ValueError("an empty note carries nothing")
+    path = _carried_path(cfg, task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        f.write(json.dumps(note) + "\n")
+    return note
+
+
+def carried(cfg, task_id: str) -> list[dict]:
+    """The notes waiting for the next round, oldest first."""
+    try:
+        lines = _carried_path(cfg, task_id).read_text().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def take_carried(cfg, task_id: str) -> list[dict]:
+    """Hand over the waiting notes as feedback notes, and clear them. Each says
+    which thread it came from, so the session can tell them from what the
+    driver wrote on the page itself."""
+    notes = carried(cfg, task_id)
+    _carried_path(cfg, task_id).unlink(missing_ok=True)
+    return [{"text": (f"From the side thread “{n['source']}”, settled there and sent "
+                      f"to this page by the driver: " if n.get("source") else
+                      "From a side thread, sent to this page by the driver: ") + n["text"],
+             "anchor": n.get("anchor") or ""} for n in notes if n.get("text")]
+
+
 def mark_closing(reg, task_id: str) -> None:
     """Remember that the turn about to run is the last one.
 
@@ -384,9 +438,10 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
     payload shape is the config's, not this function's — `target` tells it from
     the other two commands on the topic, `resume` is what the spawn seam reads
     to continue the session rather than start one, and the bumped `iteration`
-    is what the node renders as "round N of M".
+    is what the node renders as "round N of M". Notes side threads carried to
+    this dialogue ride along after the driver's own.
     """
-    text = format_feedback(notes)
+    text = format_feedback(list(notes) + take_carried(cfg, task_id))
     if not text:
         return None
     rec = record(reg, task_id)
@@ -530,7 +585,8 @@ def write_handoff(cfg, reg, task_id: str, node: str, page: str, notes: list[dict
                     {"target": TARGET_HANDOFF, "node": node,
                      "from": rec.get("node") or NODE, "by": by,
                      "task": task_id, "story": task_id, "cwd": rec.get("cwd") or "",
-                     "iteration": "1", "feedback": format_feedback(notes),
+                     "iteration": "1",
+                     "feedback": format_feedback(list(notes) + take_carried(cfg, task_id)),
                      "surface_prev": page})
 
 

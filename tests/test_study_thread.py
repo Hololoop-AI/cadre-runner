@@ -58,7 +58,7 @@ def test_study_opens_a_thread_page_beside_the_dialogue_and_starts_its_engine(qui
     assert ["link", "child-of", str(page), "/pages/task-parent.html"] in quiet
     assert ["link", "thread-of", str(page), "/pages/task-parent.html"] in quiet, \
         "the parent page's bell lists its threads"
-    assert t["model"] == "sonnet", "a chat answers fast by default"
+    assert t["model"] == "opus", "Opus at medium effort by default (driver, 8 Nov 2026)"
     assert study_thread.load(cfg, t["id"])["pid"] == 4242
 
     with pytest.raises(ValueError, match="no working directory"):
@@ -130,8 +130,8 @@ def test_a_model_that_will_not_start_falls_back_to_the_one_that_worked(quiet):
 
     assert calls[1][calls[1].index("--agent-reply") + 1].startswith("Now answering with opus-9")
     told = calls[2][calls[2].index("--agent-reply") + 1]
-    assert told.startswith("opus-9 would not start, so this is sonnet again") and told.endswith("still here")
-    assert study_thread.load(cfg, t["id"])["model"] == "sonnet"
+    assert told.startswith("opus-9 would not start, so this is opus again") and told.endswith("still here")
+    assert study_thread.load(cfg, t["id"])["model"] == "opus"
 
 
 class FakeAgent:
@@ -175,7 +175,7 @@ def test_the_engine_answers_listens_and_answers_again_until_the_page_ends(quiet)
                             log=lambda *a: None) == "ended"
 
     # the question from the Study button first, with its passage
-    assert agent.asked[0].startswith("# Study thread"), "the brief rides the first message"
+    assert agent.asked[0].startswith("# Thread"), "the brief rides the first message"
     assert agent.asked[0].endswith("Their first message:\n\n> with reg.lock(): reg.save()"
                                    "\n\nwhy the lock")
     assert t["page"] in agent.asked[0]
@@ -343,3 +343,173 @@ def test_an_error_result_from_the_cli_is_a_failure_not_an_answer():
             agent.ask("hello")
     finally:
         agent.close()
+
+
+# --------------------------------------------------------------------------- talk, then study
+
+
+def test_a_thread_started_to_talk_opens_on_the_passage_and_offers_study(quiet):
+    """"select a passage, start a message thread about it ... Study is an option
+    inside the thread: I just tell it I'd like to study, or it offers me some
+    options to pick from" (driver, 7 Nov 2026)."""
+    work = scratch()
+    cfg, reg = parent(work)
+    t = study_thread.start(cfg, reg, "this passage", "task-parent", "/pages/p.html",
+                           passage="Three clinics quote a price that includes aftercare.",
+                           spawn=lambda *a: 1, mode="talk")
+    # nothing typed: the thread is named by the passage, not by the fallback
+    assert t["mode"] == "talk"
+    assert t["title"] == "Thread: Three clinics quote a price that includes aftercare."
+    page = study_thread.thread_dir(cfg, t["id"]) / "page.html"
+    assert "<h1>Thread: Three clinics" in page.read_text()
+    assert "teach you" in page.read_text() and "send a note" in page.read_text(), \
+        "the page says what else the thread does"
+    assert surface.sessions(cfg)[str(page)]["title"].startswith("Thread: Three clinics")
+
+    argv = study_thread.claude_argv(cfg, t)
+    allowed = argv[argv.index("--allowedTools") + 1: argv.index("--append-system-prompt")]
+    assert any(a.endswith(" study:*)") for a in allowed), "it can start a study session"
+    assert any(a.endswith(f" study-thread promote {t['id']}:*)") for a in allowed), \
+        "it can send a note to its own page, and no other"
+    assert not any(a in ("Edit", "Write", "Bash") for a in allowed), "still no blanket writes"
+    prompt = argv[argv.index("--append-system-prompt") + 1]
+    assert study_thread.OPENING["talk"] in prompt
+    assert "edits nothing in the repo" in prompt
+    assert "study \"<the topic, in their words>\" --from task-parent" in prompt
+    assert "numbered options" in prompt and "One of them is always to learn about" in prompt
+    assert f"study-thread promote {t['id']}" in prompt and "Never send one they have not seen" in prompt
+
+    # a long passage is cut for the title; a typed note names it as typed
+    long = study_thread.thread_title("talk", "this passage", "word " * 40)
+    assert long.startswith("Thread: word word") and long.endswith("…") and len(long) <= 70
+    assert study_thread.thread_title("learn", "why aftercare", "x") == "Learn: why aftercare"
+    assert study_thread.thread_title("study", "why aftercare", "x") == "Learn: why aftercare", \
+        "records from before the rename say study"
+    with pytest.raises(ValueError, match="not a thread mode"):
+        study_thread.start(cfg, reg, "q", "task-parent", "", spawn=lambda *a: 1, mode="chat")
+
+
+def test_a_learning_thread_teaches_explanation_first_and_an_old_study_record_still_runs(quiet):
+    """"Study sounds too much like you're reviewing content that you know ... The
+    idea would usually be to actually learn about an unknown thing on the page
+    via explanation" (driver, 8 Nov 2026)."""
+    cfg, t = make_thread(quiet)
+    assert t["mode"] == "learn" and t["title"] == "Learn: why the lock"
+    prompt = study_thread.system_prompt(cfg, t)
+    assert study_thread.OPENING["learn"] in prompt
+    flat = " ".join(prompt.split())
+    assert "Explain first" in flat and "do not quiz them on it cold" in flat
+    assert "Tie it to the decision" in flat and "Leave out trivia" in flat
+    old = {**t, "mode": "study"}
+    assert study_thread.OPENING["learn"] in study_thread.system_prompt(cfg, old)
+
+
+def test_a_settled_note_is_carried_to_the_page_and_rides_its_next_round(quiet, monkeypatch):
+    """"We will need a way to promote a conversation conclusion to the main
+    agent, possibly adding something to the queue" (driver, 8 Nov 2026)."""
+    posted = []
+    monkeypatch.setattr(study_thread, "_post", lambda url, text: posted.append((url, text)) or True)
+    work = scratch()
+    cfg, reg = parent(work)
+    _record(cfg, "/pages/p.html", "pagekey")
+    t = study_thread.start(cfg, reg, "this passage", "task-parent", "/pages/p.html",
+                           passage="Clinic B includes aftercare", spawn=lambda *a: 1, mode="talk")
+
+    note = study_thread.promote(cfg, t["id"], "Make clinic B the pick: aftercare is included.")
+    assert note["task"] == "task-parent"
+    assert posted[-1][0].endswith("/api/pagekey/agent-reply")
+    assert posted[-1][1].startswith("Queued for this page's next round, from the thread")
+    with pytest.raises(ValueError):
+        study_thread.promote(cfg, t["id"], "   ")
+
+    # it rides the driver's next round, after their own words, then is gone
+    tasks.record(reg, "task-parent")["iteration"] = 2
+    ev = tasks.write_feedback(cfg, reg, "task-parent", str(work),
+                              [{"text": "tighten the table", "anchor": ""}])
+    fb = ev["payload"]["feedback"]
+    assert fb.index("tighten the table") < fb.index("Make clinic B the pick")
+    assert "> Clinic B includes aftercare" in fb and "From the side thread" in fb
+    assert tasks.carried(cfg, "task-parent") == []
+
+
+def _record(cfg, path, key):
+    sess = surface.sessions(cfg)
+    sess[path] = {"key": key, "open": True, "kind": "task", "task": "task-parent"}
+    surface._save_sessions(cfg, sess)
+
+
+def test_the_chat_window_shows_what_the_agent_is_doing_while_it_answers(quiet, monkeypatch):
+    """"It is quite slow though isn't it. Does it show thinking? Or some kind of
+    you're waiting indicator?" (driver, 8 Nov 2026)."""
+    ev = {"type": "assistant", "message": {"content": [
+        {"type": "thinking", "thinking": "They want the trade-off, not the history."},
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "/w/notes/clinics.md"}},
+        {"type": "tool_use", "name": "Grep", "input": {"pattern": "aftercare"}},
+        {"type": "text", "text": "the answer itself is not progress"}]}}
+    assert study_thread.progress_lines(ev) == [
+        "They want the trade-off, not the history.", "Reading clinics.md…",
+        "Searching for aftercare…"]
+    assert study_thread.progress_lines({"type": "result"}) == []
+
+    # the engine hands each agent a relay to the thread page's thinking route
+    cfg, t = make_thread(quiet)
+    sess = surface.sessions(cfg)
+    sess[t["page"]]["key"] = "threadkey"
+    surface._save_sessions(cfg, sess)
+    posted = []
+    monkeypatch.setattr(study_thread, "_post", lambda url, text: posted.append((url, text)) or True)
+    agent = FakeAgent(["first", "closing"])
+    study_thread.run(cfg, t["id"], cli=scripted_cli([{"status": "ended", "prompts": []}], []),
+                     agent_factory=lambda a, c: agent, log=lambda *a: None)
+    agent.progress("Reading clinics.md…")
+    url = f"{surface.upstream()}/api/threadkey/agent-thinking"
+    assert posted == [(url, "Opening a copy of the page's own session to answer from…"),
+                      (url, "Reading clinics.md…")], "the first start says so at once"
+
+
+def test_a_thread_page_never_replaces_its_dialogue_page():
+    """A thread's page carries its task id, but it sits beside the dialogue's
+    page: marking it a replacement made the dialogue read "This is an older
+    page. The newest in this line of work is Thread: …" (seen 8 Nov 2026)."""
+    store = {"/s/task-a.html": {"task": "task-a", "key": "dialogue", "kind": "task", "opened": 1},
+             "/t/page.html": {"task": "task-a", "key": "thread", "kind": "study", "opened": 2}}
+    assert surface._replaced_page(store, "/t/other.html", "task-a", "study") == ""
+    # ...and a real next page of the task (a handoff) replaces the dialogue, not the thread
+    assert surface._replaced_page(store, "/s/task-a-implement.html", "task-a", "task") == "dialogue"
+
+
+def test_thinking_streams_into_the_chat_a_sentence_at_a_time_and_only_once():
+    """"It really does need better indicators (and ideally some level of
+    thinking tokens actually being streamed)" (driver, 8 Nov 2026). The agent
+    runs with summarized thinking streamed in pieces; the window gets whole
+    sentences as they finish, and the full thinking block that follows is not
+    posted a second time."""
+    import sys
+    argv = study_thread.claude_argv(FakeCfg(scratch()), {
+        "id": "thread-20261108-000000-abcdef", "page": "/t/page.html", "cwd": "/w",
+        "model": "sonnet", "topic": "t", "fork_from": "", "session_id": ""})
+    assert "--include-partial-messages" in argv
+    assert argv[argv.index("--thinking-display") + 1] == "summarized"
+    assert argv[argv.index("--effort") + 1] == "medium"
+
+    def delta(text):
+        return {"type": "stream_event", "event": {"type": "content_block_delta",
+                "delta": {"type": "thinking_delta", "thinking": text}}}
+    events = [delta("They want the trade-off"), delta(", not the history. Then I"),
+              delta(" check the page"), {"type": "stream_event", "event": {"type": "content_block_stop"}},
+              {"type": "assistant", "message": {"content": [
+                  {"type": "thinking", "thinking": "They want the trade-off, not the history. "
+                                                   "Then I check the page"},
+                  {"type": "tool_use", "name": "Read", "input": {"file_path": "/w/page.html"}}]}},
+              {"type": "result", "result": "the answer", "session_id": "s1"}]
+    script = ("import sys, json; sys.stdin.readline()\n"
+              f"for e in {events!r}: print(json.dumps(e), flush=True)")
+    agent = study_thread.Agent([sys.executable, "-c", script], cwd=str(scratch()))
+    lines = []
+    agent.progress = lines.append
+    try:
+        assert agent.ask("hello") == "the answer"
+    finally:
+        agent.close()
+    assert lines == ["They want the trade-off, not the history.", "Then I check the page",
+                     "Reading page.html…"]

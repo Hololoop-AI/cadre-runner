@@ -246,16 +246,22 @@ def _create_session_quietly(path: Path, delivery: str | None = "push",
     return re.sub(r"^https?://[^/]+", "", url)
 
 
-def _replaced_page(store: dict, path: Path, task) -> str:
+def _replaced_page(store: dict, path: Path, task, kind: str = "") -> str:
     """The session key of the page a task's NEW page replaces: the task's
     newest other page. A handoff writes a new page for the same task, and the
     one the driver approved used to stay open looking current, with no way to
     the newest. "" when the page is not new, has no task, or the task has no
-    earlier page with a session."""
-    if not task or str(path) in store:
+    earlier page with a session.
+
+    A side thread's page carries its task too, but sits beside the dialogue's
+    page rather than replacing it: it neither replaces one nor is replaced
+    (seen 8 Nov 2026: a thread made its dialogue's page read "This is an older
+    page")."""
+    if not task or str(path) in store or kind == "study":
         return ""
     prior = [m for p, m in store.items() if isinstance(m, dict)
-             and m.get("task") == task and m.get("key") and p != str(path)]
+             and m.get("task") == task and m.get("key") and p != str(path)
+             and m.get("kind") != "study"]
     return max(prior, key=lambda m: m.get("opened") or 0)["key"] if prior else ""
 
 
@@ -268,7 +274,7 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
             # are push.
             # So may a study thread's, whose engine holds a real poll.
             delivery = None if kind in ("external", "study") else "push"
-            older = _replaced_page(sessions(cfg), path, meta.get("task"))
+            older = _replaced_page(sessions(cfg), path, meta.get("task"), kind)
             url_path = _create_session_quietly(
                 path, delivery, **({"supersedes": older} if older else {}))
         except Exception:
@@ -960,10 +966,10 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
     if not task_id:
         log(f"surface: task feedback on {Path(path).name} with no task id — not routed (dead-lettered)")
         return
-    notes = [n for n in free if not _study_topic(n)]
+    notes = [n for n in free if not _side_thread(n)]
     for n in free:
-        if _study_topic(n):
-            _start_study(cfg, reg, log, path, meta, task_id, n)
+        if _side_thread(n):
+            _start_thread(cfg, reg, log, path, meta, task_id, n)
     approve = asked_to_continue = False
     handoff = None
     for item in structured:
@@ -982,7 +988,8 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
             notes.append(item)
     if approve and not handoff:
         written = [n for n in notes if (n.get("text") or "").strip()]
-        if written:
+        # Notes a side thread sent to this page are the driver's words too.
+        if written or tasks_mod.carried(cfg, task_id):
             # Approving WITH annotations does not mean the annotations were
             # decoration. Most often they ARE the decision — the driver picks
             # among the options the page offered and approves in the same
@@ -1026,49 +1033,58 @@ def _task_bridge(cfg, reg, log, path: str, meta: dict, structured: list[dict],
         f"{len(notes)} annotation(s) back to the session")
 
 
-# An annotation that opens with `study:` asks to learn, not to change the page:
-# select the passage, write `study: <what you don't get>`, send. It starts a
-# study session beside the dialogue and costs the dialogue no round.
-_STUDY_RE = re.compile(r"^\s*study\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
+# An annotation that opens with `thread:` is for a side chat, not for the page:
+# select the passage, write `thread: <what about it>`, send. It opens a thread
+# beside the dialogue and costs the dialogue no round. `learn:` (or the older
+# `study:`, typed by hand) opens one that starts out teaching.
+_SIDE_RE = re.compile(r"^\s*(thread|learn|study)\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
 
-# The page server's Study button (REVIEW_SURFACE_ANNOTATION_ACTIONS): it sends
-# `study: <note>` at once on the selected passage. `up` passes this to the server
+# The page server's Thread button (REVIEW_SURFACE_ANNOTATION_ACTIONS): it sends
+# `thread: <note>` at once on the selected passage, and the footer's "Start a
+# thread on this page" offers it too. Learning is not a button: the driver asks
+# for it inside the thread (driver, 8 Nov 2026). `up` passes this to the server
 # it starts; deploy/systemd/cadre-surface.service carries the same JSON, and
 # tests/test_up.py holds the two equal.
 ANNOTATION_ACTIONS = json.dumps([{
-    "id": "study", "label": "Study",
-    "title": "Study this in a session beside the page; this dialogue keeps its round",
-    "prefix": "study: ", "deliver": "now", "fallback": "this passage",
+    "id": "thread", "label": "Thread",
+    "title": "Talk about this in a side chat; ask it to teach you, or to send a note "
+             "to the page. This dialogue keeps its round",
+    "prefix": "thread: ", "deliver": "now", "fallback": "this passage",
 }], separators=(",", ":"))
 
 
-def _study_topic(note: dict) -> str:
-    m = _STUDY_RE.match(note.get("text") or "")
-    return m.group(1).strip() if m else ""
+def _side_thread(note: dict) -> tuple[str, str] | None:
+    """(mode, topic) for a `thread:` / `learn:` / `study:` annotation, else None."""
+    m = _SIDE_RE.match(note.get("text") or "")
+    if not m or not m.group(2).strip():
+        return None
+    return ("talk" if m.group(1).lower() == "thread" else "learn"), m.group(2).strip()
 
 
-def _start_study(cfg, reg, log, path: str, meta: dict, task_id: str,
+def _start_thread(cfg, reg, log, path: str, meta: dict, task_id: str,
                  note: dict) -> None:
-    """Open the study thread one `study:` annotation asked for, on the passage
-    it was attached to, and say so in the page's conversation panel — the only
-    place the driver is looking when they press Study. The thread is a side
-    chat with an agent that stays awake (`study_thread`); this dialogue keeps
-    its round."""
+    """Open the thread one `thread:` (or `learn:`) annotation asked for, on the
+    passage it was attached to, and say so in the page's conversation panel —
+    the only place the driver is looking when they press Thread. The
+    thread is a side chat with an agent that stays awake (`study_thread`);
+    this dialogue keeps its round."""
     from . import study_thread
-    topic = _study_topic(note)
+    mode, topic = _side_thread(note)
+    word = "Learning" if mode == "learn" else "Thread"
     try:
         rec = study_thread.start(cfg, reg, topic, task_id, path,
                                  passage=note.get("anchor") or "",
-                                 cwd=meta.get("cwd") or "", log=log)
+                                 cwd=meta.get("cwd") or "", log=log, mode=mode)
     except Exception as e:
-        log(f"surface: study thread from {task_id} not started: {e}")
-        agent_reply(cfg, reg, log, Path(path), f"Study not started: {e}")
+        log(f"surface: {mode} thread from {task_id} not started: {e}")
+        agent_reply(cfg, reg, log, Path(path), f"{word} not started: {e}")
         return
-    log(f"surface: {task_id} asked to study {topic[:80]!r} — thread {rec['id']}")
+    log(f"surface: {task_id} opened a {mode} thread on {topic[:80]!r} — {rec['id']}")
+    name = rec["title"].split(": ", 1)[-1]
     agent_reply(cfg, reg, log, Path(path),
-                f"Study thread open on “{topic[:120]}” — it answers in its own page, "
-                "filed under this one on the fleet. This dialogue keeps its round.")
+                f"{'Learning thread' if mode == 'learn' else 'Thread'} open on “{name[:120]}” — it answers in the thread "
+                "window, filed under this page. This dialogue keeps its round.")
 
 
 def _handoff(cfg, reg, log, path: str, meta: dict, task_id: str, node: str,
