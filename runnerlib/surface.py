@@ -37,6 +37,7 @@ from pathlib import Path
 
 from . import board_events
 from . import theme as theme_mod
+from .conversations import THREAD_KINDS
 
 CLI = "review-surface"
 # Workflow #3's verdict (prompts/task.md).
@@ -257,11 +258,11 @@ def _replaced_page(store: dict, path: Path, task, kind: str = "") -> str:
     page rather than replacing it: it neither replaces one nor is replaced
     (seen 8 Nov 2026: a thread made its dialogue's page read "This is an older
     page")."""
-    if not task or str(path) in store or kind == "study":
+    if not task or str(path) in store or kind in THREAD_KINDS:
         return ""
     prior = [m for p, m in store.items() if isinstance(m, dict)
              and m.get("task") == task and m.get("key") and p != str(path)
-             and m.get("kind") != "study"]
+             and m.get("kind") not in THREAD_KINDS]
     return max(prior, key=lambda m: m.get("opened") or 0)["key"] if prior else ""
 
 
@@ -273,7 +274,7 @@ def open_session(cfg, path: Path, kind: str, log, **meta) -> None:
             # an agent holding a real poll; only pages this daemon collects
             # are push.
             # So may a study thread's, whose engine holds a real poll.
-            delivery = None if kind in ("external", "study") else "push"
+            delivery = None if kind == "external" or kind in THREAD_KINDS else "push"
             older = _replaced_page(sessions(cfg), path, meta.get("task"), kind)
             url_path = _create_session_quietly(
                 path, delivery, **({"supersedes": older} if older else {}))
@@ -1177,7 +1178,7 @@ def _tick(cfg, reg, log) -> None:
         # A study thread's page is the same: its engine is the loop waiting.
         by_key = {(m.get("key") or (m.get("path") or "").rsplit("/", 1)[-1]): (p, m)
                   for p, m in sess.items()
-                  if m.get("open") and m.get("kind") not in ("external", "study")}
+                  if m.get("open") and m.get("kind") not in ("external", *THREAD_KINDS)}
         from . import threads   # threads builds on this module, so it is imported at call time
         for key in signalled:
             hit = by_key.get(key)

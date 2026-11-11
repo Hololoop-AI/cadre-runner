@@ -36,6 +36,19 @@ describe('collapse', () => {
     expect(rows[1].project).toBe('repo');
   });
 
+  it('keeps a side thread off its dialogue\'s rounds and carries it on the row', () => {
+    const rows = collapse([
+      { path: '/session/aaaaaaaaaaaaaaa1', task: 't1', opened: 10, title: 'round 1', kind: 'task' },
+      { path: '/session/ccccccccccccccc1', task: 't1', opened: 30, title: 'Thread: why', kind: 'thread' },
+      { path: '/session/ccccccccccccccc2', task: 't1', opened: 20, title: 'Learn: old', kind: 'study' },
+      { path: '/session/ccccccccccccccc3', task: 'gone', opened: 40, title: 'Thread: lone', kind: 'thread' },
+    ]);
+    expect(rows.map((r) => r.title)).toEqual(['Thread: lone', 'round 1']);
+    expect(rows[1].earlier).toEqual([]);
+    expect(rows[1].threads!.map((e) => e.title)).toEqual(['Thread: why', 'Learn: old']);
+    expect(collapse(rows)[1].threads!.length).toBe(2);
+  });
+
   it('finds closed pages too, title hits first', () => {
     const hits = findPages('kitchen', [], [], {}, {
       k1: { title: 'Kitchen magnets', updated: 5 },
@@ -162,6 +175,15 @@ describe('opening a graph row', () => {
       ['root', 0, ''], ['round:k1', 1, 'round two'], ['round:k0', 1, 'round one'], ['a', 1, ''], ['a1', 2, ''],
     ]);
     expect(opened.rows.find((r) => r.task === 'a')).toMatchObject({ hidden: 0, history: 1, open: true });
+  });
+
+  it('counts side threads in the history and hangs them after the rounds', () => {
+    const withThread = { ...page, threads: [{ key: 't9', path: '/session/t9', title: 'Thread: why', opened: 40 }] };
+    const g = buildItemGraph('root', [withThread], tree, kidsOf(tree), {}, NOW, {}, {}, new Set(['root']));
+    expect(g.rows[0]).toMatchObject({ task: 'root', history: 3, page: withThread });
+    expect(g.rows.slice(1, 4).map((r) => [r.task, r.round?.title ?? r.thread?.title])).toEqual([
+      ['round:k1', 'round two'], ['round:k0', 'round one'], ['thread:t9', 'Thread: why'],
+    ]);
   });
 });
 

@@ -19,6 +19,8 @@ export interface Surface {
   ended?: boolean;
   /** added by collapse() */
   earlier?: Earlier[];
+  /** side threads about this conversation's pages, newest first */
+  threads?: Earlier[];
   page_title?: string;
   [k: string]: unknown;
 }

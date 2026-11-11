@@ -740,7 +740,8 @@
         "x-ts": "Surface",
         "x-ts-client-only": [
           "earlier",
-          "page_title"
+          "page_title",
+          "threads"
         ],
         "description": "A review page the runner registered (status.json surfaces). Open: the daemon owns it.",
         "type": "object",

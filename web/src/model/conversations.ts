@@ -5,6 +5,8 @@ import type { LinkRecord, PageInfo, SessionStatus, Surface } from './payload';
 import { hasKey, num, s } from './format';
 
 export const ROOT_HOLDERS = new Set(['root', 'home']);
+/** A side thread's session kind; pages opened before 9 Nov 2026 say "study". */
+export const THREAD_KINDS = new Set(['thread', 'study']);
 const SESSION_KEY = /^[0-9a-f]{16}$/;
 
 /** A surface's session key: the last part of its /session/<key> path. */
@@ -59,6 +61,12 @@ export function collapse(
   holders: Record<string, string> = {},
   pages: Record<string, PageInfo> = {},
 ): Surface[] {
+  // A side thread carries its dialogue's task id but is not a round of it: it
+  // rides on that row as `threads`. One whose dialogue has no row keeps its own.
+  const isThread = (sf: Surface) => THREAD_KINDS.has(s(sf.kind));
+  const dialogueTasks = new Set(surfaces.filter((sf) => keyOf(sf) && sf.task && !isThread(sf)).map((sf) => s(sf.task)));
+  const side = surfaces.filter((sf) => keyOf(sf) && isThread(sf) && dialogueTasks.has(s(sf.task)));
+  surfaces = surfaces.filter((sf) => !side.includes(sf));
   const [parent, replacedBy] = buildGraph(records);
   const byKey = new Map<string, Surface>();
   for (const sf of surfaces) if (keyOf(sf)) byKey.set(keyOf(sf), sf);
@@ -111,6 +119,7 @@ export function collapse(
   };
 
   const out: Surface[] = surfaces.filter((sf) => !keyOf(sf));
+  const rowOf = new Map<string, Surface>();
   for (const members of groups.values()) {
     const order = [...members].sort((a, b) => when(b, byKey, pages) - when(a, byKey, pages));
     const live = order.filter((k) => !replacedBy.has(k));
@@ -149,7 +158,16 @@ export function collapse(
         title: s(pages[k]?.title || byKey.get(k)?.title || k),
         opened: when(k, byKey, pages),
       }));
+    // a row collapsed again (the project page does) keeps the threads it had
+    head.threads = [...new Map(memberRows.flatMap((sf) => sf.threads || []).map((t) => [t.key, t])).values()];
+    for (const sf of memberRows) if (!rowOf.has(s(sf.task))) rowOf.set(s(sf.task), head);
     out.push(head);
+  }
+  for (const sf of [...side].sort((a, b) => num(b.opened) - num(a.opened))) {
+    const key = keyOf(sf);
+    const row = rowOf.get(s(sf.task));
+    if (!row) out.push({ ...sf, earlier: [], threads: [] });
+    else row.threads!.push({ key, path: `/session/${key}`, title: s(sf.title || key), opened: num(sf.opened) });
   }
   return out.sort((a, b) => num(b.opened) - num(a.opened));
 }
@@ -182,7 +200,7 @@ export function findPages(
   const headOf = new Map<string, Surface>();
   for (const row of rows) {
     headOf.set(keyOf(row), row);
-    for (const e of row.earlier || []) headOf.set(e.key, row);
+    for (const e of [...(row.earlier || []), ...(row.threads || [])]) headOf.set(e.key, row);
   }
   const byKey = new Map<string, Surface>();
   for (const sf of surfaces) if (keyOf(sf)) byKey.set(keyOf(sf), sf);
