@@ -428,6 +428,25 @@ def _anchor(p: dict) -> dict:
             "anchor": str(p.get("text") or "").strip()}
 
 
+def _images(p: dict) -> str:
+    """The images the driver attached to one prompt, as lines naming each file.
+    They ride in the note's own text, so every reader of the driver's words
+    (the next turn's feedback, the strand and handoff checks, the kept log)
+    carries them unchanged, and an image sent with no words still counts as
+    feedback. Turns read the path directly: the page server stores the file."""
+    lines = []
+    for a in p.get("attachments") or []:
+        if isinstance(a, dict) and a.get("path"):
+            size = f", {a['width']}x{a['height']}" if a.get("width") and a.get("height") else ""
+            lines.append(f"[attached image {a.get('name') or a.get('id') or 'image'}{size}: "
+                         f"{a['path']}]")
+    return "\n".join(lines)
+
+
+def _with_images(text: str, p: dict) -> str:
+    return "\n\n".join(part for part in (text.strip(), _images(p)) if part)
+
+
 def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
     """(decisions/answers, free-text feedback). Tokens are authoritative; every
     non-token prompt is driver feedback worth recording. Both kinds carry the
@@ -446,16 +465,16 @@ def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
             structured.append({"type": "task_decision", "gate": "task",
                                "story": t.group(1), "task": t.group(2),
                                "verdict": t.group(3),
-                               "text": (text[:t.start()] + text[t.end():]).strip(),
+                               "text": _with_images(text[:t.start()] + text[t.end():], p),
                                **anchor})
             continue
         a = _ANSWER_RE.search(text)
         if a:
             structured.append({"type": "answer", "ticket": a.group(1),
-                               "text": a.group(2).strip(), **anchor})
+                               "text": _with_images(a.group(2), p), **anchor})
             continue
-        if text.strip():
-            free.append({"text": text.strip(), **anchor})
+        if said := _with_images(text, p):
+            free.append({"text": said, **anchor})
     return structured, free
 
 

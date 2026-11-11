@@ -55,6 +55,24 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(structured, [])
         self.assertEqual([f["text"] for f in free], ["real note"])
 
+    def test_attached_images_reach_the_agent_as_paths(self):
+        """Attach images used to vanish here: only `prompt` and the anchor were
+        kept, so the agent never learned an image existed."""
+        img = {"id": "ab.png", "type": "image", "path": "/state/attachments/k/ab.png",
+               "mime": "image/png", "width": 20, "height": 10, "name": "shot.png"}
+        _, structured, free = _parse_feedback(poll_line("feedback", [
+            {"uid": "1", "prompt": "this looks off", "text": "Hello", "attachments": [img]},
+            {"uid": "2", "prompt": "", "attachments": [img]},
+            {"uid": "3", "prompt": "CADRE_DECISION gate=task story=t-1 task=t-1 "
+                                   "verdict=continue", "attachments": [img]},
+        ]))
+        line = "[attached image shot.png, 20x10: /state/attachments/k/ab.png]"
+        self.assertEqual(free[0]["text"], "this looks off\n\n" + line)
+        self.assertEqual(free[1]["text"], line, "an image with no words is still feedback")
+        self.assertEqual(structured[0]["text"], line)
+        from runnerlib.tasks import format_feedback
+        self.assertIn(line, format_feedback(free))
+
     def test_annotation_anchor_survives(self):
         """The audit's finding: the payload carries uid/selector/tag/text and
         only `prompt` was kept, so the agent got a floating sentence."""
