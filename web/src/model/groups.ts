@@ -1,4 +1,4 @@
-// Groups of work: the home page's sidebar (All, Dev, Everyday, …, Other).
+// Groups of work: the home page's sidebar (Home, Dev, Personal, …, Other).
 // React-only: the Python page has no sidebar, and with no group defined the
 // app draws none, so the two pages stay identical until someone makes one.
 //
@@ -10,7 +10,7 @@
 // An item is in a group
 //   1. when one of its tags is the group's name or id: the driver's own word,
 //      which wins over the project (a recipe started under ~/Projects can be
-//      tagged Everyday and leaves Dev);
+//      tagged Kitchen and leaves Dev);
 //   2. else when its project is the group or sits under it, at any depth;
 //   3. else in no group, which the sidebar calls Other.
 // New work started while a group is chosen is tagged with the group's name
@@ -56,13 +56,13 @@ export function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<str
   return out;
 }
 
-/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is All). */
+/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is Home: everything). */
 export function inGroup(groups: string[], group: string): boolean {
   return !group || (group === OTHER ? !groups.length : groups.includes(group));
 }
 
 /**
- * The sidebar's badge: per entry ('' for All, OTHER, each group id), how
+ * The sidebar's badge: per entry ('' for Home, OTHER, each group id), how
  * many items still on the home page (not done, not hidden) carry a page
  * the driver has not opened.
  */
@@ -79,7 +79,7 @@ export function groupBadges(items: Item[], member: Record<string, string[]>, gro
   return out;
 }
 
-/** The kept group while the sidebar still offers it, else All. */
+/** The kept group while the sidebar still offers it, else Home (''). */
 export function effectiveGroup(kept: string, groups: Group[]): string {
   if (!groups.length || !kept) return '';
   return kept === OTHER || groups.some((g) => g.id === kept) ? kept : '';

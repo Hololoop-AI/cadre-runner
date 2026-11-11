@@ -1,6 +1,7 @@
 /* The groups sidebar (Groups.tsx). React only: the Python page has no
    sidebar, so this is not part of the generated fleet.css. Colours are
-   fleet.css's variables. */
+   fleet.css's variables. Wide: a rail down the left that folds. Phone:
+   hidden until the header's group button (button.gmenu) opens it. */
 body.home:has(nav.groups){padding-left:76px}
 nav.groups{position:fixed;left:0;top:0;bottom:0;width:68px;box-sizing:border-box;padding:14px 6px;
  display:flex;flex-direction:column;gap:10px;align-items:center;background:var(--sunk);
@@ -18,15 +19,22 @@ body.home nav.groups button.gfold{width:auto;padding:0 6px;font-size:16px;line-h
 body.home nav.groups button.gfold:hover{color:var(--fg)}
 body.home:has(nav.groups.shut){padding-left:36px}
 nav.groups.shut{width:28px;padding:10px 0}
+nav.groups.shut button:not(.gfold){display:none}
+body.home header button.gmenu{display:none}
 nav.groups .gn{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 nav.groups .gb{position:absolute;top:0;right:6px;min-width:16px;padding:0 4px;box-sizing:border-box;
  border-radius:8px;background:var(--ok);color:var(--on-accent);font:600 10px/16px var(--sans)}
 @media (max-width:640px){
  body.home:has(nav.groups),body.home:has(nav.groups.shut){padding-left:0}
- nav.groups.shut{width:auto;padding:4px 12px}
- nav.groups{position:static;width:auto;flex-direction:row;padding:8px 12px;border-right:0;
+ nav.groups,nav.groups.shut{display:none}
+ nav.groups.open{display:flex;position:static;width:auto;flex-direction:row;padding:8px 12px;border-right:0;
   border-bottom:1px solid var(--border);overflow-x:auto}
+ nav.groups.open button:not(.gfold){display:flex}
+ body.home nav.groups button.gfold{display:none}
  body.home nav.groups button{width:auto;min-width:52px}
  nav.groups button.on::before{display:none}
+ body.home header:has(button.gmenu) h1{flex-basis:auto}
+ body.home header button.gmenu{display:inline-flex;align-items:center;gap:4px;margin-right:auto;padding:3px 10px;
+  border:1px solid var(--border);border-radius:999px;background:var(--card-2);color:var(--fg);font-size:13px}
 }
 @media (prefers-reduced-motion:reduce){nav.groups .gi{transition:none}}

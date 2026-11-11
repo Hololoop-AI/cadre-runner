@@ -481,19 +481,19 @@ export interface GraphRow {
     round: Earlier | null;
 }
 // --- from groups.ts
-/** The kept group while the sidebar still offers it, else All. */
+/** The kept group while the sidebar still offers it, else Home (''). */
 export declare function effectiveGroup(kept: string, groups: Group[]): string;
 /** The groups, by name: live projects at least one live project belongs to, or with no folder. */
 export declare function fleetGroups(projs: Record<string, Project>): Group[];
 /**
- * The sidebar's badge: per entry ('' for All, OTHER, each group id), how
+ * The sidebar's badge: per entry ('' for Home, OTHER, each group id), how
  * many items still on the home page (not done, not hidden) carry a page
  * the driver has not opened.
  */
 export declare function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number>;
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
 export declare function groupTag(group: string, groups: Group[]): string;
-/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is All). */
+/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is Home: everything). */
 export declare function inGroup(groups: string[], group: string): boolean;
 /** The group ids `it` is in, by the rules at the top of this file. */
 export declare function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<string, Project>, groups: Group[]): string[];

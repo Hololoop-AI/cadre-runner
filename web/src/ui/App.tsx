@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
 import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
-import { GroupBar } from './Groups';
+import { GroupBar, GroupMenuButton } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
@@ -99,6 +99,7 @@ function Home({ machines }: { machines: Machines }) {
   const { proj, sort, limit } = effectiveView(sel, view, projects);
   const groups = home?.groups ?? [];
   const group = effectiveGroup(sel.group, groups);
+  const [groupsOpen, setGroupsOpen] = useState(false); // a phone's groups, opened from the header
   const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
@@ -147,10 +148,12 @@ function Home({ machines }: { machines: Machines }) {
   return (
     <>
       {home && <GroupBar groups={groups} group={group} badges={groupBadges(home.items, home.member, groups)}
-        shut={!!sel.groupsShut} onPick={(id) => keep({ group: id })} onShut={(shut) => keep({ groupsShut: shut })} />}
+        shut={!!sel.groupsShut} open={groupsOpen} onPick={(id) => { keep({ group: id }); setGroupsOpen(false); }}
+        onShut={(shut) => keep({ groupsShut: shut })} />}
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
-          onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />} />
+          onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
+          menu={<GroupMenuButton groups={groups} group={group} open={groupsOpen} onToggle={() => setGroupsOpen((o) => !o)} />} />
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
         <div id="fleet-running">
