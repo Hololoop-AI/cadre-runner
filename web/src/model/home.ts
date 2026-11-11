@@ -7,6 +7,7 @@ import { collapse } from './conversations';
 import { num, relTime, s } from './format';
 import { assignStates, bareByTask, fleetItems, itemFacts, order, IDLE, type Item } from './items';
 import type { Ending, Fleet, LinkRecord, PageInfo, Pageless, SessionStatus, Surface } from './payload';
+import { fleetGroups, itemGroups, type Group } from './groups';
 import { liveProjects } from './projects';
 import { clean, kidsOf, type Tree } from './tree';
 import { visible, type ServerView } from './view';
@@ -40,6 +41,10 @@ export interface Home {
   projects: [string, string][];
   /** every tag on any item, sorted */
   tags: string[];
+  /** the sidebar's groups (groups.ts); none means no sidebar */
+  groups: Group[];
+  /** item key -> the group ids it is in (none: Other) */
+  member: Record<string, string[]>;
   /** the collapsed rows and link graph find searches */
   find: { surfaces: Surface[]; records: LinkRecord[]; holders: Record<string, string>; pages: Record<string, PageInfo> };
 }
@@ -81,6 +86,9 @@ export function buildHome(fleet: Fleet, view: ServerView, now: number, origin: s
   for (const it of items) {
     if (it.project && !projects.some(([k]) => k === it.project)) projects.push([it.project, names[it.project] ?? it.project]);
   }
+  const groups = fleetGroups(projs);
+  const member: Record<string, string[]> = Object.create(null);
+  for (const it of items) member[it.key] = itemGroups(it, projs, groups);
   // statusd.parent_choices: fleet_items without statuses, so newest by when a page opened
   const parents = fleetItems({ surfaces, tree, projs, pageless, archived: gone })
     .filter((it) => !it.key.startsWith('page:')).map((it): [string, string] => [it.key, it.title]);
@@ -91,6 +99,8 @@ export function buildHome(fleet: Fleet, view: ServerView, now: number, origin: s
     parents,
     projects,
     tags: [...new Set(items.flatMap((it) => it.tags))].sort(),
+    groups,
+    member,
     find: { surfaces: raw, records, holders, pages },
   };
 }

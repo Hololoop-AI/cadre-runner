@@ -5,7 +5,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveView, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { GroupBar } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
@@ -96,7 +97,11 @@ function Home({ machines }: { machines: Machines }) {
     [fleet, view, now, archivedHere, server]);
   const projects = useProjectOptions(home, reloads);
   const { proj, sort, limit } = effectiveView(sel, view, projects);
-  const laid = useWorkLayout(home, sel, { q, proj, sort, limit });
+  const groups = home?.groups ?? [];
+  const group = effectiveGroup(sel.group, groups);
+  const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
+    [home, group]);
+  const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
   const found = useFind(q, home);
 
   const onToggle = useCallback((key: string, isOpen: boolean) => setOpen((cur) => {
@@ -141,6 +146,8 @@ function Home({ machines }: { machines: Machines }) {
 
   return (
     <>
+      {home && <GroupBar groups={groups} group={group} badges={groupBadges(home.items, home.member, groups)}
+        onPick={(id) => keep({ group: id })} />}
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />} />
@@ -174,6 +181,7 @@ function Home({ machines }: { machines: Machines }) {
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}
+        tags={groupTag(group, groups)}
         onClose={() => setWork((w) => ({ ...w, open: false }))}
         error={workError}
         onSubmit={(fm) => {

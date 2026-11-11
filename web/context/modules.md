@@ -10,7 +10,7 @@ depends on nothing. Each module is reached only through its `index.ts`
 (checked by `scripts/check_boundaries.mjs`). Design gate: `python3 scripts/design-check`.
 
 ## model
-- **Owns:** statusd.py's home-page logic in TypeScript: folding rounds (`collapse`), items, states, the Idle limit, the item graph, find, the view (`layout`), the New work lookups. Pure: no React, no network, no DOM.
+- **Owns:** statusd.py's home-page logic in TypeScript: folding rounds (`collapse`), items, states, the Idle limit, the item graph, find, the view (`layout`), the groups sidebar's filing (`groups.ts`, React only), the New work lookups. Pure: no React, no network, no DOM.
 - **Entry:** `src/model/index.ts` (only public import path)
 - **Public API:** snapshot at `api/model.api.d.ts`
 - **May depend on:** nothing · **Must not depend on:** `api`, `ui`, any package
@@ -26,7 +26,7 @@ depends on nothing. Each module is reached only through its `index.ts`
 - **Contract:** `contracts/statusd.openapi.json` (every endpoint the app may call; checked by `tests/test_web_contract.py`) · **Decision:** context/decisions/0002-statusd-http-contract.md
 
 ## ui
-- **Owns:** drawing the home page and the library, costs, runs, session-tree, project and manage screens exactly as statusd.py draws them (render_home, render_library, render_costs, render_runs, render_tree, render_project, render_page): same elements, same classes, the Python page's stylesheet (`src/ui/fleet.css`, generated). `ui/router.ts` picks the screen by path; `ui/server.tsx` the machine.
+- **Owns:** drawing the home page and the library, costs, runs, session-tree, project and manage screens exactly as statusd.py draws them (render_home, render_library, render_costs, render_runs, render_tree, render_project, render_page): same elements, same classes, the Python page's stylesheet (`src/ui/fleet.css`, generated); plus the groups sidebar, which the Python page lacks and which draws nothing until a group exists (`src/ui/Groups.tsx`, its own `groups.css`). `ui/router.ts` picks the screen by path; `ui/server.tsx` the machine.
 - **Entry:** `src/ui/index.ts` (only public import path: `App`)
 - **Public API:** snapshot at `api/ui.api.d.ts`
 - **May depend on:** `model`, `api`, react · **Must not depend on:** anything under another module's directory

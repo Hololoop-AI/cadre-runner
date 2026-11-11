@@ -1,0 +1,27 @@
+/* The groups sidebar (Groups.tsx). React only: the Python page has no
+   sidebar, so this is not part of the generated fleet.css. Colours are
+   fleet.css's variables. */
+body.home:has(nav.groups){padding-left:76px}
+nav.groups{position:fixed;left:0;top:0;bottom:0;width:68px;box-sizing:border-box;padding:14px 6px;
+ display:flex;flex-direction:column;gap:10px;align-items:center;background:var(--sunk);
+ border-right:1px solid var(--border);overflow-y:auto;z-index:5}
+body.home nav.groups button{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
+ width:100%;padding:4px 0;border:0;background:transparent;color:var(--muted);font-size:11px}
+nav.groups .gi{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;
+ background:var(--card-2);color:var(--fg);font:600 14px/1 var(--sans);transition:border-radius .15s}
+nav.groups button:hover .gi{border-radius:12px}
+nav.groups button.on .gi{border-radius:12px;background:var(--accent);color:var(--on-accent)}
+nav.groups button.on .gn{color:var(--fg)}
+nav.groups button.on::before{content:"";position:absolute;left:-6px;top:10px;height:28px;width:4px;
+ border-radius:0 4px 4px 0;background:var(--fg)}
+nav.groups .gn{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+nav.groups .gb{position:absolute;top:0;right:6px;min-width:16px;padding:0 4px;box-sizing:border-box;
+ border-radius:8px;background:var(--ok);color:var(--on-accent);font:600 10px/16px var(--sans)}
+@media (max-width:640px){
+ body.home:has(nav.groups){padding-left:0}
+ nav.groups{position:static;width:auto;flex-direction:row;padding:8px 12px;border-right:0;
+  border-bottom:1px solid var(--border);overflow-x:auto}
+ body.home nav.groups button{width:auto;min-width:52px}
+ nav.groups button.on::before{display:none}
+}
+@media (prefers-reduced-motion:reduce){nav.groups .gi{transition:none}}

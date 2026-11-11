@@ -480,6 +480,30 @@ export interface GraphRow {
     /** set on a row that is an earlier round of the task above it */
     round: Earlier | null;
 }
+// --- from groups.ts
+/** The kept group while the sidebar still offers it, else All. */
+export declare function effectiveGroup(kept: string, groups: Group[]): string;
+/** The groups: live projects at least one live project belongs to, by name. */
+export declare function fleetGroups(projs: Record<string, Project>): Group[];
+/**
+ * The sidebar's badge: per entry ('' for All, OTHER, each group id), how
+ * many items still on the home page (not done, not hidden) carry a page
+ * the driver has not opened.
+ */
+export declare function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number>;
+/** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
+export declare function groupTag(group: string, groups: Group[]): string;
+/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is All). */
+export declare function inGroup(groups: string[], group: string): boolean;
+/** The group ids `it` is in, by the rules at the top of this file. */
+export declare function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<string, Project>, groups: Group[]): string[];
+/** The sidebar entry for items in no group. */
+export declare const OTHER = "~other";
+/** One sidebar entry: a group's id and name (OTHER for the rest). */
+export interface Group {
+    id: string;
+    name: string;
+}
 // --- from projects.ts
 /** projects.live: not archived, by name */
 export declare function liveProjects(projs: Record<string, Project>): Project[];
@@ -533,6 +557,8 @@ export interface LayoutInput {
     q: string;
     /** the project filter, '' for all */
     proj: string;
+    /** the sidebar's group filter: whether an item is in the chosen group (absent: every item) */
+    grouped?: (it: Item) => boolean;
     sort: string;
     limit: number;
     /** an item's visible text, which find matches */
@@ -557,6 +583,8 @@ export interface Sel {
     sort: string;
     limit: number;
     idleOpen: boolean;
+    /** the sidebar's group: '' All, groups.OTHER, or a group id (React only) */
+    group: string;
 }
 /** The view the server draws from the page's query (?show= ?sort= ?tag= ?limit=). */
 export interface ServerView {
@@ -590,6 +618,10 @@ export interface Home {
     projects: [string, string][];
     /** every tag on any item, sorted */
     tags: string[];
+    /** the sidebar's groups (groups.ts); none means no sidebar */
+    groups: Group[];
+    /** item key -> the group ids it is in (none: Other) */
+    member: Record<string, string[]>;
     /** the collapsed rows and link graph find searches */
     find: {
         surfaces: Surface[];
