@@ -401,9 +401,10 @@ def model_switch(prompts: list[dict]) -> tuple[str, list[dict]]:
 
 def message_text(prompts: list[dict]) -> str:
     """The driver's batch as one chat message, each with what it was attached to."""
+    from . import surface
     parts = []
     for p in prompts:
-        text = str(p.get("prompt") or "").strip()
+        text = surface.with_images(str(p.get("prompt") or ""), p)
         if not text:
             continue
         anchor = str(p.get("text") or "").strip()

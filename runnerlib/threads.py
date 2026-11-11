@@ -83,7 +83,7 @@ def deliver_thread(cfg, reg, log, task_id: str, key: str) -> int:
     payload, _, _ = surface._parse_feedback(raw)
     if (payload or {}).get("status") == "ended":
         rec["threads"].pop(key, None)
-    words = [str(p.get("prompt") or "").strip() if isinstance(p, dict) else str(p)
+    words = [surface.with_images(str(p.get("prompt") or ""), p) if isinstance(p, dict) else str(p)
              for p in (payload or {}).get("prompts") or []]
     words = [w for w in words if w]
     if not words:
