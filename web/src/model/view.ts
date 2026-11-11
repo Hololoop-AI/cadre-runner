@@ -67,11 +67,13 @@ export interface Sel {
   idleOpen: boolean;
   /** the sidebar's group: '' All, groups.OTHER, or a group id (React only) */
   group: string;
+  /** the sidebar is folded to a thin rail (React only) */
+  groupsShut: boolean;
 }
 
 /** The kept view, with a link's ?show= ?sort= ?tag= ?limit= winning over it. */
 export function loadSel(search: string, storage: Storage | null): Sel {
-  const sel: Sel = { show: [...HOME], unopened: false, tag: '', proj: '', sort: '', limit: 0, idleOpen: false, group: '' };
+  const sel: Sel = { show: [...HOME], unopened: false, tag: '', proj: '', sort: '', limit: 0, idleOpen: false, group: '', groupsShut: false };
   try {
     Object.assign(sel, JSON.parse(storage?.getItem(VIEW_KEY) || '{}'));
   } catch {

@@ -147,7 +147,7 @@ function Home({ machines }: { machines: Machines }) {
   return (
     <>
       {home && <GroupBar groups={groups} group={group} badges={groupBadges(home.items, home.member, groups)}
-        onPick={(id) => keep({ group: id })} />}
+        shut={!!sel.groupsShut} onPick={(id) => keep({ group: id })} onShut={(shut) => keep({ groupsShut: shut })} />}
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />} />

@@ -3,8 +3,11 @@
 // app draws none, so the two pages stay identical until someone makes one.
 //
 // A group is a project that another live project names as its group
-// (`pipeline.py project set <member> --group <group>`): one kind of object,
-// as runnerlib/projects.py says. An item is in a group
+// (`pipeline.py project set <member> --group <group>`), or a live project
+// with no folder: one kind of object, as runnerlib/projects.py says. A
+// folder-less project can hold no work by folder, so its only use is as a
+// group that tags fill (Kitchen, before any project is filed under it).
+// An item is in a group
 //   1. when one of its tags is the group's name or id: the driver's own word,
 //      which wins over the project (a recipe started under ~/Projects can be
 //      tagged Everyday and leaves Dev);
@@ -28,11 +31,11 @@ export interface Group {
   name: string;
 }
 
-/** The groups: live projects at least one live project belongs to, by name. */
+/** The groups, by name: live projects at least one live project belongs to, or with no folder. */
 export function fleetGroups(projs: Record<string, Project>): Group[] {
   const live = liveProjects(projs);
   const named = new Set(live.map((p) => p.group).filter((g): g is string => !!g));
-  return live.filter((p) => named.has(p.id)).map((p) => ({ id: p.id, name: p.name }))
+  return live.filter((p) => named.has(p.id) || !p.dirs?.length).map((p) => ({ id: p.id, name: p.name }))
     .sort((a, b) => cmp(a.name.toLowerCase(), b.name.toLowerCase()));
 }
 

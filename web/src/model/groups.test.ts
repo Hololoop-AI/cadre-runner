@@ -16,12 +16,18 @@ const PROJS: Record<string, Project> = {
   research: P('research', 'research', 'everyday', ['/home/r']),
   lonely: P('lonely', 'Lonely', null, ['/w/lonely']),
   gone: P('gone', 'Gone', null, [], true),
-  orphan: P('orphan', 'Orphan', 'gone'),
+  orphan: P('orphan', 'Orphan', 'gone', ['/w/orphan']),
 };
 
 describe('fleetGroups', () => {
   it('is every live project another live project belongs to, by name', () => {
     expect(fleetGroups(PROJS).map((g) => g.id)).toEqual(['cadre-runner', 'dev', 'everyday']);
+  });
+
+  it('counts a live project with no folder as a group, members or not', () => {
+    const projs = { ...PROJS, kitchen: P('kitchen', 'Kitchen') };
+    expect(fleetGroups(projs).map((g) => g.id)).toEqual(['cadre-runner', 'dev', 'everyday', 'kitchen']);
+    expect(itemGroups({ project: 'research', tags: ['Kitchen'] }, projs, fleetGroups(projs))).toEqual(['kitchen']);
   });
 
   it('is empty while no project names a group, so no sidebar is drawn', () => {

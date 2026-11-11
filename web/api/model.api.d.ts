@@ -483,7 +483,7 @@ export interface GraphRow {
 // --- from groups.ts
 /** The kept group while the sidebar still offers it, else All. */
 export declare function effectiveGroup(kept: string, groups: Group[]): string;
-/** The groups: live projects at least one live project belongs to, by name. */
+/** The groups, by name: live projects at least one live project belongs to, or with no folder. */
 export declare function fleetGroups(projs: Record<string, Project>): Group[];
 /**
  * The sidebar's badge: per entry ('' for All, OTHER, each group id), how
@@ -585,6 +585,8 @@ export interface Sel {
     idleOpen: boolean;
     /** the sidebar's group: '' All, groups.OTHER, or a group id (React only) */
     group: string;
+    /** the sidebar is folded to a thin rail (React only) */
+    groupsShut: boolean;
 }
 /** The view the server draws from the page's query (?show= ?sort= ?tag= ?limit=). */
 export interface ServerView {

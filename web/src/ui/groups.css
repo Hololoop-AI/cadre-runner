@@ -14,11 +14,16 @@ nav.groups button.on .gi{border-radius:12px;background:var(--accent);color:var(-
 nav.groups button.on .gn{color:var(--fg)}
 nav.groups button.on::before{content:"";position:absolute;left:-6px;top:10px;height:28px;width:4px;
  border-radius:0 4px 4px 0;background:var(--fg)}
+body.home nav.groups button.gfold{width:auto;padding:0 6px;font-size:16px;line-height:20px;color:var(--muted)}
+body.home nav.groups button.gfold:hover{color:var(--fg)}
+body.home:has(nav.groups.shut){padding-left:36px}
+nav.groups.shut{width:28px;padding:10px 0}
 nav.groups .gn{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 nav.groups .gb{position:absolute;top:0;right:6px;min-width:16px;padding:0 4px;box-sizing:border-box;
  border-radius:8px;background:var(--ok);color:var(--on-accent);font:600 10px/16px var(--sans)}
 @media (max-width:640px){
- body.home:has(nav.groups){padding-left:0}
+ body.home:has(nav.groups),body.home:has(nav.groups.shut){padding-left:0}
+ nav.groups.shut{width:auto;padding:4px 12px}
  nav.groups{position:static;width:auto;flex-direction:row;padding:8px 12px;border-right:0;
   border-bottom:1px solid var(--border);overflow-x:auto}
  body.home nav.groups button{width:auto;min-width:52px}
