@@ -301,6 +301,18 @@ def test_an_answer_after_the_turn_ended_becomes_a_chat_that_replies_in_the_threa
     assert next(iter(rec["active_runs"].values()))["reply_key"] == key
 
 
+def test_an_image_answered_in_a_thread_reaches_the_agent(monkeypatch, posts, spawns):
+    d, work = scratch(), scratch()
+    cfg, reg, rec = task_with_session(d, work)
+    page = d / "task-task-demo.html"
+    page.write_text("x")
+    _threads_env(monkeypatch, d, page, pending=1)
+    img = {"type": "image", "path": "/att/k/a.png", "name": "a.png", "width": 4, "height": 3}
+    monkeypatch.setattr(surface, "_run_cli", lambda args, timeout=25: poll({"prompt": "", "attachments": [img]}))
+    assert threads.watch_threads(cfg, reg, lambda *a: None, "task-demo", page) == 1
+    assert "[attached image a.png, 4x3: /att/k/a.png]" in spawns[0]["prompt"]
+
+
 def test_a_thread_is_left_to_the_agent_while_its_turn_runs(monkeypatch, spawns):
     d, work = scratch(), scratch()
     cfg, reg, rec = task_with_session(d, work)

@@ -449,7 +449,8 @@ def _images(p: dict) -> str:
     return "\n".join(lines)
 
 
-def _with_images(text: str, p: dict) -> str:
+def with_images(text: str, p: dict) -> str:
+    """A prompt's words, then a line per image attached to it."""
     return "\n\n".join(part for part in (text.strip(), _images(p)) if part)
 
 
@@ -471,15 +472,15 @@ def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
             structured.append({"type": "task_decision", "gate": "task",
                                "story": t.group(1), "task": t.group(2),
                                "verdict": t.group(3),
-                               "text": _with_images(text[:t.start()] + text[t.end():], p),
+                               "text": with_images(text[:t.start()] + text[t.end():], p),
                                **anchor})
             continue
         a = _ANSWER_RE.search(text)
         if a:
             structured.append({"type": "answer", "ticket": a.group(1),
-                               "text": _with_images(a.group(2), p), **anchor})
+                               "text": with_images(a.group(2), p), **anchor})
             continue
-        if said := _with_images(text, p):
+        if said := with_images(text, p):
             free.append({"text": said, **anchor})
     return structured, free
 

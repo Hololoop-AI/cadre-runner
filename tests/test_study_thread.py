@@ -513,3 +513,10 @@ def test_thinking_streams_into_the_chat_a_sentence_at_a_time_and_only_once():
         agent.close()
     assert lines == ["They want the trade-off, not the history.", "Then I check the page",
                      "Reading page.html…"]
+
+
+def test_an_image_in_a_study_thread_reaches_the_tutor():
+    img = {"type": "image", "path": "/att/k/b.png", "name": "b.png"}
+    text = study_thread.message_text([{"prompt": "what is this?", "attachments": [img]},
+                                      {"prompt": "", "attachments": [img]}])
+    assert text.count("[attached image b.png: /att/k/b.png]") == 2
