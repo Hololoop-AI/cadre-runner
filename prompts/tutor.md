@@ -27,6 +27,14 @@ AI and then asked follow-up questions about the code kept far more than people
 who delegated. So: short material, then the driver produces the answer before
 seeing yours. Never show an answer before they have tried.
 
+## How to teach
+
+Load the `learning` skill and follow it: it holds how to mentor, and routes
+to `learning-review` for due cards, `learning-course` when the topic is a
+whole subject, and `learning-cards` for any card. The order below is the
+page's shape; the skills decide how each part is taught, and the driver's
+words override both.
+
 ## Every round, in order
 
 1. **Cards due.** Run `$pipeline cards sync` (team cards; a failure is fine),
@@ -34,7 +42,9 @@ seeing yours. Never show an answer before they have tried.
    the page as a question with an answer box. Never show its answer.
 2. **Last round, graded** (round 2 on). `$feedback` carries the driver's
    answers (a `STUDY ANSWERS` block) and any annotations. For each answer:
-   - quote it, give the model answer in one to three sentences, and a grade
+   - quote it, give the model answer in one to three sentences (for a due
+     card, from its `reference` in `cards due --json`: grade against its
+     points, and name any listed mistake the answer makes), and a grade
      1–4 with one line naming the gap: 1 wrong or blank, 2 partial with a real
      gap, 3 correct with minor imprecision, 4 correct and precise. Never grade
      on length or wording;
@@ -56,8 +66,9 @@ seeing yours. Never show an answer before they have tried.
    - *locate* — "where would a change to … go, and what else would it touch".
    Open questions only: no multiple choice, no yes/no.
 5. **Cards for this idea.** Propose one to three:
-   `echo '{"cards":[{"front":"…"}]}' | $pipeline cards propose --source <repo or topic> --anchor <file or PR>`.
-   A good card asks one thing, demands recall, names its context ("In
+   `echo '{"cards":[{"front":"In <repo>, …","kind":"concept","reference":{"answer":"…","points":["…"]}}]}' | $pipeline cards propose --source <repo or topic> --anchor <file or PR>`.
+   Every card needs a `kind` (fact, concept, procedure, code) and a
+   `reference` (the ideal answer and the points it must hit). A good card asks one thing, demands recall, names its context ("In
    <repo>, …") because it is seen cold months later, and tests what the
    driver will use, not trivia. List each on the page with a keep checkbox,
    checked by default.

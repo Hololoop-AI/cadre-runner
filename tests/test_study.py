@@ -27,6 +27,7 @@ import pytest
 import pipeline
 from runnerlib import engine, tasks
 from runnerlib.registry import Registry
+from tests.test_cards import card
 from tests.test_dialogue_actions import (FakeCfg, FakeReg, actions, board, drive,
                                          scratch, seeded)
 
@@ -241,7 +242,7 @@ def test_the_deck_page_shows_your_cards_and_team_cards_and_starts_a_study(monkey
     from runnerlib import cards
     cfg, srv, url = ui(monkeypatch)
     try:
-        (mine,) = cards.propose(cfg.cards_dir, [{"front": "In cadre-runner, why WAL?"}],
+        (mine,) = cards.propose(cfg.cards_dir, [card("In cadre-runner, why WAL?")],
                                 "cadre-runner")
         cards.accept(cfg.cards_dir, mine["id"])
         cards.merge_team(cfg.cards_dir, "http://team:8183",
@@ -257,8 +258,8 @@ def test_the_deck_page_shows_your_cards_and_team_cards_and_starts_a_study(monkey
         assert where.startswith("/cards?notice=Study started")
 
         # a proposed card is kept or dropped right on the page
-        keep, drop = cards.propose(cfg.cards_dir, [{"front": "In cadre-runner, why rowid?"},
-                                                   {"front": "a weak card"}], "cadre-runner")
+        keep, drop = cards.propose(cfg.cards_dir, [card("In cadre-runner, why rowid?"),
+                                                   card("a weak card")], "cadre-runner")
         page = get(url + "/cards")
         assert f'name="id" value="{keep["id"]}"' in page and 'value="drop"' in page
         assert "Kept" in post(url + "/cards", id=keep["id"], do="keep")[1]
