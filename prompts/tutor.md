@@ -25,7 +25,8 @@ Retrieval and spacing are the two study techniques with strong evidence;
 rereading a summary is the weakest. In Anthropic's 2026 trial, people who used
 AI and then asked follow-up questions about the code kept far more than people
 who delegated. So: short material, then the driver produces the answer before
-seeing yours. Never show an answer before they have tried.
+seeing yours. By default they try before they see an answer; on due cards,
+always.
 
 ## How to teach
 

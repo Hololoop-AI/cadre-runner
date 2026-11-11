@@ -286,8 +286,7 @@ def test_a_deck_made_before_kinds_gains_them_and_keeps_its_cards():
     Path(d).mkdir(parents=True, exist_ok=True)
     old = sqlite3.connect(Path(d) / cards.FILE)
     old.executescript(cards.SCHEMA.replace(
-        "    fsrs_last_review TEXT,\n    kind             TEXT NOT NULL DEFAULT 'fact'\n"
-        "                     CHECK (kind IN ('fact', 'concept', 'procedure', 'code')),\n"
+        f"    fsrs_last_review TEXT,\n    kind             {cards._KIND_COL},\n"
         "    reference        TEXT NOT NULL DEFAULT ''\n", "    fsrs_last_review TEXT\n"))
     old.execute("INSERT INTO cards (id, source, front, status, created_at) "
                 "VALUES ('c-old', 'cadre-runner', 'an old card', 'proposed', ?)",
@@ -349,6 +348,9 @@ def test_a_reframed_card_keeps_its_id_and_schedule():
     ({"front": "  "}, "front"),
     ({"kind": "trivia"}, "kind"),
     ({"reference": {"answer": ""}}, "reference"),
+    ({"front": 5}, "front"),
+    ({"reference": {"answer": ["a list"]}}, "reference"),
+    ({"reference": {"answer": "a", "mistakes": [{"wrong": 1, "fix": "f"}]}}, "mistakes"),
 ])
 def test_a_bad_revision_is_refused_and_changes_nothing(change, says):
     d = scratch()
@@ -374,3 +376,38 @@ def test_an_agent_reframes_a_card_on_stdin(monkeypatch, capsys):
               stdin=json.dumps({"front": "Why does greet.py take its text from config?",
                                 "kind": "concept"}))
     assert out[0]["id"] == c["id"] and out[0]["kind"] == "concept"
+
+
+@pytest.mark.parametrize("text, says", [
+    ("not json", "not JSON"),
+    ('["front"]', "revision is"),
+])
+def test_a_revision_that_is_not_a_json_object_is_refused(text, says):
+    with pytest.raises(cards.CardError, match=says):
+        cards.parse_revision(text)
+
+
+def test_a_revision_keeps_only_the_fields_revise_takes():
+    got = cards.parse_revision('{"front": "q", "status": "accepted", "why": "sharper"}')
+    assert got == {"front": "q"}
+
+
+def test_a_non_text_front_is_refused_not_a_crash():
+    with pytest.raises(cards.CardError, match="front"):
+        cards.propose(scratch(), [card(5)], "repo")
+
+
+def test_two_processes_opening_an_old_deck_at_once_do_not_crash():
+    # The second process checked the columns before the first added them.
+    class StaleView:
+        def __init__(self, db):
+            self.db = db
+
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info"):
+                return [{"name": "id"}]
+            return self.db.execute(sql, *args)
+
+    db = cards.connect(scratch())
+    cards._migrate(StaleView(db))
+    assert {r["name"] for r in db.execute("PRAGMA table_info(cards)")} >= {"kind", "reference"}

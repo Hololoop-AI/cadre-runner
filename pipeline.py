@@ -1014,23 +1014,17 @@ def cmd_cards(cfg, args):
         due = f"  due {c['fsrs_due'][:16]}" if c["status"] == "accepted" else ""
         print(f"{c['id']}  [{c['status']}] {c['source']}"
               + (f" @ {c['anchor']}" if c["anchor"] else "") + f"{due}\n    {c['front']}")
+    def read_input():
+        return sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
     try:
         if args.action == "propose":
-            text = sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
-            out = cards_mod.propose(deck, cards_mod.parse_proposal(text),
+            out = cards_mod.propose(deck, cards_mod.parse_proposal(read_input()),
                                     args.source, args.anchor or "", scope=scope)
         elif args.action == "revise":
             if len(args.ids) != 1:
                 sys.exit("cards revise: one card id, and the new fields as JSON on stdin")
-            text = sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
-            try:
-                new = json.loads(text)
-            except ValueError as e:
-                raise cards_mod.CardError(f"revision is not JSON: {e}") from None
-            if not isinstance(new, dict):
-                raise cards_mod.CardError('revision is {"front": ..., "kind": ..., "reference": {...}}')
-            out = [cards_mod.revise(deck, args.ids[0], front=new.get("front"),
-                                    kind=new.get("kind"), reference=new.get("reference"))]
+            out = [cards_mod.revise(deck, args.ids[0],
+                                    **cards_mod.parse_revision(read_input()))]
         elif args.action == "sync":
             if scope == "team":
                 sys.exit("cards sync: this is a team backend — its deck is the "
