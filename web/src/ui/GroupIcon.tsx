@@ -12,8 +12,9 @@ import { OTHER } from '../model';
 
 /** The glyphs inside the ring, on a 32-unit square (the Hololoop mark's). */
 const GLYPHS: Record<string, ReactNode> = {
-  // everything: the Hololoop mark itself, a second ring
-  '': <circle cx="16" cy="16" r="6" strokeOpacity="0.6" />,
+  // everything: the Hololoop mark itself, three rings fading inwards
+  // (hololoop-site RingMark.astro: middle 0.64 and inner 0.3 of the outer, at 60% and ~35%)
+  '': <><circle className="rm" cx="16" cy="16" r="8.3" opacity="0.6" /><circle className="ri" cx="16" cy="16" r="3.9" opacity="0.35" /></>,
   // dev: </>
   dev: <path d="M12 11.5 7.5 16l4.5 4.5M20 11.5l4.5 4.5-4.5 4.5M17.4 10.5l-2.8 11" />,
   // kitchen: a pot with handles and a lid
@@ -32,21 +33,18 @@ function glyphFor(id: string, name: string): ReactNode | undefined {
 /** A sidebar entry's icon: the ring and the group's glyph (or its first letter). */
 export function GroupIcon({ id, name }: { id: string; name: string }) {
   const glyph = glyphFor(id, name);
+  // Home is the Hololoop mark, which breathes while chosen (groups.css)
   return (
-    <svg className="gsvg" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor"
+    <svg className={id === '' ? 'gsvg breathe' : 'gsvg'} viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor"
       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="16" cy="16" r="13" />
+      <circle className="ro" cx="16" cy="16" r="13" />
       {glyph ?? <text x="16" y="20.5" textAnchor="middle" fontSize="12" fontWeight="600"
         fill="currentColor" stroke="none">{[...name.trim()][0]?.toUpperCase() ?? '?'}</text>}
     </svg>
   );
 }
 
-/**
- * Set the tab icon to the Hololoop mark in the theme's accent, read from the
- * page's --accent. Called on load; a theme switch (theme.py's planned
- * settings file) calls it again to recolour the tab.
- */
+/** Set the tab icon to the Hololoop mark in the theme's accent, read from the page's --accent now. */
 export function themeFavicon(doc: Document = document) {
   const accent = getComputedStyle(doc.documentElement).getPropertyValue('--accent').trim() || '#7fbbb3';
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='${accent}' stroke-width='2.8'>`
@@ -58,4 +56,24 @@ export function themeFavicon(doc: Document = document) {
     doc.head.appendChild(link);
   }
   link.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * Keep the tab icon in the theme's accent: draw it now, and again whenever the
+ * theme could have changed (the root element's style, class or data-theme, or
+ * a stylesheet added to or swapped in the head). Returns the stop function.
+ */
+export function followThemeFavicon(doc: Document = document): () => void {
+  let last = '';
+  const draw = () => {
+    const accent = getComputedStyle(doc.documentElement).getPropertyValue('--accent').trim();
+    if (accent === last) return; // our own icon swap lands in the head too
+    last = accent;
+    themeFavicon(doc);
+  };
+  draw();
+  const watch = new MutationObserver(draw);
+  watch.observe(doc.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] });
+  watch.observe(doc.head, { childList: true, subtree: true, characterData: true });
+  return () => watch.disconnect();
 }

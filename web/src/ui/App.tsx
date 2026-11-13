@@ -6,8 +6,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
 import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
-import { themeFavicon } from './GroupIcon';
-import { GroupBar, GroupMenuButton } from './Groups';
+import { followThemeFavicon } from './GroupIcon';
+import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
@@ -38,7 +38,7 @@ export function App() {
   const machines = useMachines();
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
-  useEffect(() => themeFavicon(), []); // the tab icon in the theme's accent
+  useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
   // the Python pages give the body a class on home only
   useEffect(() => {
     document.body.className = here.screen === 'home' ? 'home' : '';
@@ -155,6 +155,7 @@ function Home({ machines }: { machines: Machines }) {
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
+          cadre={groupSuffix(group, groups)}
           menu={<GroupMenuButton groups={groups} group={group} open={groupsOpen} onToggle={() => setGroupsOpen((o) => !o)} />} />
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}

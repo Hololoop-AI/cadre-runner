@@ -16,14 +16,16 @@ const LIVE_TEXT: Record<Live, [string, string]> = {
  * The header; `menu` (a phone's group button) and then `switcher` (the
  * machine select) sit after the title when there are any.
  */
-export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu }: {
+export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu, cadre = '' }: {
   weekUsd: number | undefined; live: Live; snapshot: string | undefined; onNewWork: () => void;
   switcher?: ReactNode; menu?: ReactNode;
+  /** the chosen group, after the dot: "Cadre.dev"; empty for Home */
+  cadre?: string;
 }) {
   const [text, title] = LIVE_TEXT[live];
   return (
     <header>
-      <h1>Cadre<span className="dot">.</span></h1>{menu}{switcher}<span className="sp"></span>
+      <h1>Cadre<span className="dot">.</span>{cadre && <span className="cadre">{cadre}</span>}</h1>{menu}{switcher}<span className="sp"></span>
       {weekUsd != null && <a href="/costs">{`${usd(weekUsd)} in 7 days`}</a>}
       <a href="/cards">cards</a><a href="/runs">every run</a>
       <span id="live" className={live === 'connecting' ? 'live' : `live ${live}`}

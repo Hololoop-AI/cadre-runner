@@ -41,4 +41,11 @@ nav.groups .gb{position:absolute;top:0;right:2px;min-width:14px;padding:0 3px;bo
  body.home header button.gmenu{display:inline-flex;align-items:center;gap:4px;margin-right:auto;padding:3px 10px;
   border:1px solid var(--border);border-radius:999px;background:var(--card-2);color:var(--fg);font-size:13px}
 }
-@media (prefers-reduced-motion:reduce){nav.groups .gi{transition:none}}
+/* Home, chosen: the Hololoop mark breathes, rings staggered (hololoop-site RingMark.astro) */
+@keyframes hlbreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+nav.groups button.on .breathe circle{transform-box:fill-box;transform-origin:center;animation:hlbreathe 6s ease-in-out infinite}
+nav.groups button.on .breathe .rm{animation-delay:.5s}
+nav.groups button.on .breathe .ri{animation-delay:1s}
+/* the title names the chosen group: Cadre.dev */
+body.home header h1 .cadre{color:var(--accent)}
+@media (prefers-reduced-motion:reduce){nav.groups .gi{transition:none}nav.groups button.on .breathe circle{animation:none}}

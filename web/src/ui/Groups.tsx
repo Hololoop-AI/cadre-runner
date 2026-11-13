@@ -51,14 +51,21 @@ export function GroupBar({ groups, group, badges, shut, open, onPick, onShut }: 
   );
 }
 
-/** The header's group button, shown on a phone only: the chosen group's name; it opens the groups. */
+/** The header's group button, shown on a phone only: it opens the groups. Just ▾ when the title names the group. */
 export function GroupMenuButton({ groups, group, open, onToggle }: {
   groups: Group[]; group: string; open: boolean; onToggle: () => void;
 }) {
   if (!groups.length) return null;
   return (
-    <button type="button" className="gmenu" aria-expanded={open} title="Switch group" onClick={onToggle}>
-      {chosenName(groups, group)} {open ? '▴' : '▾'}
+    <button type="button" className="gmenu" aria-expanded={open} title="Switch group" aria-label={`Switch group: ${chosenName(groups, group)} chosen`} onClick={onToggle}>
+      {/* the title already names a chosen group (Cadre.dev); Home has no name there */}
+      {group ? '' : `${chosenName(groups, group)} `}{open ? '▴' : '▾'}
     </button>
   );
+}
+
+/** What follows the title's dot for the chosen group: "dev" for Dev ("Cadre.dev"); nothing for Home. */
+export function groupSuffix(group: string, groups: Group[]): string {
+  if (!group || !groups.length) return '';
+  return chosenName(groups, group).trim().toLowerCase().replace(/\s+/g, '-');
 }
