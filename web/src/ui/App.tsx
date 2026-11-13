@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
 import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { themeFavicon } from './GroupIcon';
 import { GroupBar, GroupMenuButton } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
@@ -37,6 +38,7 @@ export function App() {
   const machines = useMachines();
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
+  useEffect(() => themeFavicon(), []); // the tab icon in the theme's accent
   // the Python pages give the body a class on home only
   useEffect(() => {
     document.body.className = here.screen === 'home' ? 'home' : '';

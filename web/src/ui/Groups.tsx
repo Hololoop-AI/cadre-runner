@@ -1,5 +1,6 @@
 // The groups sidebar (model/groups.ts): Home (everything), each group, then
-// Other, down the left edge the way Discord lists servers. Choosing one
+// Other, down the left edge the way Discord lists servers, each as a neon
+// icon (GroupIcon.tsx). Choosing one
 // filters the Work list. React only, so its look lives in groups.css, not the
 // generated fleet.css; with no group defined it draws nothing.
 //
@@ -9,17 +10,11 @@
 // closes it again.
 
 import { OTHER, type Group } from '../model';
+import { GroupIcon } from './GroupIcon';
 import './groups.css';
 
 /** The entry that shows every item. The driver's word for the whole fleet is Home. */
 const EVERYTHING: Group = { id: '', name: 'Home' };
-
-/** Two letters for the round badge: "Personal" -> "Pe", "Home server" -> "HS". */
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length > 1) return (words[0][0] + words[1][0]).toUpperCase();
-  return [...(words[0] || '?')].slice(0, 2).join('');
-}
 
 /** What the chosen sidebar entry is called: Home, Other, or the group's name. */
 function chosenName(groups: Group[], group: string): string {
@@ -47,7 +42,7 @@ export function GroupBar({ groups, group, badges, shut, open, onPick, onShut }: 
           title={g.id === OTHER ? 'Work in no group: its project has none and no tag names one'
             : g.id === '' ? 'Show everything' : `Show ${g.name}`}
           onClick={() => onPick(g.id)}>
-          <span className="gi">{g.id === '' ? '⌂' : g.id === OTHER ? '…' : initials(g.name)}</span>
+          <span className="gi"><GroupIcon id={g.id} name={g.name} /></span>
           <span className="gn">{g.name}</span>
           {!!badges[g.id] && <span className="gb" title="items with a page you have not opened">{badges[g.id]}</span>}
         </button>
