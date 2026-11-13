@@ -497,7 +497,11 @@ export declare function groupTag(group: string, groups: Group[]): string;
 export declare const HOME_GROUP = "";
 /** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` (HOME_GROUP: everything). */
 export declare function inGroup(groups: string[], group: string): boolean;
-/** The group ids `it` is in, by the rules at the top of this file. */
+/**
+ * The group ids `it` is in, by the rules at the top of this file: from the
+ * groups its tags name (else from its project), up through every group
+ * above, so an item tagged with a nested group is in the groups holding it.
+ */
 export declare function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<string, Project>, groups: Group[]): string[];
 /** The sidebar entry for items in no group. */
 export declare const OTHER = "~other";

@@ -22,8 +22,9 @@ export function themeFavicon(doc: Document = document, accent: string = accentOf
 
 /**
  * Keep the tab icon in the theme's accent: draw it now, and again whenever the
- * theme could have changed (the root element's style, class or data-theme, or
- * a stylesheet added to or swapped in the head). Returns the stop function.
+ * theme could have changed: the root element's style, class or data-theme; a
+ * stylesheet added, removed, re-pointed or rewritten in the head; or one
+ * finishing loading (a new <link> applies only then). Returns the stop function.
  */
 export function followThemeFavicon(doc: Document = document): () => void {
   let last: string | null = null;
@@ -36,6 +37,10 @@ export function followThemeFavicon(doc: Document = document): () => void {
   draw();
   const watch = new MutationObserver(draw);
   watch.observe(doc.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] });
-  watch.observe(doc.head, { childList: true, subtree: true }); // a stylesheet added, swapped or rewritten
-  return () => watch.disconnect();
+  watch.observe(doc.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'media', 'disabled'] });
+  doc.addEventListener('load', draw, true); // a stylesheet's load does not bubble; capture sees it
+  return () => {
+    watch.disconnect();
+    doc.removeEventListener('load', draw, true);
+  };
 }

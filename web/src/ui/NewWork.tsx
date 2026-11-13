@@ -107,7 +107,7 @@ export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, li
       else d.setAttribute('open', ''); // jsdom has no showModal
       what.current?.focus();
     } else if (d.open) d.close();
-  }, [open, parent, tags]); // tags only change while the dialog is shut: the sidebar is behind it
+  }, [open, parent]); // eslint-disable-line react-hooks/exhaustive-deps -- tags are read on opening only: a later change (the fleet arriving) must not wipe what was typed
   const picks = useMemo(() => folderPicks(projs, home), [projs, home]);
   return (
     <dialog id="newwork" ref={dlg} onClose={onClose} data-open={dataOpen ? '' : undefined}>

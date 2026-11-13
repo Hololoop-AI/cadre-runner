@@ -160,15 +160,16 @@ export function layout(items: Item[], sel: Sel, opts: LayoutInput): Placed {
   // the twin of items.assignStates, as the page script redoes it in the browser
   const stored = (it: Item): State | '' => (it.state === DONE || it.state === HIDDEN ? it.state : '');
   // with a group chosen, the limit and the chips' counts are the group's own
-  const scope = opts.grouped ? new Set(items.filter(opts.grouped)) : null;
-  const live = items.filter((it) => !stored(it) && (!scope || scope.has(it)));
+  const scope = opts.grouped ? new Set(items.filter(opts.grouped).map((it) => it.key)) : null;
+  const inScope = (it: Item) => !scope || scope.has(it.key);
+  const live = items.filter((it) => !stored(it) && inScope(it));
   const busy = live.filter((it) => it.working).length;
   const quiet = live.filter((it) => !it.working).sort((a, b) => int(b.touched) - int(a.touched));
   const room = Math.max(0, opts.limit - busy);
   const rank = new Map(quiet.map((it, i) => [it, i]));
   const count: Record<string, number> = { unopened: 0 };
   const placed = items.map((it): Item => {
-    if (scope && !scope.has(it)) return it;
+    if (!inScope(it)) return it;
     const state = stored(it) || (it.working ? WORKING : (rank.get(it) ?? Infinity) < room ? YOUR_TURN : IDLE);
     count[state] = (count[state] || 0) + 1;
     if (it.unopened) count.unopened++;
@@ -179,7 +180,7 @@ export function layout(items: Item[], sel: Sel, opts: LayoutInput): Placed {
   const shown = placed.filter((it) =>
     (q || sel.show.includes(it.state)) && (!sel.unopened || it.unopened)
     && (!sel.tag || it.tags.includes(sel.tag)) && (!opts.proj || it.project === opts.proj)
-    && (!opts.grouped || opts.grouped(it))
+    && inScope(it)
     && (!q || opts.text(it).toLowerCase().includes(q)));
   // The page script's sort, which differs from items.order on purpose: it
   // reads the data-* attributes (whole seconds, spent to the cent) and keeps

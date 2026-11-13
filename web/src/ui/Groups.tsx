@@ -40,7 +40,7 @@ export function GroupBar({ groups, group, badges, shut, open, onPick, onShut }: 
         {shut ? '›' : '‹'}
       </button>
       {entries.map((g) => (
-        <button key={g === EVERYTHING ? 'home' : g.id} type="button" className={g.id === group ? 'on' : ''} aria-pressed={g.id === group}
+        <button key={g === EVERYTHING ? '~home' : g.id} type="button" className={g.id === group ? 'on' : ''} aria-pressed={g.id === group}
           title={g === NO_GROUP ? 'Work in no group: its project has none and no tag names one'
             : g === EVERYTHING ? 'Show everything' : `Show ${g.name}`}
           onClick={() => onPick(g.id)}>

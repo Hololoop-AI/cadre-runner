@@ -42,6 +42,10 @@ describe('itemGroups', () => {
     expect(itemGroups({ project: 'research', tags: [] }, PROJS, groups)).toEqual(['everyday']);
   });
 
+  it('climbs from a tagged nested group to the groups holding it', () => {
+    expect(itemGroups({ project: 'research', tags: ['cadre-runner'] }, PROJS, groups)).toEqual(['cadre-runner', 'dev']);
+  });
+
   it('lets a tag naming a group win over the project', () => {
     expect(itemGroups({ project: 'hitl', tags: ['everyday'] }, PROJS, groups)).toEqual(['everyday']);
     expect(itemGroups({ project: '', tags: ['cooking', 'Dev'] }, PROJS, groups)).toEqual(['dev']);

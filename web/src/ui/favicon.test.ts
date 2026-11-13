@@ -33,3 +33,18 @@ describe('followThemeFavicon', () => {
     expect(href()).toContain("stroke='#222222'");
   });
 });
+
+describe('followThemeFavicon, when a stylesheet carries the theme', () => {
+  it('redraws when a theme stylesheet is added to the head', async () => {
+    document.head.innerHTML = '<link rel="icon" href="data:,">';
+    document.documentElement.removeAttribute('style');
+    const stop = followThemeFavicon();
+    const style = document.createElement('style');
+    style.textContent = ':root{--accent:#445566}';
+    document.head.appendChild(style);
+    await Promise.resolve();
+    expect(decodeURIComponent(document.querySelector<HTMLLinkElement>('link[rel~=icon]')!.href)).toContain("stroke='#445566'");
+    stop();
+  });
+});
+

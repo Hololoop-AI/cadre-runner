@@ -41,19 +41,45 @@ export function fleetGroups(projs: Record<string, Project>): Group[] {
   return live.filter((p) => named.has(p.id) || (Array.isArray(p.dirs) && !p.dirs.length)).map((p) => ({ id: p.id, name: p.name }));
 }
 
-/** The group ids `it` is in, by the rules at the top of this file. */
+/** A group list's lookups, built once per list (buildHome files every item against the same one). */
+interface GroupIndex {
+  ids: Set<string>;
+  /** a tag, lower-cased -> the group whose name or id it is */
+  byWord: Map<string, string>;
+}
+const INDEXES = new WeakMap<Group[], GroupIndex>();
+
+function indexOf(groups: Group[]): GroupIndex {
+  let idx = INDEXES.get(groups);
+  if (!idx) {
+    const byWord = new Map<string, string>();
+    for (const g of groups) {
+      byWord.set(g.id.toLowerCase(), g.id);
+      byWord.set(g.name.toLowerCase(), g.id);
+    }
+    idx = { ids: new Set(groups.map((g) => g.id)), byWord };
+    INDEXES.set(groups, idx);
+  }
+  return idx;
+}
+
+/**
+ * The group ids `it` is in, by the rules at the top of this file: from the
+ * groups its tags name (else from its project), up through every group
+ * above, so an item tagged with a nested group is in the groups holding it.
+ */
 export function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<string, Project>, groups: Group[]): string[] {
-  const words = new Set(it.tags.map((t) => t.toLowerCase()));
-  const tagged = groups.filter((g) => words.has(g.name.toLowerCase()) || words.has(g.id.toLowerCase())).map((g) => g.id);
-  if (tagged.length) return tagged;
-  const ids = new Set(groups.map((g) => g.id));
+  const { ids, byWord } = indexOf(groups);
+  const tagged = it.tags.map((t) => byWord.get(t.toLowerCase())).filter((g): g is string => !!g);
   const out: string[] = [];
   const seen = new Set<string>();
   // the item's project may be named by name rather than id; projects.ts resolved it already
-  for (let node: string | null | undefined = it.project; node && !seen.has(node); ) {
-    seen.add(node);
-    if (ids.has(node)) out.push(node);
-    node = own(projs, node)?.group;
+  for (const start of tagged.length ? tagged : [it.project]) {
+    for (let node: string | null | undefined = start; node && !seen.has(node); ) {
+      seen.add(node);
+      if (ids.has(node)) out.push(node);
+      node = own(projs, node)?.group;
+    }
   }
   return out;
 }
