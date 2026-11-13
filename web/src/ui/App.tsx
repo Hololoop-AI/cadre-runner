@@ -5,7 +5,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveView, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { followThemeFavicon } from './favicon';
+import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
@@ -27,6 +29,9 @@ import { WorkList } from './WorkList';
 /** Forms inside the Work list that post without leaving the app. */
 const LIST_POSTS = ['/items', '/tasks', '/repair'];
 
+/** No groups yet: one array, so memos keyed on it hold while the fleet loads. */
+const NO_GROUPS: never[] = [];
+
 /**
  * The fleet app: the home page, or one of the other screens by path, for the
  * machine chosen in the header (this one until another is chosen).
@@ -36,6 +41,7 @@ export function App() {
   const machines = useMachines();
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
+  useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
   // the Python pages give the body a class on home only
   useEffect(() => {
     document.body.className = here.screen === 'home' ? 'home' : '';
@@ -96,7 +102,13 @@ function Home({ machines }: { machines: Machines }) {
     [fleet, view, now, archivedHere, server]);
   const projects = useProjectOptions(home, reloads);
   const { proj, sort, limit } = effectiveView(sel, view, projects);
-  const laid = useWorkLayout(home, sel, { q, proj, sort, limit });
+  const groups = home?.groups ?? NO_GROUPS;
+  const group = effectiveGroup(sel.group, groups);
+  const [groupsOpen, setGroupsOpen] = useState(false); // a phone's groups, opened from the header
+  const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
+    [home, group]);
+  const badges = useMemo(() => (home ? groupBadges(home.items, home.member, groups) : {}), [home, groups]);
+  const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
   const found = useFind(q, home);
 
   const onToggle = useCallback((key: string, isOpen: boolean) => setOpen((cur) => {
@@ -141,9 +153,14 @@ function Home({ machines }: { machines: Machines }) {
 
   return (
     <>
+      {home && <GroupBar groups={groups} group={group} badges={badges}
+        shut={!!sel.groupsShut} open={groupsOpen} onPick={(id) => { keep({ group: id }); setGroupsOpen(false); }}
+        onShut={(shut) => keep({ groupsShut: shut })} />}
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
-          onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />} />
+          onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
+          groupName={groupSuffix(group, groups)}
+          menu={<GroupMenuButton groups={groups} group={group} open={groupsOpen} onToggle={() => setGroupsOpen((o) => !o)} />} />
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
         <div id="fleet-running">
@@ -174,6 +191,7 @@ function Home({ machines }: { machines: Machines }) {
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}
+        tags={groupTag(group, groups)}
         onClose={() => setWork((w) => ({ ...w, open: false }))}
         error={workError}
         onSubmit={(fm) => {

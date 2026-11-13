@@ -17,6 +17,7 @@ export {
   type Item, type State,
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
+export { effectiveGroup, fleetGroups, groupBadges, groupTag, HOME_GROUP, inGroup, itemGroups, OTHER, type Group } from './groups';
 export { liveProjects } from './projects';
 export { ancestors, clean, descendants, kidsOf, parentsOf } from './tree';
 export type { Tree } from './tree';

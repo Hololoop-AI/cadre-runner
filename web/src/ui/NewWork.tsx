@@ -82,6 +82,8 @@ export interface NewWorkProps {
   projs: Record<string, Project>;
   home: string;
   lib: LibraryEntry[];
+  /** what Tags starts with each time the dialog opens: the sidebar's group, if one is chosen */
+  tags?: string;
   /** why the last Start did not reach the server, shown in the dialog */
   error?: string;
   onClose: () => void;
@@ -89,21 +91,23 @@ export interface NewWorkProps {
 }
 
 /** The New work dialog the header's + New work (or an item's New work under this) opens. */
-export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, lib, error, onClose, onSubmit }: NewWorkProps) {
+export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, lib, tags = '', error, onClose, onSubmit }: NewWorkProps) {
   const dlg = useRef<HTMLDialogElement>(null);
   const what = useRef<HTMLTextAreaElement>(null);
   const [dir, setDir] = useState('');
   const [under, setUnder] = useState(parent ?? '');
+  const [tagText, setTagText] = useState(tags);
   useEffect(() => {
     const d = dlg.current;
     if (!d) return;
     if (open) {
       if (parent != null) setUnder(parent);
+      setTagText(tags);
       if (d.showModal && !d.open) d.showModal();
       else d.setAttribute('open', ''); // jsdom has no showModal
       what.current?.focus();
     } else if (d.open) d.close();
-  }, [open, parent]);
+  }, [open, parent]); // eslint-disable-line react-hooks/exhaustive-deps -- tags are read on opening only: a later change (the fleet arriving) must not wipe what was typed
   const picks = useMemo(() => folderPicks(projs, home), [projs, home]);
   return (
     <dialog id="newwork" ref={dlg} onClose={onClose} data-open={dataOpen ? '' : undefined}>
@@ -124,7 +128,8 @@ export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, li
           {parents.map(([k, t]) => <option key={k} value={k}>{[...t].slice(0, 90).join('')}</option>)}
         </select>
         <label htmlFor="newtags">Tags</label>
-        <input id="newtags" name="tags" placeholder="comma separated, e.g. cadre, ux" />
+        <input id="newtags" name="tags" placeholder="comma separated, e.g. cadre, ux" value={tagText}
+          onChange={(e) => setTagText(e.target.value)} />
         <label>Use a skill (optional)</label>
         <RunPicker lib={lib} />
         {error && <p className="notice">{error}</p>}

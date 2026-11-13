@@ -65,11 +65,15 @@ export interface Sel {
   sort: string;
   limit: number;
   idleOpen: boolean;
+  /** the sidebar's group: groups.HOME_GROUP (everything), groups.OTHER, or a group id (React only) */
+  group: string;
+  /** the sidebar is folded to a thin rail (React only) */
+  groupsShut: boolean;
 }
 
 /** The kept view, with a link's ?show= ?sort= ?tag= ?limit= winning over it. */
 export function loadSel(search: string, storage: Storage | null): Sel {
-  const sel: Sel = { show: [...HOME], unopened: false, tag: '', proj: '', sort: '', limit: 0, idleOpen: false };
+  const sel: Sel = { show: [...HOME], unopened: false, tag: '', proj: '', sort: '', limit: 0, idleOpen: false, group: '', groupsShut: false };
   try {
     Object.assign(sel, JSON.parse(storage?.getItem(VIEW_KEY) || '{}'));
   } catch {
@@ -79,6 +83,7 @@ export function loadSel(search: string, storage: Storage | null): Sel {
   if (q.get('sort')) sel.sort = q.get('sort')!;
   if (q.get('limit')) sel.limit = +q.get('limit')! || 0;
   if (q.has('tag')) sel.tag = q.get('tag')!;
+  if (q.has('group')) sel.group = q.get('group')!;
   if (q.has('show')) {
     const v = q.get('show');
     sel.unopened = v === 'unopened';
@@ -133,6 +138,8 @@ export interface LayoutInput {
   q: string;
   /** the project filter, '' for all */
   proj: string;
+  /** the sidebar's group filter: whether an item is in the chosen group (absent: every item) */
+  grouped?: (it: Item) => boolean;
   sort: string;
   limit: number;
   /** an item's visible text, which find matches */
@@ -152,13 +159,17 @@ const spent = (it: Item) => parseFloat(pyFixed(it.spent, 2));
 export function layout(items: Item[], sel: Sel, opts: LayoutInput): Placed {
   // the twin of items.assignStates, as the page script redoes it in the browser
   const stored = (it: Item): State | '' => (it.state === DONE || it.state === HIDDEN ? it.state : '');
-  const live = items.filter((it) => !stored(it));
+  // with a group chosen, the limit and the chips' counts are the group's own
+  const scope = opts.grouped ? new Set(items.filter(opts.grouped).map((it) => it.key)) : null;
+  const inScope = (it: Item) => !scope || scope.has(it.key);
+  const live = items.filter((it) => !stored(it) && inScope(it));
   const busy = live.filter((it) => it.working).length;
   const quiet = live.filter((it) => !it.working).sort((a, b) => int(b.touched) - int(a.touched));
   const room = Math.max(0, opts.limit - busy);
   const rank = new Map(quiet.map((it, i) => [it, i]));
   const count: Record<string, number> = { unopened: 0 };
   const placed = items.map((it): Item => {
+    if (!inScope(it)) return it;
     const state = stored(it) || (it.working ? WORKING : (rank.get(it) ?? Infinity) < room ? YOUR_TURN : IDLE);
     count[state] = (count[state] || 0) + 1;
     if (it.unopened) count.unopened++;
@@ -169,6 +180,7 @@ export function layout(items: Item[], sel: Sel, opts: LayoutInput): Placed {
   const shown = placed.filter((it) =>
     (q || sel.show.includes(it.state)) && (!sel.unopened || it.unopened)
     && (!sel.tag || it.tags.includes(sel.tag)) && (!opts.proj || it.project === opts.proj)
+    && inScope(it)
     && (!q || opts.text(it).toLowerCase().includes(q)));
   // The page script's sort, which differs from items.order on purpose: it
   // reads the data-* attributes (whole seconds, spent to the cent) and keeps
