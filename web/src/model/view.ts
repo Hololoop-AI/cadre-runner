@@ -65,7 +65,7 @@ export interface Sel {
   sort: string;
   limit: number;
   idleOpen: boolean;
-  /** the sidebar's group: '' All, groups.OTHER, or a group id (React only) */
+  /** the sidebar's group: groups.HOME_GROUP (everything), groups.OTHER, or a group id (React only) */
   group: string;
   /** the sidebar is folded to a thin rail (React only) */
   groupsShut: boolean;

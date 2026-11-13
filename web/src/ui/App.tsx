@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
 import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
-import { followThemeFavicon } from './GroupIcon';
+import { followThemeFavicon } from './favicon';
 import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
 import { Header } from './Header';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
@@ -28,6 +28,9 @@ import { WorkList } from './WorkList';
 
 /** Forms inside the Work list that post without leaving the app. */
 const LIST_POSTS = ['/items', '/tasks', '/repair'];
+
+/** No groups yet: one array, so memos keyed on it hold while the fleet loads. */
+const NO_GROUPS: never[] = [];
 
 /**
  * The fleet app: the home page, or one of the other screens by path, for the
@@ -99,11 +102,12 @@ function Home({ machines }: { machines: Machines }) {
     [fleet, view, now, archivedHere, server]);
   const projects = useProjectOptions(home, reloads);
   const { proj, sort, limit } = effectiveView(sel, view, projects);
-  const groups = home?.groups ?? [];
+  const groups = home?.groups ?? NO_GROUPS;
   const group = effectiveGroup(sel.group, groups);
   const [groupsOpen, setGroupsOpen] = useState(false); // a phone's groups, opened from the header
   const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
+  const badges = useMemo(() => (home ? groupBadges(home.items, home.member, groups) : {}), [home, groups]);
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
   const found = useFind(q, home);
 
@@ -149,13 +153,13 @@ function Home({ machines }: { machines: Machines }) {
 
   return (
     <>
-      {home && <GroupBar groups={groups} group={group} badges={groupBadges(home.items, home.member, groups)}
+      {home && <GroupBar groups={groups} group={group} badges={badges}
         shut={!!sel.groupsShut} open={groupsOpen} onPick={(id) => { keep({ group: id }); setGroupsOpen(false); }}
         onShut={(shut) => keep({ groupsShut: shut })} />}
       <div className="wrap">
         <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
-          cadre={groupSuffix(group, groups)}
+          groupName={groupSuffix(group, groups)}
           menu={<GroupMenuButton groups={groups} group={group} open={groupsOpen} onToggle={() => setGroupsOpen((o) => !o)} />} />
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}

@@ -481,19 +481,21 @@ export interface GraphRow {
     round: Earlier | null;
 }
 // --- from groups.ts
-/** The kept group while the sidebar still offers it, else Home (''). */
+/** The kept group while the sidebar still offers it, else HOME_GROUP. */
 export declare function effectiveGroup(kept: string, groups: Group[]): string;
 /** The groups, by name: live projects at least one live project belongs to, or with no folder. */
 export declare function fleetGroups(projs: Record<string, Project>): Group[];
 /**
- * The sidebar's badge: per entry ('' for Home, OTHER, each group id), how
+ * The sidebar's badge: per entry (HOME_GROUP, OTHER, each group id), how
  * many items still on the home page (not done, not hidden) carry a page
  * the driver has not opened.
  */
 export declare function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number>;
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
 export declare function groupTag(group: string, groups: Group[]): string;
-/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is Home: everything). */
+/** The sidebar entry for every item: the whole fleet, which the sidebar calls Home. */
+export declare const HOME_GROUP = "";
+/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` (HOME_GROUP: everything). */
 export declare function inGroup(groups: string[], group: string): boolean;
 /** The group ids `it` is in, by the rules at the top of this file. */
 export declare function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<string, Project>, groups: Group[]): string[];
@@ -583,7 +585,7 @@ export interface Sel {
     sort: string;
     limit: number;
     idleOpen: boolean;
-    /** the sidebar's group: '' All, groups.OTHER, or a group id (React only) */
+    /** the sidebar's group: groups.HOME_GROUP (everything), groups.OTHER, or a group id (React only) */
     group: string;
     /** the sidebar is folded to a thin rail (React only) */
     groupsShut: boolean;

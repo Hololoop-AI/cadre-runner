@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followThemeFavicon, themeFavicon } from './GroupIcon';
+import { followThemeFavicon, themeFavicon } from './favicon';
 
 // The tab icon is drawn in whatever --accent the page has when it is called,
 // so a theme switch that calls it again recolours the tab.

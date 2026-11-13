@@ -17,10 +17,13 @@
 // (the New work dialog prefills Tags), so work begun without a project lands
 // in the group the driver was looking at.
 
-import { cmp, hasKey } from './format';
+import { own } from './format';
 import { DONE, HIDDEN, type Item } from './items';
 import type { Project } from './payload';
 import { liveProjects } from './projects';
+
+/** The sidebar entry for every item: the whole fleet, which the sidebar calls Home. */
+export const HOME_GROUP = '';
 
 /** The sidebar entry for items in no group. */
 export const OTHER = '~other';
@@ -35,8 +38,7 @@ export interface Group {
 export function fleetGroups(projs: Record<string, Project>): Group[] {
   const live = liveProjects(projs);
   const named = new Set(live.map((p) => p.group).filter((g): g is string => !!g));
-  return live.filter((p) => named.has(p.id) || !p.dirs?.length).map((p) => ({ id: p.id, name: p.name }))
-    .sort((a, b) => cmp(a.name.toLowerCase(), b.name.toLowerCase()));
+  return live.filter((p) => named.has(p.id) || (Array.isArray(p.dirs) && !p.dirs.length)).map((p) => ({ id: p.id, name: p.name }));
 }
 
 /** The group ids `it` is in, by the rules at the top of this file. */
@@ -51,38 +53,38 @@ export function itemGroups(it: Pick<Item, 'project' | 'tags'>, projs: Record<str
   for (let node: string | null | undefined = it.project; node && !seen.has(node); ) {
     seen.add(node);
     if (ids.has(node)) out.push(node);
-    node = hasKey(projs, node) ? projs[node].group : null;
+    node = own(projs, node)?.group;
   }
   return out;
 }
 
-/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` ('' is Home: everything). */
+/** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` (HOME_GROUP: everything). */
 export function inGroup(groups: string[], group: string): boolean {
   return !group || (group === OTHER ? !groups.length : groups.includes(group));
 }
 
 /**
- * The sidebar's badge: per entry ('' for Home, OTHER, each group id), how
+ * The sidebar's badge: per entry (HOME_GROUP, OTHER, each group id), how
  * many items still on the home page (not done, not hidden) carry a page
  * the driver has not opened.
  */
 export function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number> {
-  const out: Record<string, number> = { '': 0, [OTHER]: 0 };
+  const out: Record<string, number> = { [HOME_GROUP]: 0, [OTHER]: 0 };
   for (const g of groups) out[g.id] = 0;
   for (const it of items) {
     if (!it.unopened || it.state === DONE || it.state === HIDDEN) continue;
     const mine = member[it.key] || [];
-    out['']++;
+    out[HOME_GROUP]++;
     if (!mine.length) out[OTHER]++;
     for (const g of mine) out[g]++;
   }
   return out;
 }
 
-/** The kept group while the sidebar still offers it, else Home (''). */
+/** The kept group while the sidebar still offers it, else HOME_GROUP. */
 export function effectiveGroup(kept: string, groups: Group[]): string {
-  if (!groups.length || !kept) return '';
-  return kept === OTHER || groups.some((g) => g.id === kept) ? kept : '';
+  if (!groups.length || !kept) return HOME_GROUP;
+  return kept === OTHER || groups.some((g) => g.id === kept) ? kept : HOME_GROUP;
 }
 
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */

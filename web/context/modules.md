@@ -26,7 +26,7 @@ depends on nothing. Each module is reached only through its `index.ts`
 - **Contract:** `contracts/statusd.openapi.json` (every endpoint the app may call; checked by `tests/test_web_contract.py`) · **Decision:** context/decisions/0002-statusd-http-contract.md
 
 ## ui
-- **Owns:** drawing the home page and the library, costs, runs, session-tree, project and manage screens exactly as statusd.py draws them (render_home, render_library, render_costs, render_runs, render_tree, render_project, render_page): same elements, same classes, the Python page's stylesheet (`src/ui/fleet.css`, generated); plus the groups sidebar, which the Python page lacks and which draws nothing until a group exists (`src/ui/Groups.tsx`, its icons and the themed tab icon in `src/ui/GroupIcon.tsx`, its own `groups.css`). `ui/router.ts` picks the screen by path; `ui/server.tsx` the machine.
+- **Owns:** drawing the home page and the library, costs, runs, session-tree, project and manage screens exactly as statusd.py draws them (render_home, render_library, render_costs, render_runs, render_tree, render_project, render_page): same elements, same classes, the Python page's stylesheet (`src/ui/fleet.css`, generated); plus the groups sidebar, which the Python page lacks and which draws nothing until a group exists (`src/ui/Groups.tsx`, its icons in `src/ui/GroupIcon.tsx`, its own `groups.css`); and the tab icon drawn in the theme's accent (`src/ui/favicon.ts`). `ui/router.ts` picks the screen by path; `ui/server.tsx` the machine.
 - **Entry:** `src/ui/index.ts` (only public import path: `App`)
 - **Public API:** snapshot at `api/ui.api.d.ts`
 - **May depend on:** `model`, `api`, react · **Must not depend on:** anything under another module's directory

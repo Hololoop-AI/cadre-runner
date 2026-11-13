@@ -1,51 +1,58 @@
 /* The groups sidebar (Groups.tsx). React only: the Python page has no
    sidebar, so this is not part of the generated fleet.css. Colours are
    fleet.css's variables. Wide: a rail down the left that folds. Phone:
-   hidden until the header's group button (button.gmenu) opens it. */
-body.home:has(nav.groups){padding-left:52px}
-nav.groups{position:fixed;left:0;top:0;bottom:0;width:44px;box-sizing:border-box;padding:10px 4px;
- display:flex;flex-direction:column;gap:8px;align-items:center;background:var(--sunk);
- border-right:1px solid var(--border);overflow-y:auto;z-index:5}
+   hidden until the header's group button (button.gmenu) opens it. Each
+   layout lives in its own media block, so neither has to undo the other. */
+
+/* Both layouts: the entries. `body.home` outranks fleet.css's button rules. */
 body.home nav.groups button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;
- width:100%;padding:3px 0;border:0;background:transparent;color:var(--muted);font-size:11px}
+ padding:3px 0;border:0;background:transparent;color:var(--muted);font-size:11px}
 /* the icon: neon strokes in the button's colour (GroupIcon.tsx), glowing in it */
 nav.groups .gi{display:grid;place-items:center;width:30px;height:30px;color:var(--label);transition:color .15s,filter .15s}
 nav.groups .gsvg{width:100%;height:100%;overflow:visible}
 nav.groups button:hover .gi{color:var(--fg);filter:drop-shadow(0 0 2px currentColor)}
 nav.groups button.on .gi{color:var(--accent);filter:drop-shadow(0 0 3px currentColor)}
 nav.groups button.on .gn{color:var(--fg)}
-nav.groups button.on::before{content:"";position:absolute;left:-4px;top:6px;height:24px;width:3px;
- border-radius:0 3px 3px 0;background:var(--accent)}
-body.home nav.groups button.gfold{width:auto;padding:0 4px;font-size:15px;line-height:18px;color:var(--muted)}
-body.home nav.groups button.gfold:hover{color:var(--fg)}
-body.home:has(nav.groups.shut){padding-left:28px}
-nav.groups.shut{width:20px;padding:8px 0}
-nav.groups.shut button:not(.gfold){display:none}
-body.home header button.gmenu{display:none}
-/* on the rail the name is the tooltip and what a screen reader says; the phone strip shows it */
-nav.groups .gn{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 nav.groups .gb{position:absolute;top:0;right:2px;min-width:14px;padding:0 3px;box-sizing:border-box;
  border-radius:7px;background:var(--ok);color:var(--on-accent);font:600 9px/14px var(--sans)}
-@media (max-width:640px){
- body.home:has(nav.groups),body.home:has(nav.groups.shut){padding-left:0}
- nav.groups,nav.groups.shut{display:none}
- nav.groups.open{display:flex;position:static;width:auto;flex-direction:row;padding:8px 12px;border-right:0;
-  border-bottom:1px solid var(--border);overflow-x:auto}
- nav.groups.open button:not(.gfold){display:flex}
- body.home nav.groups button.gfold{display:none}
- body.home nav.groups button{width:auto;min-width:52px}
- nav.groups button.on::before{display:none}
- nav.groups.open .gn{position:static;width:auto;height:auto;overflow:hidden;clip-path:none;max-width:60px;text-overflow:ellipsis}
- nav.groups.open .gi{width:34px;height:34px}
- body.home header:has(button.gmenu) h1{flex-basis:auto}
- body.home header button.gmenu{display:inline-flex;align-items:center;gap:4px;margin-right:auto;padding:3px 10px;
-  border:1px solid var(--border);border-radius:999px;background:var(--card-2);color:var(--fg);font-size:13px}
-}
 /* Home, chosen: the Hololoop mark breathes, rings staggered (hololoop-site RingMark.astro) */
 @keyframes hlbreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
 nav.groups button.on .breathe circle{transform-box:fill-box;transform-origin:center;animation:hlbreathe 6s ease-in-out infinite}
 nav.groups button.on .breathe .rm{animation-delay:.5s}
 nav.groups button.on .breathe .ri{animation-delay:1s}
 /* the title names the chosen group: Cadre.dev */
-body.home header h1 .cadre{color:var(--accent)}
+body.home header h1 .group{color:var(--accent)}
+
+/* Wide: a fixed rail that folds to a sliver; the names are tooltips. */
+@media (min-width:641px){
+ body.home:has(nav.groups){padding-left:52px}
+ body.home:has(nav.groups.shut){padding-left:28px}
+ nav.groups{position:fixed;left:0;top:0;bottom:0;width:44px;box-sizing:border-box;padding:10px 4px;
+  display:flex;flex-direction:column;gap:8px;align-items:center;background:var(--sunk);
+  border-right:1px solid var(--border);overflow-y:auto;z-index:5}
+ nav.groups.shut{width:20px;padding:8px 0}
+ nav.groups.shut button:not(.gfold){display:none}
+ body.home nav.groups button{width:100%}
+ body.home nav.groups button.gfold{width:auto;padding:0 4px;font-size:15px;line-height:18px}
+ body.home nav.groups button.gfold:hover{color:var(--fg)}
+ nav.groups button.on::before{content:"";position:absolute;left:-4px;top:6px;height:24px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--accent)}
+ /* the name is the tooltip and what a screen reader says */
+ nav.groups .gn{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+ body.home header button.gmenu{display:none}
+}
+
+/* Phone: no rail; the header's button opens a strip with names, picking one closes it. */
+@media (max-width:640px){
+ nav.groups:not(.open){display:none}
+ nav.groups.open{display:flex;gap:10px;padding:8px 12px;background:var(--sunk);
+  border-bottom:1px solid var(--border);overflow-x:auto}
+ body.home nav.groups button{min-width:52px}
+ body.home nav.groups button.gfold{display:none}
+ nav.groups .gi{width:34px;height:34px}
+ nav.groups .gn{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ body.home header:has(button.gmenu) h1{flex-basis:auto}
+ body.home header button.gmenu{display:inline-flex;align-items:center;gap:4px;margin-right:auto;padding:3px 10px;
+  border:1px solid var(--border);border-radius:999px;background:var(--card-2);color:var(--fg);font-size:13px}
+}
 @media (prefers-reduced-motion:reduce){nav.groups .gi{transition:none}nav.groups button.on .breathe circle{animation:none}}

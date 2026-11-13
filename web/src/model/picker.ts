@@ -3,7 +3,7 @@
 // folder files under (the page script's hint()).
 
 import type { LibraryEntry, Project } from './payload';
-import { homePath } from './format';
+import { homePath, s } from './format';
 import { liveProjects } from './projects';
 
 const HINT = 'The project is the one that owns this folder; a folder no project owns becomes a new project.';
@@ -63,6 +63,6 @@ export function projectHint(value: string, home: string, projs: Record<string, P
 
 /** The folder buttons under the field: each live project's first folder, written with ~. */
 export function folderPicks(projs: Record<string, Project>, home: string): string[] {
-  return [...new Set(liveProjects(projs).map((p) => String(p.dirs?.[0] ?? '')))]
+  return [...new Set(liveProjects(projs).map((p) => s(p.dirs?.[0])))]
     .filter(Boolean).map((d) => homePath(d, home));
 }
