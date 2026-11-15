@@ -422,33 +422,29 @@ def test_session_links_point_at_the_framed_view():
     assert statusd.view_href(None) == ""
 
 
-def test_view_frames_the_session_under_a_way_back():
+def test_the_frame_reads_its_session_and_title_and_refuses_a_bad_key():
+    """/view/<key> is the React app's screen; what it reads is /api/view/<key>."""
+    assert statusd.REACT_ROUTE.match("/view/ef6c7a101f9b55b3")
     with tempfile.TemporaryDirectory() as root:
-        srv = _Server(Path(root) / "status")
+        d = Path(root) / "status"
+        d.mkdir(parents=True)
+        (d / "status.json").write_text(json.dumps({"surfaces": [
+            {"kind": "task", "task": "task-x", "path": "/session/ef6c7a101f9b55b3",
+             "title": "Pantry plan"}]}))
+        srv = _Server(d)
         try:
-            code, body = srv.get("/view/ef6c7a101f9b55b3")
-            assert code == 200
-            assert '<a href="/">← fleet</a>' in body
-            assert '<iframe id="surface" src="/session/ef6c7a101f9b55b3"' in body
-            assert 'href="/session/ef6c7a101f9b55b3" target="_blank"' in body
-            for bad in ("/view/..%2Fetc", "/view/a%22b", "/view/"):
+            code, body = srv.get("/api/view/ef6c7a101f9b55b3")
+            assert code == 200 and json.loads(body) == {
+                "key": "ef6c7a101f9b55b3", "session": "/session/ef6c7a101f9b55b3",
+                "title": "Pantry plan", "task": "task-x"}
+            # a page the snapshot does not know still frames, with no study box
+            assert json.loads(srv.get("/api/view/aaaaaaaaaaaaaaaa")[1])["task"] is None
+            for bad in ("/api/view/..%2Fetc", "/api/view/a%22b", "/api/view/"):
                 try:
                     srv.get(bad)
                     raise AssertionError(f"{bad} was served")
                 except urllib.error.HTTPError as e:
                     assert e.code == 404
-        finally:
-            srv.close()
-
-
-def test_view_declares_the_page_servers_icon():
-    # The frame is the tab's top document, so its icon is the tab's icon. Without one,
-    # Chrome asks for /favicon.ico and remembers the answer, a 404 included.
-    with tempfile.TemporaryDirectory() as root:
-        srv = _Server(Path(root) / "status")
-        try:
-            _, body = srv.get("/view/ef6c7a101f9b55b3")
-            assert '<link rel="icon" type="image/svg+xml" href="/favicon.ico?v=2">' in body
         finally:
             srv.close()
 
@@ -462,6 +458,15 @@ def test_proxy_lets_only_the_fleet_frame_a_session():
     assert statusd.framable_header("/api/k/prompts", "X-Frame-Options", "DENY") == "DENY"
     assert statusd.framable_header("/artifact/k", "Content-Security-Policy", deny) == deny
     assert statusd.framable_header("/session/k", "Content-Type", "text/html") == "text/html"
+
+
+def test_a_configured_machines_app_may_frame_a_session_too(monkeypatch):
+    # the React app on another machine frames this machine's page when that
+    # machine's app has this one chosen; nobody else may
+    monkeypatch.setattr(statusd, "CORS_ORIGINS", {"http://fedora-2:8183"})
+    assert statusd.framable_header("/session/k", "Content-Security-Policy",
+                                   "default-src 'self'; frame-ancestors 'none'") == \
+        "default-src 'self'; frame-ancestors 'self' http://fedora-2:8183"
 
 
 def _runs_fixture(root: Path):

@@ -1,13 +1,12 @@
 // The fleet model: statusd.py's home-page logic in TypeScript, pure (no
 // React, no network, no DOM). Each function is named after the Python one it
-// copies, so a change on one side can be found on the other. This file is
-// the module's only public entry; the parity harness (web/parity/) is what
-// proves the copies still agree.
+// copied, so where a rule came from can still be found. This file is the
+// module's only public entry.
 
 export type {
   Backend, Backends, ClosedPage, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
   PageOwner, PagePayload, ProjectContext, ProjectPayload, TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
-  RunningCard, SessionStatus, Surface, TreeNode,
+  RunningCard, SessionStatus, Surface, TreeNode, ViewInfo,
 } from './payload';
 export { cmp, escapedCut, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';
 export { collapse, findPages, keyOf, statusOf, type Hit } from './conversations';

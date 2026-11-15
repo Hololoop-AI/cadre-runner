@@ -19,11 +19,11 @@ def test_the_surface_theme_carries_the_themes_colours():
     assert have == theme.surface_vars(), "surface-theme.css drifted from runnerlib/theme.py"
 
 
-def test_the_fleet_page_and_the_framed_view_take_their_colours_from_the_theme():
-    for css in (statusd._CSS, statusd._HOME_CSS, statusd._VIEW_CSS):
+def test_the_fleet_stylesheet_takes_its_colours_from_the_theme():
+    for css in (statusd._CSS, statusd._HOME_CSS):
         stray = set(re.findall(r"#[0-9a-fA-F]{6}\b", css)) - set(theme.colours().values())
         assert not stray, f"colours outside the theme: {stray}"
-    assert theme.fleet_root() in statusd._CSS and theme.fleet_root() in statusd._VIEW_CSS
+    assert theme.fleet_root() in statusd._CSS
 
 
 def test_every_role_is_a_colour_of_the_palette():

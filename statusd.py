@@ -150,7 +150,7 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # The fleet's screens, all drawn by the React app (web/src/ui/router.ts routes
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
-REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree)$|^/(tree|project|page)/[^/]+$")
+REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree)$|^/(tree|project|page|view)/[^/]+$")
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -163,8 +163,10 @@ SCREEN_API_PATHS = {"/api/library": "library", "/api/costs": "costs", "/api/runs
 RUNS_LIMIT = 200
 # A surface opens inside the fleet's own frame, so the fleet stays one click
 # away. Opening review-surface's /session/<key> as the whole tab left the
-# driver with nothing to click but the browser's back button.
+# driver with nothing to click but the browser's back button. The frame is a
+# screen of the React app (REACT_ROUTE); what it reads is VIEW_API_PATH<key>.
 VIEW_PATH = "/view/"
+VIEW_API_PATH = "/api/view/"
 # Your deck (personal plus the team cards synced into it), and where a study
 # session is started from a page or from the deck.
 CARDS_PATH = "/cards"
@@ -195,7 +197,10 @@ def framable_header(path: str, name: str, value: str):
 
     review-surface refuses all framing of /session/<key> by default. Through
     this proxy the fleet and the session share one origin, so allowing 'self'
-    lets exactly the fleet frame it and still refuses every other site.
+    lets this machine's fleet frame it. The React app on another configured
+    machine (CORS_ORIGINS: the same origins that may read this API) frames it
+    too when that machine's app has this one chosen; every other site is
+    still refused.
     Returns the value to send, or None to drop the header."""
     if not path.startswith(SESSION_PREFIX):
         return value
@@ -203,80 +208,22 @@ def framable_header(path: str, name: str, value: str):
     if lname == "x-frame-options":
         return None
     if lname == "content-security-policy":
-        return value.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+        return value.replace("frame-ancestors 'none'", " ".join(["frame-ancestors 'self'",
+                                                                 *sorted(CORS_ORIGINS)]))
     return value
 
 
-_VIEW_CSS = theme_mod.fleet_root() + """
-html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
-  font:14px/1.4 system-ui,sans-serif}
-body{display:flex;flex-direction:column}
-.bar{display:flex;gap:1rem;align-items:center;padding:.45rem .9rem;
-  border-bottom:1px solid var(--border);flex:none}
-.bar a{color:var(--accent);text-decoration:none}
-.bar a:hover{text-decoration:underline}
-.bar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  color:var(--muted)}
-iframe{flex:1;border:0;width:100%;background:var(--bg)}
-.bar .study{display:flex;gap:.35rem}
-.bar .study input{background:var(--card-2);color:var(--fg);border:1px solid var(--border);
-  border-radius:4px;padding:.2rem .45rem;width:16rem;font:inherit}
-.bar .study button{background:var(--card-2);color:var(--accent);border:1px solid var(--border);
-  border-radius:4px;padding:.2rem .6rem;font:inherit;cursor:pointer}
-.bar .notice{color:var(--ok)}
-"""
-
-# The frame is same-origin with this page (both come through this server), so
-# the bar can read the surface's own title, and follow it when a link inside
-# the surface moves the frame to another surface.
-_VIEW_JS = """
-const f=document.getElementById('surface'),t=document.getElementById('title'),
-  alone=document.getElementById('alone');
-f.addEventListener('load',()=>{try{const d=f.contentDocument;
-  if(d&&d.title){t.textContent=d.title;document.title=d.title+' — Cadre';}
-  const p=f.contentWindow.location.pathname;
-  if(p.startsWith('/session/')){alone.href=p;
-    history.replaceState(null,'','/view/'+p.slice(9));}
-}catch(e){}});
-"""
-
-
-def task_for_view(key: str, snap: dict | None = None) -> dict | None:
-    """The snapshot's row for the page this key opens, when it is a dialogue's
-    page: its task id, directory and file. The bar's study box needs them, and
-    the snapshot is what this server reads instead of the registry."""
-    snap = read_snapshot() if snap is None else snap
-    for r in snap.get("surfaces") or []:
-        if r.get("path") == SESSION_PREFIX + key and r.get("task"):
-            return r
-    return None
-
-
-def render_view(key: str, row: dict | None = None, notice: str = "") -> str:
-    """The fleet's frame around one surface: a bar with the way back, and the
-    surface itself filling the rest of the window. On a dialogue's page the
-    bar also starts a study session on a topic, now, beside that dialogue."""
-    src = SESSION_PREFIX + escape(key)
-    study = (f'<form class="study" method="post" action="{STUDY_PATH}">'
-             '<input name="topic" required maxlength="300" '
-             'placeholder="study a topic before you rule…">'
-             f'<input type="hidden" name="from" value="{escape(str(row["task"]))}">'
-             f'<input type="hidden" name="back" value="{VIEW_PATH}{escape(key)}">'
-             '<button type="submit">study</button></form>') if row else ""
-    note = f'<span class="notice">{escape(notice)}</span>' if notice else ""
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            # The page server's ring mark. A fresh URL, because Chrome remembers an
-            # icon URL that once failed and stops asking for it: /favicon.ico 404ed
-            # here before the page server learned to serve it.
-            '<link rel="icon" type="image/svg+xml" href="/favicon.ico?v=2">'
-            f'<title>Surface — Cadre</title><style>{_VIEW_CSS}</style></head><body>'
-            '<nav class="bar"><a href="/">← fleet</a>'
-            '<span class="title" id="title"></span>'
-            f'{note}{study}'
-            f'<a id="alone" href="{src}" target="_blank" rel="noopener">open alone ↗</a></nav>'
-            f'<iframe id="surface" src="{src}" title="surface"></iframe>'
-            f'<script>{_VIEW_JS}</script></body></html>')
+def view_payload(key: str) -> dict:
+    """What the React frame around one surface (/view/<key>) reads besides the
+    surface itself: the session it frames, the page's title, and the task
+    when it is a dialogue's page (the frame's study box starts a session
+    beside that dialogue). A key the snapshot does not know still frames:
+    the page server may know it."""
+    session = SESSION_PREFIX + key
+    row = next((r for r in read_snapshot().get("surfaces") or [] if r.get("path") == session), {})
+    _, _, pages = load_graph()
+    title = (pages.get(key) or {}).get("title") or row.get("title") or ""
+    return {"key": key, "session": session, "title": str(title), "task": row.get("task") or None}
 
 
 # --------------------------------------------------------------------- model
@@ -1914,7 +1861,6 @@ class Handler(BaseHTTPRequestHandler):
             return p
         return None
 
-
     def _serve_app(self, rel: str, with_fleet: bool = False):
         """A built file of the React app, or index.html for one of the app's own
         routes. A missing file (a path with an extension, such as an old
@@ -2022,7 +1968,6 @@ class Handler(BaseHTTPRequestHandler):
     def _send_html(self, body: str, code: int = 200, headers: dict | None = None):
         self._send_bytes(body.encode("utf-8"), TYPES[".html"], code=code, headers=headers)
 
-
     def _backends(self) -> list[dict]:
         return backends_mod.with_self(BACKENDS, self.server.server_address)
 
@@ -2093,15 +2038,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json({"cards": cards_mod.export_team(_CFG.cards_dir)})
 
-
-    def _serve_view(self, key: str, query: dict | None = None):
-        key = urllib.parse.unquote(key).strip("/")
-        if not SESSION_KEY.fullmatch(key):
-            self.send_error(404, "no such surface")
-            return
-        notice = ((query or {}).get("notice") or [""])[0][:300]
-        self._send_html(render_view(key, task_for_view(key), notice))
-
     def _serve_cards(self, query: dict):
         notice = (query.get("notice") or [""])[0][:300]
         if not _CFG:
@@ -2171,7 +2107,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._redirect(back, "Study started — it joins the fleet when its first "
                              "round is ready.")
-
 
     def _form(self) -> dict | None:
         """A same-origin url-encoded POST body as {field: first value}, or
@@ -2265,7 +2200,6 @@ class Handler(BaseHTTPRequestHandler):
         directory names only — never file contents."""
         q = (query.get("q") or [""])[0][:400]
         self._send_json({"dirs": complete_dirs(q)})
-
 
     def _serve_stream(self):
         """The fleet stream: one SSE connection per open panel. It says
@@ -2366,7 +2300,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404, "unknown session")
             return
         self._send_html(render_history(sf, journal_batches(str(sf.get("artifact") or ""))))
-
 
     def _same_origin(self) -> bool:
         """A POST that changes the world only comes from this page. There is no
@@ -2469,6 +2402,13 @@ class Handler(BaseHTTPRequestHandler):
                 and self.command in ("GET", "HEAD"):
             self._serve_api_fleet(path == backends_mod.VERSION_PATH)
             return
+        if path.startswith(VIEW_API_PATH) and self.command in ("GET", "HEAD"):
+            key = urllib.parse.unquote(path[len(VIEW_API_PATH):])
+            if SESSION_KEY.fullmatch(key):
+                self._send_json(view_payload(key))
+            else:
+                self.send_error(404, "no such surface")
+            return
         if path.startswith(("/api/project/", "/api/page/")) and self.command in ("GET", "HEAD"):
             which, _, ref = path[len("/api/"):].partition("/")
             d = (project_payload if which == "project" else page_payload)(urllib.parse.unquote(ref))
@@ -2506,9 +2446,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/fs" and self.command in ("GET", "HEAD"):
             self._serve_fs(query)
-            return
-        if path.startswith(VIEW_PATH) and self.command in ("GET", "HEAD"):
-            self._serve_view(path[len(VIEW_PATH):], query)
             return
         if path.startswith("/stranded/") and self.command in ("GET", "HEAD"):
             self._serve_dead_letter(path.rsplit("/", 1)[-1])

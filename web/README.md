@@ -1,7 +1,7 @@
 # Cadre fleet web app
 
-The fleet home page and the library, costs, runs, session-tree, project and
-manage screens as a React app (Vite + React + TypeScript), drawn to be
+The fleet home page and the library, costs, runs, session-tree, project,
+manage and page-frame screens as a React app (Vite + React + TypeScript), drawn to be
 identical to the Python pages it replaced at `/`, `/library`, `/costs`,
 `/runs`, `/tree`, `/project/<id>` and `/page/<key>`: the same elements, the same
 classes, and their stylesheet (`src/ui/fleet.css`, copied from
@@ -11,18 +11,21 @@ Capacitor (phone) shell later.
 
 The Python fleet server serves the built `dist/` at **`/app/`**, so Vite
 builds with `base: '/app/'`. It is also what `/`, `/library`, `/costs`,
-`/runs`, `/tree`, `/tree/<id>`, `/project/<id>` and `/page/<key>` answer with
-(`statusd.REACT_ROUTE`); without a build in `dist/` those paths are a 404
-that says to build it. The Python pages they replaced are gone. Screens the
-app does not draw yet (`/view`, `/history`, `/stranded`, `/cards`, `/study`)
-are still the Python pages.
+`/runs`, `/tree`, `/tree/<id>`, `/project/<id>`, `/page/<key>` and `/view/<key>`
+answer with (`statusd.REACT_ROUTE`); without a build in `dist/` those paths
+are a 404 that says to build it. The Python pages they replaced are gone.
+`/view/<key>` is the frame around one agent page: it loads the chosen
+machine's `/session/<key>` in an iframe, which that machine's proxy lets
+this fleet and its configured peers frame (`statusd.framable_header`).
+Screens the app does not draw yet (`/history`, `/stranded`, `/cards`) are
+still the Python pages.
 The calls (all declared in `contracts/statusd.openapi.json`):
 `GET /api/fleet` (everything the list is drawn from), `GET /api/newwork` (the
 home directory and the skill picker's library), `GET /fs` (folder
 completion), `GET /api/library`, `/api/costs`, `/api/runs`, `/api/tree`,
-`/api/project/<id>`, `/api/page/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
+`/api/project/<id>`, `/api/page/<key>`, `/api/view/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
 `GET /fleet/events` stream (re-fetch on `change`), and the Python page's own
-form posts: `/tasks`, `/items`, `/repair`, `/projects`. With another machine
+form posts: `/tasks`, `/items`, `/repair`, `/projects`, `/study`. With another machine
 chosen, every call goes to that machine directly.
 
 ## How it is organized

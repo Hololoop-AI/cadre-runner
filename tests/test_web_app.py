@@ -158,8 +158,9 @@ def test_backend_origins_come_from_the_configured_urls():
 
 
 # The paths the React app draws (web/src/ui/router.ts route()), and some it does not.
-REACT_PATHS = ["/", "/library", "/costs", "/runs", "/tree", "/tree/task-a", "/project/cadre", "/page/abcd"]
-PYTHON_PATHS = ["/costs.json", "/view/abcd", "/history/abcd", "/stranded/x.json", "/cards", "/tree/", "/fs"]
+REACT_PATHS = ["/", "/library", "/costs", "/runs", "/tree", "/tree/task-a", "/project/cadre", "/page/abcd",
+               "/view/abcd"]
+PYTHON_PATHS = ["/costs.json", "/history/abcd", "/stranded/x.json", "/cards", "/tree/", "/fs"]
 
 
 def test_react_routes_are_the_screens_the_app_draws():

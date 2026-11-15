@@ -342,6 +342,16 @@ export interface TreeNode {
     page?: string;
     [k: string]: unknown;
 }
+/** GET /api/view/<key>: what the frame around one surface shows besides the surface. */
+export interface ViewInfo {
+    key: string;
+    /** the page server's path to frame: /session/<key> */
+    session: string;
+    /** the page's title as the fleet knows it, '' when it does not */
+    title: string;
+    /** the dialogue's task when it is one (the study box needs it), else null */
+    task: string | null;
+}
 // --- from format.ts
 /** Python's string ordering, for sorted() over names */
 export declare function cmp(a: string, b: string): number;

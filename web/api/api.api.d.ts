@@ -28,6 +28,10 @@ export interface Server {
     fetchProject(id: string): Promise<ProjectPayload>;
     /** GET /api/page/<key>: one conversation and the repairs that apply to it */
     fetchPage(key: string): Promise<PagePayload>;
+    /** GET /api/view/<key>: what the frame around one surface shows */
+    fetchView(key: string): Promise<ViewInfo>;
+    /** the URL of a path on this machine, for what the app loads but does not fetch (a framed page) */
+    url(path: string): string;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */
