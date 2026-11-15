@@ -31,6 +31,17 @@ export interface Earlier {
   path: string;
   title: string;
   opened: number;
+  /** set on a kept copy of a page's earlier round (tasks.archive_round): its round number */
+  round?: number;
+}
+
+/** A kept copy of one of a page's earlier rounds, `<page>-r<N>.html` beside it. */
+export interface KeptRound {
+  round: number;
+  file: string;
+  title?: string;
+  /** the copy's mtime: when that round was replaced */
+  at?: number;
 }
 
 /** A page's live state from the page server's /api/<key>/agent-status. */
@@ -51,6 +62,8 @@ export interface PageInfo {
   title?: string;
   updated?: number;
   ended?: boolean;
+  /** the kept copies of this page's earlier rounds, oldest first */
+  rounds?: KeptRound[];
 }
 
 /** A link between two pages: one replaces the other, carries it on, or files under it. */

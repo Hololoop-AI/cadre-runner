@@ -1,7 +1,7 @@
 // runnerlib/conversations.py in TypeScript: fold a dialogue's rounds into one
 // row (collapse) and find any page ever opened (find). Same rules, same order.
 
-import type { LinkRecord, PageInfo, SessionStatus, Surface } from './payload';
+import type { Earlier, LinkRecord, PageInfo, SessionStatus, Surface } from './payload';
 import { hasKey, num, s } from './format';
 
 export const ROOT_HOLDERS = new Set(['root', 'home']);
@@ -52,6 +52,21 @@ function when(key: string, byKey: Map<string, Surface>, pages: Record<string, Pa
   const sf = byKey.get(key);
   if (sf !== undefined && sf.opened) return num(sf.opened);
   return num(pages[key]?.updated);
+}
+
+/** archived_rounds: a page's kept round copies, newest first, as rows of `earlier`. */
+export function archivedRounds(key: string, pages: Record<string, PageInfo>): Earlier[] {
+  return [...(pages[key]?.rounds || [])]
+    .filter((r) => r.file && r.round)
+    .sort((a, b) => num(b.round) - num(a.round))
+    .map((r) => ({
+      key: `${key}-r${Math.trunc(num(r.round))}`,
+      // quoted as Python's quote() does: slashes kept
+      path: `/open?file=${encodeURIComponent(s(r.file)).replace(/%2F/g, '/')}`,
+      title: s(r.title || `round ${Math.trunc(num(r.round))}`),
+      opened: num(r.at),
+      round: Math.trunc(num(r.round)),
+    }));
 }
 
 /** collapse: snapshot surface rows in, one row per conversation out. */
@@ -150,14 +165,16 @@ export function collapse(
     }
     if (!head.task) head.task = memberRows.find((sf) => sf.task)?.task ?? null;
     head.page_title = s(pages[headKey]?.title || head.title);
-    head.earlier = order
-      .filter((k) => k !== headKey)
-      .map((k) => ({
+    // each member, then the kept copies of its own earlier rounds
+    head.earlier = order.flatMap((k) => [
+      ...(k === headKey ? [] : [{
         key: k,
         path: `/session/${k}`,
         title: s(pages[k]?.title || byKey.get(k)?.title || k),
         opened: when(k, byKey, pages),
-      }));
+      }]),
+      ...archivedRounds(k, pages),
+    ]);
     // a row collapsed again (the project page does) keeps the threads it had
     head.threads = [...new Map(memberRows.flatMap((sf) => sf.threads || []).map((t) => [t.key, t])).values()];
     for (const sf of memberRows) if (!rowOf.has(s(sf.task))) rowOf.set(s(sf.task), head);

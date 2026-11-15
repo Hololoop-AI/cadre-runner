@@ -34,6 +34,7 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 LINK_TYPES = ("child-of", "supersedes", "derived-from")
 # A side thread's session kind (runnerlib/study_thread.py). Pages opened before
@@ -253,13 +254,19 @@ def collapse(surfaces: list[dict], records: list[dict] | None = None,
         if not head.get("task"):
             head["task"] = next((sf["task"] for sf in member_rows if sf.get("task")), None)
         head["page_title"] = str((pages.get(head_key) or {}).get("title") or head["title"])
-        head["earlier"] = [
-            {"key": k, "path": f"/session/{k}",
-             # a round is named by its own page, so rounds read apart
-             "title": str((pages.get(k) or {}).get("title")
-                          or (by_key.get(k) or {}).get("title") or k),
-             "opened": _when(k, by_key, pages)}
-            for k in order if k != head_key]
+        head["earlier"] = []
+        for k in order:
+            if k != head_key:
+                head["earlier"].append(
+                    {"key": k, "path": f"/session/{k}",
+                     # a round is named by its own page, so rounds read apart
+                     "title": str((pages.get(k) or {}).get("title")
+                                  or (by_key.get(k) or {}).get("title") or k),
+                     "opened": _when(k, by_key, pages)})
+            # A dialogue page is one session rewritten every round; the rounds
+            # the driver already read survive only as copies beside it. They
+            # are rounds of this conversation too, older than the page itself.
+            head["earlier"] += archived_rounds(k, pages)
         # a row collapsed again (the project page does) keeps the threads it had
         head["threads"] = list({t["key"]: t for sf in member_rows
                                 for t in (sf.get("threads") or [])}.values())
@@ -275,6 +282,20 @@ def collapse(surfaces: list[dict], records: list[dict] | None = None,
             {"key": key, "path": f"/session/{key}", "title": str(sf.get("title") or key),
              "opened": float(sf.get("opened") or 0)})
     return sorted(out, key=lambda s: s.get("opened") or 0, reverse=True)
+
+
+def archived_rounds(key: str, pages: dict) -> list[dict]:
+    """The kept copies of one page's earlier rounds (`pages[key]["rounds"]`,
+    filled by load_pages from `<page>-r<N>.html`), newest first, as rows of
+    `earlier`. Each is a plain file, so it opens through the page server's
+    resolver rather than as a session."""
+    rows = sorted((pages.get(key) or {}).get("rounds") or (),
+                  key=lambda r: -int(r.get("round") or 0))
+    return [{"key": f"{key}-r{int(r['round'])}",
+             "path": f"/open?file={quote(str(r['file']))}",
+             "title": str(r.get("title") or f"round {int(r['round'])}"),
+             "opened": float(r.get("at") or 0), "round": int(r["round"])}
+            for r in rows if r.get("file") and r.get("round")]
 
 
 def conversation_of(key: str, surfaces: list[dict], records: list[dict],
@@ -417,7 +438,59 @@ def load_pages(state_dir: Path | None = None) -> dict:
         out[str(key)] = {"file": f, "title": page_title(f),
                          "updated": _epoch(s.get("updated_at")),
                          "ended": s.get("status") == "ended"}
+        rounds = kept_rounds(f)
+        if rounds:
+            out[str(key)]["rounds"] = rounds
     return out
+
+
+_listing_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def _listing(d: str) -> list[str]:
+    """A directory's names, cached on its mtime: every page in the surfaces
+    directory asks, and the build reading them runs on every fleet change."""
+    try:
+        mtime = os.stat(d).st_mtime
+    except OSError:
+        return []
+    hit = _listing_cache.get(d)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return []
+    _listing_cache[d] = (mtime, names)
+    return names
+
+
+_ROUND_COPY = re.compile(r"-r(\d+)\.html$")
+
+
+def kept_rounds(file: str) -> list[dict]:
+    """The copies tasks.archive_round kept of this page's earlier rounds:
+    `<stem>-r<N>.html` beside it, oldest first. A copy of a different page
+    whose stem happens to extend this one (`<stem>-implement-r1.html`) is not
+    one of them: only a bare `-r<N>` suffix counts."""
+    if not file:
+        return []
+    page = Path(file)
+    names = _listing(str(page.parent))
+    out = []
+    for name in names:
+        if not name.startswith(page.stem + "-r"):
+            continue
+        m = _ROUND_COPY.search(name)
+        if not m or name != f"{page.stem}-r{m.group(1)}.html":
+            continue
+        f = str(page.parent / name)
+        try:
+            at = os.stat(f).st_mtime
+        except OSError:
+            continue
+        out.append({"round": int(m.group(1)), "file": f, "title": page_title(f), "at": at})
+    return sorted(out, key=lambda r: r["round"])
 
 
 def append_link(log: Path, type_: str, frm: str, to: str, by: str = "cadre-panel") -> dict:
