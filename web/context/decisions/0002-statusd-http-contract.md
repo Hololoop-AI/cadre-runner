@@ -186,3 +186,24 @@ switch between servers so they aren't all just on one page." So:
 - **Trust.** A machine trusts its configured peers' pages to post its
   forms. On a team backend that is every teammate's fleet listed under
   `cors_origins`; adding a teammate is a config line on the backend.
+
+## Amendment, 2026-11-15: the surface frame is an app screen
+`/view/<key>` was the last Python page around the app's own navigation: the
+app sent the browser to it as a full page load, which an app shell that is
+not served by a fleet (Capacitor) cannot follow. The driver asked for it to
+become a React screen ("yea let's do it"), and for the design to hold when
+the app is not served by a local server ("Ideally this would support
+multiple backends / computers running the cadre backends"). So:
+
+- **`GET /api/view/{key}` (app tier)** is what the frame reads: the session
+  it frames, the page's title, and the dialogue's task (the study box).
+- **`POST /study`** joins the contract: the frame's study box posts it.
+- **The frame loads the chosen machine's `/session/<key>`.** The page
+  server refuses framing; statusd's proxy rewrites its `frame-ancestors`
+  to `'self'` plus `CORS_ORIGINS`, the same allow-list as the API. An app
+  shell's own origin (`tauri://localhost`, `capacitor://localhost`) goes in
+  `[runner] cors_origins` like any other.
+- **The annotation layer stays the page server's.** The script that splits
+  the agent's page into annotatable sections is served by review-surface
+  inside the frame; the app does not reach into it. The driver: "Review
+  surface serves it now though, by design."

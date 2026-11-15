@@ -347,6 +347,17 @@ export interface PageOwner {
   error?: string;
 }
 
+/** GET /api/view/<key>: what the frame around one surface shows besides the surface. */
+export interface ViewInfo {
+  key: string;
+  /** the page server's path to frame: /session/<key> */
+  session: string;
+  /** the page's title as the fleet knows it, '' when it does not */
+  title: string;
+  /** the dialogue's task when it is one (the study box needs it), else null */
+  task: string | null;
+}
+
 /** GET /api/page/<key>: one conversation and the repairs that apply to it. */
 export interface PagePayload {
   key: string;

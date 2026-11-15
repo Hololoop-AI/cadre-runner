@@ -43,18 +43,6 @@ def _no_live_page_server(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
-def _python_fleet_pages(monkeypatch):
-    """The fleet's screens are the React app's when a build sits in web/dist,
-    so a checkout that has built it would answer / with the app's index.html.
-    The suite tests the Python pages at their own paths; tests of the switch
-    set FLEET_UI themselves."""
-    import sys
-    statusd = sys.modules.get("statusd")
-    if statusd is not None:
-        monkeypatch.setattr(statusd, "FLEET_UI", "python")
-
-
-@pytest.fixture(autouse=True)
 def _no_fleet_payload_carried_over():
     """statusd keeps one built /api/fleet per version (fleet_payload_bytes).
     Each test's fixture is its own machine, so none sees the last one's copy."""

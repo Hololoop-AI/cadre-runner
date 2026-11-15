@@ -20,6 +20,7 @@ Run directly: python3 -m pytest -q tests/test_study.py
 """
 
 import argparse
+import json
 
 import pytest
 
@@ -209,9 +210,9 @@ def test_the_bar_above_a_dialogue_page_starts_a_study_session_beside_it(monkeypa
                           "path": "/session/d0b0498018615008", "artifact": page}]}
     cfg, srv, url = ui(monkeypatch, snap)
     try:
-        bar = get(url + "/view/d0b0498018615008")
-        assert 'action="/study"' in bar and 'name="from" value="task-parent"' in bar
-        assert 'action="/study"' not in get(url + "/view/aaaaaaaaaaaaaaaa"), \
+        # the frame's study box posts `from` = the task its /api/view names
+        assert json.loads(get(url + "/api/view/d0b0498018615008"))["task"] == "task-parent"
+        assert json.loads(get(url + "/api/view/aaaaaaaaaaaaaaaa"))["task"] is None, \
             "a page that is not a dialogue's gets no study box"
 
         code, where = post(url + "/study", topic="the FSRS scheduler", **{

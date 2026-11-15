@@ -18,6 +18,7 @@ import { CostsScreen } from './Costs';
 import { LibraryScreen } from './Library';
 import { current, keepLinksInApp, postScreenForms } from './router';
 import { PageScreen } from './Page';
+import { ViewScreen } from './View';
 import { ProjectScreen } from './Project';
 import { RunsScreen } from './Runs';
 import { TreeScreen } from './Tree';
@@ -54,6 +55,7 @@ export function App() {
             : here.screen === 'runs' ? <RunsScreen key={machines.base} />
               : here.screen === 'project' ? <ProjectScreen key={machines.base} id={here.id} />
                 : here.screen === 'page' ? <PageScreen key={machines.base} pageKey={here.key} />
+                  : here.screen === 'view' ? <ViewScreen key={machines.base} pageKey={here.key} />
                   : <TreeScreen key={machines.base} task={here.task} />}
       <ScreenForms />
     </ServerProvider>

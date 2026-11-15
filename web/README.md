@@ -1,29 +1,31 @@
 # Cadre fleet web app
 
-The fleet home page and the library, costs, runs, session-tree, project and
-manage screens as a React app (Vite + React + TypeScript), drawn to be
-identical to the pages `statusd.py` serves at `/`, `/library`, `/costs`,
+The fleet home page and the library, costs, runs, session-tree, project,
+manage and page-frame screens as a React app (Vite + React + TypeScript), drawn to be
+identical to the Python pages it replaced at `/`, `/library`, `/costs`,
 `/runs`, `/tree`, `/project/<id>` and `/page/<key>`: the same elements, the same
-classes, and the Python page's own stylesheet (`src/ui/fleet.css`, copied from
+classes, and their stylesheet (`src/ui/fleet.css`, copied from
 `statusd._CSS + _HOME_CSS` by `scripts/sync_fleet_css.py`). It runs in a
 browser today; the same build is meant to go into a Tauri (desktop) or
 Capacitor (phone) shell later.
 
 The Python fleet server serves the built `dist/` at **`/app/`**, so Vite
 builds with `base: '/app/'`. It is also what `/`, `/library`, `/costs`,
-`/runs`, `/tree`, `/tree/<id>`, `/project/<id>` and `/page/<key>` answer with
-(`statusd.REACT_ROUTE`); the Python pages for them stay at `/classic/…`. Set
-`CADRE_FLEET_UI=python` (or `fleet_ui = "python"` under `[runner]`) to serve
-the Python pages at `/` instead; without a build in `dist/` statusd serves them
-anyway. Screens the app does not draw yet (`/view`, `/history`, `/stranded`,
-`/cards`, `/study`) are still the Python pages.
+`/runs`, `/tree`, `/tree/<id>`, `/project/<id>`, `/page/<key>` and `/view/<key>`
+answer with (`statusd.REACT_ROUTE`); without a build in `dist/` those paths
+are a 404 that says to build it. The Python pages they replaced are gone.
+`/view/<key>` is the frame around one agent page: it loads the chosen
+machine's `/session/<key>` in an iframe, which that machine's proxy lets
+this fleet and its configured peers frame (`statusd.framable_header`).
+Screens the app does not draw yet (`/history`, `/stranded`, `/cards`) are
+still the Python pages.
 The calls (all declared in `contracts/statusd.openapi.json`):
 `GET /api/fleet` (everything the list is drawn from), `GET /api/newwork` (the
 home directory and the skill picker's library), `GET /fs` (folder
 completion), `GET /api/library`, `/api/costs`, `/api/runs`, `/api/tree`,
-`/api/project/<id>`, `/api/page/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
+`/api/project/<id>`, `/api/page/<key>`, `/api/view/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
 `GET /fleet/events` stream (re-fetch on `change`), and the Python page's own
-form posts: `/tasks`, `/items`, `/repair`, `/projects`. With another machine
+form posts: `/tasks`, `/items`, `/repair`, `/projects`, `/study`. With another machine
 chosen, every call goes to that machine directly.
 
 ## How it is organized
@@ -57,19 +59,10 @@ In dev the browser's origin is `localhost:5183`, so the server's same-origin
 check refuses form posts from the dev server. Post from the build served at
 `/app/`.
 
-## Proving parity
+## Frozen fleets
 
-`parity/` serves both pages from one frozen fleet and compares them, DOM and
-screenshot, through every scenario in `parity/scenarios.cjs`:
-
-```sh
-python3 web/parity/capture.py http://127.0.0.1:8183 web/parity/fixture.json   # freeze a live fleet
-python3 web/parity/vary.py web/parity/fixture.json web/parity/fixture-rare.json   # optional: rare states
-python3 web/parity/serve.py web/parity/fixture.json 8197 &                      # Python at /, React at /app/
-node web/parity/compare.cjs --fixture web/parity/fixture.json --out /tmp/parity
-```
-
-The parity server is statusd.py itself with the backend fetch answered from
-the fixture and its clock stopped; item actions and Archive change an
-in-memory copy, and nothing else a page posts is applied. Fixtures hold real
-page titles, so they are git-ignored.
+`parity/capture.py` freezes a live fleet's `/api/fleet` into a fixture
+(`vary.py` adds rare states); `tests/test_web_contract.py` checks every
+`parity/fixture*.json` against the contract. They once fed a side-by-side
+comparison with the Python pages; those pages are gone, and so is the
+comparison. Fixtures hold real page titles, so they are git-ignored.

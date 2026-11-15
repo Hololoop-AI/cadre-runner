@@ -89,7 +89,6 @@ def test_home_carries_its_first_payload_inside_index_html(builds, monkeypatch, t
     (tmp_path / "index.html").write_text("<!doctype html><head><title>x</title></head><body></body>")
     (tmp_path / "assets" / "index-abc.js").write_text("console.log(1);" * 200)
     monkeypatch.setattr(statusd, "APP_DIR", tmp_path)
-    monkeypatch.setattr(statusd, "FLEET_UI", "react")
     srv, url = _serve()
     try:
         _, home = _get(url + "/")

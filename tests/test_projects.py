@@ -17,7 +17,6 @@ Run directly: python3 -m pytest -q tests/test_projects.py
 """
 
 import json
-import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -301,145 +300,6 @@ def test_dirs_expand_to_add_dir_last_and_to_nothing_without_a_project():
 # --------------------------------------------------------------------- the fleet
 
 
-def test_the_fleet_draws_every_live_project_even_with_nothing_open():
-    d = scratch()
-    a, b_ = _dirs(d, "a", "b")
-    projects.create(d, "Cadre")
-    projects.create(d, "runner", dirs=[str(a)], group="cadre")
-    projects.create(d, "Quiet", dirs=[str(b_)])
-    projects.create(d, "Old", dirs=[str(b_)])
-    projects.archive(d, "old")
-    projs = projects.load(d)
-    snap = {"surfaces": [{"kind": "task", "path": "/session/aaaaaaaaaaaaaaaa",
-                          "title": "live design page", "project": "runner", "opened": 1.0,
-                          "artifact": "/x.html", "task": "t1"}]}
-
-    html = statusd.render_fleet(snap, now=10.0, projs=projs, finished={"quiet": 3})
-    assert 'href="/project/cadre"' in html and 'href="/project/quiet"' in html
-    assert "Nothing running in this project." in html          # Quiet, with no work
-    assert 'href="/project/quiet#finished">3 finished' in html
-    assert "/project/old" not in html, "archived projects leave the fleet"
-    # the member folds inside its group's section, with its live row
-    cadre = html[html.index('href="/project/cadre"'):html.index('href="/project/quiet"')]
-    assert 'class="member"' in cadre and "live design page" in cadre
-    assert html.count("live design page") == 1, "a claimed row is not drawn twice"
-
-
-def test_a_launched_task_is_visible_before_it_has_written_a_page():
-    """The bug this prevents: Launch changed nothing on screen until the first
-    round finished, so the same research was launched four times."""
-    d = scratch()
-    work, = _dirs(d, "work")
-    projects.create(d, "Research", dirs=[str(work)])
-    (d / "surfaces").mkdir(parents=True, exist_ok=True)
-    (d / "registry.json").write_text(json.dumps({"tasks": {
-        "task-queued-thing-20260925-120000-aaaaaa": {
-            "cwd": str(work), "since": 1.0, "active_runs": {}},
-        "task-busy-thing-20260925-120100-bbbbbb": {
-            "project": "research", "since": 2.0, "active_runs": {"r1": {}}},
-        "task-silent-thing-20260925-120200-cccccc": {
-            "project": "research", "since": 3.0, "active_runs": {},
-            "last_result": "done, but no page"},
-        "task-has-a-page-20260925-120300-dddddd": {
-            "project": "research", "since": 4.0, "active_runs": {}},
-    }}), encoding="utf-8")
-    (d / "surfaces" / "sessions.json").write_text(json.dumps({
-        "s1": {"task": "task-has-a-page-20260925-120300-dddddd"}}), encoding="utf-8")
-
-    projs = projects.load(d)
-    starting = statusd.starting_tasks(projs, data_dir=d)
-    assert [s["task"] for s in starting["research"]] == [
-        "task-silent-thing-20260925-120200-cccccc",
-        "task-busy-thing-20260925-120100-bbbbbb",
-        "task-queued-thing-20260925-120000-aaaaaa",
-    ], "newest first, and the one with a page is drawn as a page instead"
-
-    html = statusd.render_fleet({"surfaces": []}, now=10.0, projs=projs,
-                                starting=starting)
-    assert "queued — the runner starts it on its next pass" in html
-    assert "working — its page appears when this round ends" in html
-    assert "ran, but wrote no page" in html, "a page-less finish is named, not hidden"
-    assert "queued thing" in html and "task-queued-thing-2026" not in html
-    assert "Nothing running in this project." not in html
-
-
-def test_the_fleet_tells_a_failed_start_apart_from_one_that_died_mid_run():
-    """Both look like "nothing happened", and they need different repairs:
-    one is a broken node definition, the other an interrupted process whose
-    transcript survives. Calling either "never started" was wrong."""
-    d = scratch()
-    work, = _dirs(d, "work")
-    projects.create(d, "Research", dirs=[str(work)])
-    (d / "surfaces").mkdir(parents=True, exist_ok=True)
-    (d / "registry.json").write_text(json.dumps({"tasks": {
-        "task-interrupted-20260925-120000-aaaaaa": {
-            "project": "research", "since": 1.0, "active_runs": {},
-            "session_id": "68c812ad-c3a5-4487-988d-c4865cccae36"},
-    }}), encoding="utf-8")
-    board = Board(d / "board.db")
-    try:
-        board.write(tasks.NAMESPACE, tasks.TOPIC, "k-broken", "command",
-                    {"target": tasks.TARGET_REQUEST, "cwd": str(work),
-                     "task": "task-broken-20260925-120100-bbbbbb", "title": "b"})
-    finally:
-        board.close()
-    with sqlite3.connect(d / "board.db") as conn:
-        eid, = conn.execute("SELECT id FROM events WHERE key='k-broken'").fetchone()
-        conn.execute(
-            "INSERT INTO firings (ts, action, event_id, depth, outcome, detail) "
-            "VALUES (1.0, 'task-requested', ?, 0, 'failed', ?)",
-            (eid, "ActionFailed: node 'task': command template wants 'dirs' "
-                  "which this event does not carry"))
-
-    projs = projects.load(d)
-    rows = statusd.starting_tasks(projs, data_dir=d)["research"]
-    html = statusd.starting_rows(rows, now=10_000.0)
-    assert "started, then stopped before writing a page" in html
-    assert "could not start — node &#x27;task&#x27;: command template wants" in html
-    assert "ActionFailed" not in html, "the exception class is noise, the sentence is the point"
-    assert "never started" not in html
-
-
-def test_a_long_failure_reason_is_cut_to_fit_a_badge():
-    assert statusd._short_error("RuntimeError: " + "x" * 400).endswith("…")
-    assert len(statusd._short_error("RuntimeError: " + "x" * 400)) <= 110
-
-
-def _task_name(task_id: str) -> str:
-    return task_id.split("-")[1]
-
-
-def test_a_request_the_runner_never_took_says_so():
-    """A lost firing once meant work that simply never happened, invisibly.
-    An unclaimed request past the grace window is named, not called queued."""
-    d = scratch()
-    work, = _dirs(d, "work")
-    projects.create(d, "Research", dirs=[str(work)])
-    board = Board(d / "board.db")
-    try:
-        for n, when in (("fresh", 100.0), ("stale", 1.0)):
-            board.write(tasks.NAMESPACE, tasks.TOPIC, f"k-{n}", "command",
-                        {"target": tasks.TARGET_REQUEST,
-                         "task": f"task-{n}-one-20260925-120000-aaaaaa",
-                         "cwd": str(work), "title": n})
-    finally:
-        board.close()
-
-    projs = projects.load(d)
-    rows = statusd.starting_tasks(projs, data_dir=d)["research"]
-    assert {r["task"] for r in rows} == {
-        "task-fresh-one-20260925-120000-aaaaaa",
-        "task-stale-one-20260925-120000-aaaaaa"}
-
-    # The board stamps its own `since`, so age is forced here instead.
-    by_name = {_task_name(r["task"]): r for r in rows}
-    now = 10_000.0
-    fresh = dict(by_name["fresh"], since=now - statusd.STARTUP_GRACE / 2)
-    stale = dict(by_name["stale"], since=now - statusd.STARTUP_GRACE * 2)
-    assert "queued —" in statusd.starting_rows([fresh], now)
-    assert "never started" in statusd.starting_rows([stale], now)
-
-
 def test_project_pages_create_launch_and_archive_through_the_page_server():
     root = scratch()
     work, = _dirs(root, "work")
@@ -457,30 +317,18 @@ def test_project_pages_create_launch_and_archive_through_the_page_server():
         assert code == 303 and loc.startswith("/project/web?"), loc
         assert projects.load(root)["web"]["dirs"] == [str(work.resolve())]
 
-        code, body = srv.get("/project/web")
-        # The launcher asks for the work, not for which skill runs it: the
-        # picker is a folded override and choosing nothing is the default.
-        assert code == 200 and 'id="launch"' in body
-        assert "the session picks its own skill" in body and 'id="runq"' in body
+        code, body = srv.get("/api/project/web")
+        assert code == 200 and json.loads(body)["project"]["id"] == "web"
 
         code, loc = srv.post("/projects/web/tasks", {"text": "fix the header",
                                                      "run": "skill:x", "cwd": str(work)})
         assert code == 303 and "task-9" in loc
         assert calls == [("fix the header", str(work), {"project": "web", "run": "skill:x"})]
 
-        code, body = srv.get("/")
-        assert '<option value="web">' in body, "an empty project is still on the fleet's filter"
-
         code, loc = srv.post("/projects/web/archive", {"archived": "1"})
         assert code == 303 and projects.load(root)["web"]["archived"] is True
-        code, body = srv.get("/?partial=1")
-        assert "/project/web" not in body and '<option value="web">' not in body
-
         code, loc = srv.post(statusd.PROJECTS_PATH, {"name": "bad", "dirs": "relative"})
         assert code == 303 and "not+created" in loc.lower()
-
-        code, body = srv.get(statusd.LIBRARY_PATH)
-        assert code == 200 and "Cadre flows" in body
     finally:
         tasks.submit_task = real
         statusd._CFG = keep

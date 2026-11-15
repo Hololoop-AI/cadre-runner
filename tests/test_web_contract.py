@@ -31,13 +31,16 @@ CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
 GETS = ["/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
-        "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}"]
+        "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}",
+        "/api/view/{key}"]
 # what a path parameter is filled with when a case is requested
-EXAMPLES = {"/api/project/{id}": "/api/project/research", "/api/page/{key}": "/api/page/aaaa"}
+EXAMPLES = {"/api/project/{id}": "/api/project/research", "/api/page/{key}": "/api/page/aaaa",
+            "/api/view/{key}": "/api/view/aaaa"}
 POSTS = {"/tasks": "text=&cwd=/tmp",
          "/items": "item=task-a&action=tag&tag=cadre",
          "/repair": "action=move&key=nosuchkey&project=cadre",
-         "/projects": "name=Shop&dir1=/tmp"}
+         "/projects": "name=Shop&dir1=/tmp",
+         "/study": "topic=fsrs&from=task-a&back=/view/aaaa"}
 STREAMS = ["/fleet/events"]
 # payload.ts types the app builds itself, never read off the wire
 CLIENT_ONLY_INTERFACES = {"Earlier"}

@@ -264,6 +264,36 @@
         }
       }
     },
+    "/study": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Start a study session on a topic: from the frame above a dialogue's page (`from` = its task) or from the deck (`cwd`). Lands on `back` (a /view/<key> or /cards) with what happened.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
+    },
     "/api/backends": {
       "get": {
         "x-tier": "app",
@@ -459,6 +489,37 @@
           },
           "404": {
             "description": "no such page"
+          }
+        }
+      }
+    },
+    "/api/view/{key}": {
+      "get": {
+        "x-tier": "app",
+        "summary": "What the React frame around one surface (/view/<key>) shows besides the surface itself: the session it frames, the page's title, and the dialogue's task when it is one (the study box posts it). A key the snapshot does not know still answers, with no task.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the frame's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not a session key"
           }
         }
       }
@@ -1503,6 +1564,29 @@
           }
         }
       },
+      "StudyForm": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "description": "the dialogue's task (from the frame)"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "from the deck"
+          },
+          "back": {
+            "type": "string",
+            "description": "where to land: /view/<key> or /cards"
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      },
       "Backends": {
         "type": "object",
         "additionalProperties": false,
@@ -1991,6 +2075,33 @@
             "$ref": "#/components/schemas/PageOwner"
           }
         }
+      },
+      "ViewInfo": {
+        "type": "object",
+        "x-ts": "ViewInfo",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "session",
+          "title",
+          "task"
+        ]
       },
       "ProjectContext": {
         "type": [

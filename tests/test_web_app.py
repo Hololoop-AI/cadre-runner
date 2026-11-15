@@ -32,8 +32,6 @@ def test_run_library_is_what_the_picker_offers_broken_entries_left_out():
     lib = statusd.run_library(entries)
     assert [e["v"] for e in lib] == ["agent:build", "skill:Zed"]
     assert lib[1] == {"v": "skill:Zed", "i": "/zed", "k": "skill", "d": "z" * 120}
-    # the Python page's picker inlines exactly this list
-    assert json.dumps(lib, ensure_ascii=False) in statusd._run_picker(entries)
 
 
 def test_api_newwork_serves_home_and_the_library(monkeypatch):
@@ -160,8 +158,9 @@ def test_backend_origins_come_from_the_configured_urls():
 
 
 # The paths the React app draws (web/src/ui/router.ts route()), and some it does not.
-REACT_PATHS = ["/", "/library", "/costs", "/runs", "/tree", "/tree/task-a", "/project/cadre", "/page/abcd"]
-PYTHON_PATHS = ["/costs.json", "/view/abcd", "/history/abcd", "/stranded/x.json", "/cards", "/tree/", "/fs"]
+REACT_PATHS = ["/", "/library", "/costs", "/runs", "/tree", "/tree/task-a", "/project/cadre", "/page/abcd",
+               "/view/abcd"]
+PYTHON_PATHS = ["/costs.json", "/history/abcd", "/stranded/x.json", "/cards", "/tree/", "/fs"]
 
 
 def test_react_routes_are_the_screens_the_app_draws():
@@ -169,32 +168,25 @@ def test_react_routes_are_the_screens_the_app_draws():
     assert not any(statusd.REACT_ROUTE.match(p) for p in PYTHON_PATHS)
 
 
-def test_the_fleet_serves_react_where_it_draws_and_the_python_pages_under_classic(monkeypatch, tmp_path):
+def test_the_fleet_screens_are_the_react_app_and_without_a_build_a_404_says_so(monkeypatch, tmp_path):
     (tmp_path / "index.html").write_text("<!doctype html>react")
     monkeypatch.setattr(statusd, "APP_DIR", tmp_path)
-    monkeypatch.setattr(statusd, "FLEET_UI", "react")
-    monkeypatch.setattr(statusd, "render_home", lambda *a, **k: "<!doctype html>python home")
-    monkeypatch.setattr(statusd, "render_runs", lambda *a, **k: "<!doctype html>python runs")
-    monkeypatch.setattr(statusd, "fleet_parts", lambda *a, **k: ("running", "work"))
     monkeypatch.setattr(statusd.backends_mod, "fleet", lambda b, now=None: ({}, None))
-    monkeypatch.setattr(statusd, "load_runs", lambda **k: ([], {}, {}))
     srv, url = _serve()
 
     def get(path):
-        with urllib.request.urlopen(url + path, timeout=5) as r:
-            return r.read().decode()
+        try:
+            with urllib.request.urlopen(url + path, timeout=5) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.reason
     try:
-        assert get("/") == "<!doctype html>react"
-        assert get("/runs?view=turns") == "<!doctype html>react"
-        assert get("/classic/") == "<!doctype html>python home"
-        assert get("/classic/runs?view=turns") == "<!doctype html>python runs"
-        # the Python home's own live refresh keeps working from /classic/
-        assert "running" in get("/?partial=1")
-        monkeypatch.setattr(statusd, "FLEET_UI", "python")
-        assert get("/") == "<!doctype html>python home"
-        monkeypatch.setattr(statusd, "FLEET_UI", "react")
-        (tmp_path / "index.html").unlink()      # no build: the Python pages, not an error
-        assert get("/") == "<!doctype html>python home"
+        assert get("/runs?view=turns") == (200, "<!doctype html>react")
+        # the old Python home's refresh is gone with it: the query changes nothing
+        assert get("/library?partial=1") == (200, "<!doctype html>react")
+        (tmp_path / "index.html").unlink()
+        code, reason = get("/runs")
+        assert code == 404 and "npm run build" in reason
     finally:
         srv.shutdown()
         srv.server_close()

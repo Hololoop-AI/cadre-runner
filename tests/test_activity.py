@@ -227,32 +227,6 @@ def test_the_run_record_wins_over_the_task_cwd_after_a_handoff():
     assert "1 agent" in statusd.live_turns(data, now)["task-h"]
 
 
-def test_the_starting_row_carries_the_detail_and_survives_without_it():
-    now = time.time()
-    rows = [{"task": "task-a-thing-20260927-120000-abc123", "since": now - 900,
-             "running": True}]
-    plain = statusd.starting_rows(rows, now)
-    assert "its page appears when this round ends" in plain
-
-    rich = statusd.starting_rows(rows, now, {
-        "task-a-thing-20260927-120000-abc123": "14 agents · WebFetch example.com, just now"})
-    assert "14 agents" in rich and "WebFetch example.com" in rich
-    assert "its page appears when this round ends" not in rich, \
-        "the detail replaces the placeholder rather than piling up beside it"
-    # a clause for some other task must not leak onto this row
-    assert "14 agents" not in statusd.starting_rows(rows, now, {"task-other": "x"})
-
-
-def test_the_detail_is_escaped_like_any_other_untrusted_text():
-    """It comes from a tool argument, which is model output, which is not
-    trusted markup."""
-    now = time.time()
-    rows = [{"task": "task-x-20260927-120000-abc123", "since": now, "running": True}]
-    html = statusd.starting_rows(rows, now, {
-        "task-x-20260927-120000-abc123": '1 agent · WebFetch <script>x</script>'})
-    assert "<script>" not in html and "&lt;script&gt;" in html
-
-
 if __name__ == "__main__":
     import traceback
     fails = 0

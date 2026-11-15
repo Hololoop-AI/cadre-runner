@@ -13,7 +13,8 @@ export type Route =
   | { screen: 'runs' }
   | { screen: 'tree'; task: string }
   | { screen: 'project'; id: string }
-  | { screen: 'page'; key: string };
+  | { screen: 'page'; key: string }
+  | { screen: 'view'; key: string };
 
 /** Where the app is mounted: '/app' under the Python fleet, '' when it serves / itself. */
 export const MOUNT = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/') ? '/app' : '';
@@ -24,10 +25,11 @@ export function route(path: string): Route | null {
   if (p === '/') return { screen: 'home' };
   if (p === '/library' || p === '/costs' || p === '/runs') return { screen: p.slice(1) as 'library' | 'costs' | 'runs' };
   if (p === '/tree') return { screen: 'tree', task: '' };
-  const m = /^\/(tree|project|page)\/([^/]+)$/.exec(p);
+  const m = /^\/(tree|project|page|view)\/([^/]+)$/.exec(p);
   if (!m) return null;
   const ref = decodeURIComponent(m[2]);
-  return m[1] === 'tree' ? { screen: 'tree', task: ref } : m[1] === 'project' ? { screen: 'project', id: ref } : { screen: 'page', key: ref };
+  return m[1] === 'tree' ? { screen: 'tree', task: ref } : m[1] === 'project' ? { screen: 'project', id: ref }
+    : m[1] === 'view' ? { screen: 'view', key: ref } : { screen: 'page', key: ref };
 }
 
 /** The route of the page as loaded. */

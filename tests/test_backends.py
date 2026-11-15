@@ -16,7 +16,7 @@ import pytest
 
 import statusd
 from runnerlib import backends
-from test_conversations import ROUND, _discussion, _Env
+from test_conversations import _discussion, _Env
 
 
 @pytest.fixture(autouse=True)
@@ -58,61 +58,6 @@ def _machine(payload, hits: list):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{srv.server_address[1]}"
-
-
-def test_this_machines_rows_through_the_api_render_exactly_as_read_from_disk():
-    """The identity the design rests on: the payload a backend serves,
-    after a JSON round trip, renders the same fleet as the files it came from."""
-    with tempfile.TemporaryDirectory() as root:
-        env = _Env(root)
-        try:
-            direct = statusd.render_fleet(statusd.read_snapshot(), 300.0,
-                                          graph=statusd.load_graph(), own=_never_stale())
-            data = json.loads(env.get(backends.FLEET_PATH))
-            via_api = statusd.render_fleet(data["snap"], 300.0,
-                                           graph=tuple(data["graph"]),
-                                           histories=data["histories"], own=_never_stale())
-        finally:
-            env.close()
-    assert via_api == direct and f'href="/view/{ROUND}"' in via_api
-
-
-def _never_stale():
-    return SimpleNamespace(stale=lambda: False, since=0, head="")
-
-
-def test_the_fleet_shows_every_machine_in_its_own_section(monkeypatch):
-    hits = []
-    remote, url = _machine(_remote_payload(), hits)
-    monkeypatch.setattr(statusd, "BACKENDS", [{"name": "", "url": None},
-                                              {"name": "", "url": url}])
-    with tempfile.TemporaryDirectory() as root:
-        env = _Env(root)
-        try:
-            home = env.get("/")
-        finally:
-            env.close()
-            remote.shutdown()
-    assert 'href="#machine-0"' in home and 'href="#machine-1"' in home   # the machine bar
-    mine, theirs = home.split('class="backend remote"', 1)
-    assert "this machine" in mine and f'href="/view/{ROUND}"' in mine
-    assert "<b>fedora-1</b>" in theirs                   # the machine names itself
-    assert f'href="{url}/view/{"e" * 16}"' in theirs     # its page, on its origin
-    assert 'target="_blank"' in theirs and "history (2)" in theirs
-    assert f'href="{url}/' in theirs and 'href="/view' not in theirs
-    assert backends.FLEET_PATH in hits
-
-
-def test_a_machine_that_is_down_is_a_loud_card_not_a_missing_section(monkeypatch):
-    monkeypatch.setattr(statusd, "BACKENDS", [{"name": "", "url": None},
-                                              {"name": "shared", "url": "http://127.0.0.1:9"}])
-    with tempfile.TemporaryDirectory() as root:
-        env = _Env(root)
-        try:
-            part = env.get("/?partial=1")
-        finally:
-            env.close()
-    assert "<b>shared</b>" in part and "unreachable" in part and "http://127.0.0.1:9" in part
 
 
 def test_the_version_is_polled_once_per_ttl_and_the_payload_only_when_it_moves():
