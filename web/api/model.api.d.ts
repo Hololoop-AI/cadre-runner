@@ -17,6 +17,25 @@ export interface ClosedPage {
     task?: string | null;
     opened?: number | null;
 }
+/** GET /api/kanban: the board; a column's cards are in `cards` order. */
+export interface Kanban {
+    board: string;
+    columns: string[];
+    cards: KanbanCard[];
+}
+/** One card on the kanban board (runnerlib/kanban.py). */
+export interface KanbanCard {
+    id: string;
+    title: string;
+    note: string;
+    column: string;
+    /** the fleet item it was pulled from, '' for none */
+    item: string;
+    /** who added it: an agent's task id, or 'driver' */
+    by: string;
+    created_at: number;
+    moved_at: number;
+}
 /** One way of cutting spend (costs._bucket): by node, by project or by task. */
 export interface CostBucket {
     key: string;
@@ -528,6 +547,28 @@ export interface Group {
     id: string;
     name: string;
 }
+// --- from kanban.ts
+/**
+ * The cards being worked on: those in the columns between the first (not
+ * started) and the last (done), the column furthest along first, each in
+ * board order. A done card has left this list.
+ */
+export declare function activeCards(board: Kanban): KanbanCard[];
+/** Each column's cards, in board order (kanban.listing's grouping). */
+export declare function byColumn(board: Kanban): Map<string, KanbanCard[]>;
+/** Where a card's fleet item opens: a task's session tree, a lone page's page. */
+export declare function cardItemHref(item: string): string;
+/** kanban.label: "doing" reads as "Doing" */
+export declare function columnLabel(column: string): string;
+/** kanban.DRIVER: who `by` names when the driver added a card */
+export declare const DRIVER = "driver";
+/**
+ * kanban._move: the board with `card` in `column`, in front of `before`
+ * (a card in that column) or at its end when `before` is ''. A move the
+ * server would refuse (an unknown card or column, `before` elsewhere)
+ * returns the board as it was.
+ */
+export declare function kanbanMove(board: Kanban, card: string, column: string, before: string): Kanban;
 // --- from projects.ts
 /** projects.live: not archived, by name */
 export declare function liveProjects(projs: Record<string, Project>): Project[];

@@ -523,6 +523,54 @@
           }
         }
       }
+    },
+    "/api/kanban": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The kanban board (kanban.json): its columns in order and its cards, each column's cards in board order. A missing or malformed file is an empty board.",
+        "responses": {
+          "200": {
+            "description": "the board",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Kanban"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kanban": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Add, move, edit or remove one card on the kanban board, as the driver. A refused change is a 'Refused: ...' notice; the board is then unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/KanbanForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2156,6 +2204,105 @@
         "required": [
           "state"
         ]
+      },
+      "KanbanCard": {
+        "x-ts": "KanbanCard",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "note",
+          "column",
+          "item",
+          "by",
+          "created_at",
+          "moved_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "moved_at": {
+            "type": "number"
+          }
+        }
+      },
+      "Kanban": {
+        "x-ts": "Kanban",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "board",
+          "columns",
+          "cards"
+        ],
+        "properties": {
+          "board": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KanbanCard"
+            }
+          }
+        }
+      },
+      "KanbanForm": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "enum": [
+              "add",
+              "move",
+              "edit",
+              "remove"
+            ]
+          },
+          "card": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "before": {
+            "type": "string"
+          }
+        }
       }
     }
   }

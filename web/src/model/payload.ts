@@ -140,6 +140,27 @@ export interface Ending {
   node?: string;
 }
 
+/** One card on the kanban board (runnerlib/kanban.py). */
+export interface KanbanCard {
+  id: string;
+  title: string;
+  note: string;
+  column: string;
+  /** the fleet item it was pulled from, '' for none */
+  item: string;
+  /** who added it: an agent's task id, or 'driver' */
+  by: string;
+  created_at: number;
+  moved_at: number;
+}
+
+/** GET /api/kanban: the board; a column's cards are in `cards` order. */
+export interface Kanban {
+  board: string;
+  columns: string[];
+  cards: KanbanCard[];
+}
+
 /** An item's tags, done and hidden marks (items.json). */
 export interface ItemRecord {
   tags?: string[];

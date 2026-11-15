@@ -11,6 +11,7 @@ export type Route =
   | { screen: 'library' }
   | { screen: 'costs' }
   | { screen: 'runs' }
+  | { screen: 'kanban' }
   | { screen: 'tree'; task: string }
   | { screen: 'project'; id: string }
   | { screen: 'page'; key: string }
@@ -23,7 +24,7 @@ export const MOUNT = window.location.pathname === '/app' || window.location.path
 export function route(path: string): Route | null {
   const p = path.replace(/\/+$/, '') || '/';
   if (p === '/') return { screen: 'home' };
-  if (p === '/library' || p === '/costs' || p === '/runs') return { screen: p.slice(1) as 'library' | 'costs' | 'runs' };
+  if (p === '/library' || p === '/costs' || p === '/runs' || p === '/kanban') return { screen: p.slice(1) as 'library' | 'costs' | 'runs' | 'kanban' };
   if (p === '/tree') return { screen: 'tree', task: '' };
   const m = /^\/(tree|project|page|view)\/([^/]+)$/.exec(p);
   if (!m) return null;
@@ -38,7 +39,7 @@ export function current(): Route {
 }
 
 /** The screens' forms the app posts itself, and the confirmation one of them asks first (render_page's End session). */
-const POSTS = /^\/(repair|tasks|items|projects(\/[^/]+\/(tasks|archive))?)$/;
+const POSTS = /^\/(repair|tasks|items|kanban|projects(\/[^/]+\/(tasks|archive))?)$/;
 const CONFIRM: Record<string, string> = { end: 'End this review session? The agent stops receiving feedback from it.' };
 
 /**

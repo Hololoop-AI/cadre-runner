@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, limitChoices, loadSel, saveSel, serverView, tagChips, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, HOME_GROUP, inGroup, LABELS, limitChoices, loadSel, saveSel, serverView, tagChips, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
 import { Header } from './Header';
@@ -15,6 +15,7 @@ import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
 import { useFleet } from './useFleet';
 import { CostsScreen } from './Costs';
+import { ActiveCards, KanbanScreen, type CardWork } from './Kanban';
 import { LibraryScreen } from './Library';
 import { current, keepLinksInApp, postScreenForms } from './router';
 import { PageScreen } from './Page';
@@ -28,7 +29,7 @@ import { useWorkLayout } from './useWorkLayout';
 import { WorkList } from './WorkList';
 
 /** Forms inside the Work list that post without leaving the app. */
-const LIST_POSTS = ['/items', '/tasks', '/repair'];
+const LIST_POSTS = ['/items', '/tasks', '/repair', '/kanban'];
 
 /** No groups yet: one array, so memos keyed on it hold while the fleet loads. */
 const NO_GROUPS: never[] = [];
@@ -53,6 +54,7 @@ export function App() {
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
           : here.screen === 'costs' ? <CostsScreen key={machines.base} />
             : here.screen === 'runs' ? <RunsScreen key={machines.base} />
+              : here.screen === 'kanban' ? <KanbanScreen key={machines.base} />
               : here.screen === 'project' ? <ProjectScreen key={machines.base} id={here.id} />
                 : here.screen === 'page' ? <PageScreen key={machines.base} pageKey={here.key} />
                   : here.screen === 'view' ? <ViewScreen key={machines.base} pageKey={here.key} />
@@ -110,6 +112,20 @@ function Home({ machines }: { machines: Machines }) {
   const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
   const badges = useMemo(() => (home ? groupBadges(home.items, home.member, groups) : {}), [home, groups]);
+  // The group the board belongs to (its `board`) shows its active cards. The
+  // fleet re-reads on every stream change, and a board change moves the
+  // fleet's version, so the board is re-read with it; a read that lost the
+  // race to a newer one, or to leaving the group, is dropped.
+  const [board, setBoard] = useState<Kanban | null>(null);
+  const picked = group !== HOME_GROUP;
+  useEffect(() => {
+    if (!picked) return setBoard(null);
+    let stale = false;
+    server.fetchKanban().then((b) => { if (!stale) setBoard(b); }).catch(() => { if (!stale) setBoard(null); });
+    return () => { stale = true; };
+  }, [server, fleet, picked]);
+  const cardWork = useMemo<CardWork>(() => Object.fromEntries((home?.items || []).map((it) => [it.key, { title: it.title, state: LABELS[it.state] }])),
+    [home]);
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
   const found = useFind(q, home);
 
@@ -143,6 +159,8 @@ function Home({ machines }: { machines: Machines }) {
     e.preventDefault();
     const data = formBody(fm);
     server.post(action, data).then(({ notice: msg, path, location: there }) => {
+      // Add to board lands on the Board; the driver stays here and reads what happened
+      if (action === '/kanban') return setNotice(msg);
       // landing anywhere but home (a refused Archive goes to the page's manage
       // page) is a navigation on the Python page too
       if (path !== '/') return window.location.assign(server.base + there);
@@ -168,6 +186,7 @@ function Home({ machines }: { machines: Machines }) {
         <div id="fleet-running">
           {fleet && <RunningNow cards={fleet.running || []} slots={fleet.slots || 0} now={now} home={nw.home} />}
         </div>
+        {board && board.board === group && <ActiveCards board={board} work={cardWork} />}
         <h2 className="sect">Work</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}

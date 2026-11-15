@@ -4,7 +4,7 @@
 // module's only public entry.
 
 export type {
-  Backend, Backends, ClosedPage, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
+  Backend, Backends, ClosedPage, Kanban, KanbanCard, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
   PageOwner, PagePayload, ProjectContext, ProjectPayload, TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
   RunningCard, SessionStatus, Surface, TreeNode, ViewInfo,
 } from './payload';
@@ -17,6 +17,7 @@ export {
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
 export { effectiveGroup, fleetGroups, groupBadges, groupTag, HOME_GROUP, inGroup, itemGroups, OTHER, type Group } from './groups';
+export { activeCards, byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove } from './kanban';
 export { liveProjects } from './projects';
 export { ancestors, clean, descendants, kidsOf, parentsOf } from './tree';
 export type { Tree } from './tree';

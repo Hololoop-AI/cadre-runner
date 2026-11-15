@@ -52,6 +52,7 @@ from runnerlib import config as config_mod
 from runnerlib import conversations as conv_mod
 from runnerlib import costs as costs_mod
 from runnerlib import items as items_mod
+from runnerlib import kanban as kanban_mod
 from runnerlib import library as library_mod
 from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
@@ -139,6 +140,10 @@ REPAIR_PATH = "/repair"
 PROJECTS_PATH = "/projects"
 COSTS_PATH = "/costs"
 ITEMS_PATH = "/items"
+# The kanban board (runnerlib/kanban.py): the Board screen, its form posts,
+# and its read.
+KANBAN_PATH = "/kanban"
+KANBAN_API_PATH = "/api/kanban"
 # rows on the fleet's "Recently returned" card, and all the API ships of them
 RECENT_LIMIT = 6
 STREAM_PATH = "/fleet/events"
@@ -150,7 +155,7 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # The fleet's screens, all drawn by the React app (web/src/ui/router.ts routes
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
-REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree)$|^/(tree|project|page|view)/[^/]+$")
+REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$")
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -1526,9 +1531,10 @@ def _local_signature() -> str:
     """What the fleet looks like from this machine's files, as one hash: the
     runner's snapshot minus its heartbeat fields (it is rewritten every pass
     whether or not anything moved), plus the size and mtime of every link
-    store, the project store, the item store (tags, done, hidden) and the run
-    log, which gains a line each time a turn finishes (its cost, Recent, the
-    item's last-returned time)."""
+    store, the project store, the item store (tags, done, hidden), the kanban
+    board (so a card an agent moves reaches every open Board screen through
+    the fleet stream) and the run log, which gains a line each time a turn
+    finishes (its cost, Recent, the item's last-returned time)."""
     h = hashlib.sha1()
     try:
         snap = json.loads((STATUS_DIR / "status.json").read_text(encoding="utf-8"))
@@ -1539,7 +1545,7 @@ def _local_signature() -> str:
     except (OSError, ValueError):
         h.update(b"no-snapshot")
     for f in [*conv_mod.link_files(PANEL_LINKS), DATA_DIR / projects_mod.FILE,
-              DATA_DIR / items_mod.FILE, DATA_DIR / "history.jsonl"]:
+              DATA_DIR / items_mod.FILE, DATA_DIR / kanban_mod.FILE, DATA_DIR / "history.jsonl"]:
         try:
             st = os.stat(f)
             h.update(f"{f}:{st.st_size}:{st.st_mtime_ns}".encode())
@@ -2259,6 +2265,23 @@ class Handler(BaseHTTPRequestHandler):
             msg = f"Refused: {e}"
         self._redirect_home(msg)
 
+    def _kanban_post(self):
+        """POST /kanban: action=add (title, column, note, item) | move (card,
+        column, before) | edit (card, title, note) | remove (card). Writes
+        <data_dir>/kanban.json as the driver and lands back on the Board with
+        what happened. An edit changes only the fields the form sent."""
+        form = self._form()
+        if form is None:
+            return
+        fields = {k: form.get(k, "") for k in ("card", "column", "item", "before")}
+        try:
+            msg, _ = kanban_mod.apply(DATA_DIR, form.get("action", ""), **fields,
+                                      title=form.get("title"), note=form.get("note"),
+                                      by=kanban_mod.DRIVER)
+        except ValueError as e:
+            msg = f"Refused: {e}"
+        self._redirect(KANBAN_PATH, msg)
+
     def _repair(self):
         """POST /repair: action=move (key, project) | replace (key, target —
         the page that replaces key) | end (key) | archive (key, back=home
@@ -2390,6 +2413,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == ITEMS_PATH and self.command == "POST":
             self._items_post()
+            return
+        if path == KANBAN_PATH and self.command == "POST":
+            self._kanban_post()
+            return
+        if path == KANBAN_API_PATH and self.command in ("GET", "HEAD"):
+            self._send_json(kanban_mod.load(DATA_DIR))
             return
         if (path == PROJECTS_PATH or path.startswith(PROJECTS_PATH + "/")) \
                 and self.command == "POST":
