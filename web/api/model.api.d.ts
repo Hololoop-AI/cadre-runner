@@ -548,6 +548,12 @@ export interface Group {
     name: string;
 }
 // --- from kanban.ts
+/**
+ * The cards being worked on: those in the columns between the first (not
+ * started) and the last (done), the column furthest along first, each in
+ * board order. A done card has left this list.
+ */
+export declare function activeCards(board: Kanban): KanbanCard[];
 /** Each column's cards, in board order (kanban.listing's grouping). */
 export declare function byColumn(board: Kanban): Map<string, KanbanCard[]>;
 /** Where a card's fleet item opens: a task's session tree, a lone page's page. */
@@ -556,6 +562,8 @@ export declare function cardItemHref(item: string): string;
 export declare function columnLabel(column: string): string;
 /** kanban.DRIVER: who `by` names when the driver added a card */
 export declare const DRIVER = "driver";
+/** kanban.BOARD: the group whose board this is; its home page shows the active cards */
+export declare const KANBAN_BOARD = "dev";
 /**
  * kanban._move: the board with `card` in `column`, in front of `before`
  * (a card in that column) or at its end when `before` is ''. A move the

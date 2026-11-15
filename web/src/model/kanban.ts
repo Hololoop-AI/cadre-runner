@@ -6,6 +6,9 @@ import type { Kanban, KanbanCard } from './payload';
 /** kanban.DRIVER: who `by` names when the driver added a card */
 export const DRIVER = 'driver';
 
+/** kanban.BOARD: the group whose board this is; its home page shows the active cards */
+export const KANBAN_BOARD = 'dev';
+
 /** kanban.label: "doing" reads as "Doing" */
 export function columnLabel(column: string): string {
   return column.charAt(0).toUpperCase() + column.slice(1);
@@ -16,6 +19,16 @@ export function byColumn(board: Kanban): Map<string, KanbanCard[]> {
   const cols = new Map(board.columns.map((c): [string, KanbanCard[]] => [c, []]));
   for (const c of board.cards) cols.get(c.column)?.push(c);
   return cols;
+}
+
+/**
+ * The cards being worked on: those in the columns between the first (not
+ * started) and the last (done), the column furthest along first, each in
+ * board order. A done card has left this list.
+ */
+export function activeCards(board: Kanban): KanbanCard[] {
+  const cols = byColumn(board);
+  return board.columns.slice(1, -1).reverse().flatMap((c) => cols.get(c) || []);
 }
 
 /**

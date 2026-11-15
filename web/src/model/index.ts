@@ -17,7 +17,7 @@ export {
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
 export { effectiveGroup, fleetGroups, groupBadges, groupTag, HOME_GROUP, inGroup, itemGroups, OTHER, type Group } from './groups';
-export { byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove } from './kanban';
+export { activeCards, byColumn, cardItemHref, columnLabel, DRIVER, KANBAN_BOARD, kanbanMove } from './kanban';
 export { liveProjects } from './projects';
 export { ancestors, clean, descendants, kidsOf, parentsOf } from './tree';
 export type { Tree } from './tree';

@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import type { Live } from '../api';
-import { byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove, taskLabel, type Kanban, type KanbanCard } from '../model';
+import { activeCards, byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove, taskLabel, type Kanban, type KanbanCard } from '../model';
 import './kanban.css';
 import { Pending, Screen } from './Screen';
 import { useServer } from './server';
@@ -67,6 +67,38 @@ export function KanbanScreen() {
       {notice && <p className="notice">{notice}</p>}
       {!board ? <Pending error={error} /> : <Board board={board} onChange={send} />}
     </Screen>
+  );
+}
+
+/** A card's attached work as the home page knows it: its title and where it stands. */
+export type CardWork = Record<string, { title: string; state: string }>;
+
+/**
+ * The home page's small board: only the cards being worked on (Ready and
+ * Doing), each linked to the work attached to it, so that work is one click
+ * away. A card leaves it once it is done. Read-only; the Board moves cards.
+ */
+export function ActiveCards({ board, work }: { board: Kanban; work: CardWork }) {
+  const cards = activeCards(board);
+  return (
+    <section className="kactive">
+      <h2 className="sect">Board <a href="/kanban">open the board →</a></h2>
+      {!cards.length ? <p className="meta">Nothing in Ready or Doing.</p> : (
+        <ul>
+          {cards.map((c) => {
+            const w = c.item ? work[c.item] : undefined;
+            return (
+              <li key={c.id}>
+                <span className="kc">{columnLabel(c.column)}</span>
+                <span className="kt">{c.title}</span>
+                {c.item && <a href={cardItemHref(c.item)}>{w?.title || (c.item.startsWith('page:') ? 'its page' : taskLabel(c.item))}</a>}
+                {w && <span className="ks">{w.state}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

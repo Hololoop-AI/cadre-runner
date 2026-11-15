@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byColumn, cardItemHref, columnLabel, kanbanMove, type Kanban } from '.';
+import { activeCards, byColumn, cardItemHref, columnLabel, kanbanMove, type Kanban } from '.';
 
 const card = (id: string, column: string) => ({ id, title: id.toUpperCase(), note: '', column, item: '', by: 'driver', created_at: 1, moved_at: 1 });
 const BOARD: Kanban = {
@@ -31,5 +31,16 @@ describe('the board, read', () => {
     expect([...byColumn(BOARD).keys()]).toEqual(['backlog', 'ready', 'doing', 'done']);
     expect(cardItemHref('task-a')).toBe('/tree/task-a');
     expect(cardItemHref('page:ab cd')).toBe('/page/ab%20cd');
+  });
+});
+
+describe('activeCards', () => {
+  it('is the cards between the first and last columns, furthest along first, each column in board order', () => {
+    const board: Kanban = { ...BOARD, cards: [...BOARD.cards, card('dddddd', 'ready'), card('eeeeee', 'done'), card('ffffff', 'ready')] };
+    expect(activeCards(board).map((c) => c.id)).toEqual(['aaaaaa', 'bbbbbb', 'dddddd', 'ffffff']);
+  });
+
+  it('is nothing when every card waits in the first column or is done', () => {
+    expect(activeCards({ ...BOARD, cards: [card('cccccc', 'backlog'), card('eeeeee', 'done')] })).toEqual([]);
   });
 });
