@@ -88,26 +88,6 @@ def test_a_torn_log_or_odd_registry_is_skipped_not_fatal():
     json.dumps(s, allow_nan=False)                         # /costs.json stays valid JSON
 
 
-def test_costs_page_reads_as_money_and_names_tasks():
-    with tempfile.TemporaryDirectory() as root:
-        _history(Path(root))
-        page = statusd.render_costs(costs.summarize(*statusd.load_costs(Path(root)), now=NOW),
-                                    now=NOW)
-    assert page.startswith("<!doctype html>")
-    assert "$15.75" in page and "build it" in page and "implement" in page
-    assert "1 turn reported no cost" in page
-
-
-def test_fleet_row_shows_what_its_task_spent():
-    snap = {"surfaces": [{"kind": "task", "task": "task-build-it-20260920-000000-bbbbbb",
-                          "title": "Build it", "path": "/session/abc", "opened": NOW - 60,
-                          "project": "cadre-runner"}]}
-    html = statusd.render_fleet(snap, now=NOW, spent={
-        "task-build-it-20260920-000000-bbbbbb": 5.75})
-    assert "$5.75" in html
-    assert "$" not in statusd.render_fleet(snap, now=NOW)
-
-
 def test_usd_format():
     assert costs.usd(0.414) == "$0.41" and costs.usd(12.3) == "$12.30"
     assert costs.usd(1176.24) == "$1,176"

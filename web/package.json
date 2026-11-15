@@ -9,7 +9,6 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "parity": "node parity/compare.cjs",
     "design": "python3 scripts/design-check",
     "snapshots": "python3 scripts/api_snapshot.py --all"
   },

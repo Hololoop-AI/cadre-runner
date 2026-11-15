@@ -79,30 +79,6 @@ def _fleet_snapshot(root):
     return json.loads((cfg.data_dir / "status" / "status.json").read_text())
 
 
-def test_rendering_links_surfaces():
-    with tempfile.TemporaryDirectory() as root:
-        snap = _fleet_snapshot(root)
-        assert [q["story"] for q in snap["questions"]] == ["esc"]
-        html = statusd.render_home(snap, now=NOW)
-        assert 'href="/s/orph"' in html                # every open session reachable
-        assert 'data-item="page:' in html             # a page with no task is its own item
-        assert "github.com" not in html
-        # New work on the home page (the redesign) — its folder completes
-        # from this machine, so no absolute path is typed by hand.
-        assert f'action="{statusd.TASKS_PATH}"' in html and 'aria-controls="worksug"' in html
-
-
-def test_page_renders_with_zero_stories():
-    html = statusd.render_home({})
-    assert "No agent is running" not in html and "Nothing matches" in html
-    # The home page's New work box takes a folder, but one that completes
-    # from this machine (/fs), never a bare path field.
-    assert html.count('name="cwd"') == 1 and 'id="worksug"' in html
-    assert 'New project' in html
-    assert 'id="dirsug"' in html            # the directory field completes
-    assert statusd.render_fleet({}).strip() != ""
-
-
 def test_snapshot_survives_a_missing_or_broken_file():
     with tempfile.TemporaryDirectory() as root:
         assert statusd.read_snapshot(Path(root)) == {}
@@ -186,20 +162,6 @@ def _unstub_tasks():
         del runnerlib.tasks
 
 
-def test_home_and_partial_are_served():
-    with tempfile.TemporaryDirectory() as root:
-        _fleet_snapshot(root)
-        srv = _Server(Path(root) / "status")
-        try:
-            code, body = srv.get("/")
-            assert code == 200 and "+ New work" in body and "/s/orph" in body
-            code, frag = srv.get("/?partial=1")
-            assert code == 200 and "<html" not in frag and "/s/orph" in frag
-            assert frag.index("Running now") < frag.index(statusd.PARTIAL_SPLIT)
-        finally:
-            srv.close()
-
-
 def test_new_task_endpoint_calls_submit_task():
     calls = []
     _stub_tasks(calls)
@@ -276,18 +238,13 @@ def test_legacy_dashboard_is_still_static():
         srv = _Server(d)
         try:
             assert srv.get("/index.html") == (200, "<p>legacy</p>")
-            home = srv.get("/")[1]                     # / is the fleet page now
-            assert "<p>legacy</p>" not in home and "+ New work" in home
+            try:                                       # / is the fleet app now
+                home = srv.get("/")[1]
+            except urllib.error.HTTPError as e:        # (no React build in this checkout)
+                home = e.read().decode()
+            assert "<p>legacy</p>" not in home
         finally:
             srv.close()
-
-
-def test_rel_time_reads_as_activity():
-    assert statusd._rel_time(0) == ""
-    assert statusd._rel_time(NOW - 5, NOW) == "5s ago"
-    assert statusd._rel_time(NOW - 300, NOW) == "5m ago"
-    assert statusd._rel_time(NOW - 7200, NOW) == "2h ago"
-    assert statusd._rel_time(NOW - 2 * 86400, NOW) == "2d ago"
 
 
 if __name__ == "__main__":
@@ -295,37 +252,6 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("status smoke tests: all passed")
-
-
-def test_registered_externals_group_under_their_project():
-    """Driver ask 2026-09-20: sessions the runner did not spawn — the
-    orchestrator terminal session, design discussions — must appear on the
-    fleet page under a project hierarchy, orchestrator first, instead of the
-    driver holding session URLs in their head."""
-    snap = {"surfaces": [
-        {"kind": "external", "path": "/session/d2", "opened": 200.0,
-         "project": "hitl", "title": "d2 — store × blackboard",
-         "role": "discussion"},
-        {"kind": "external", "path": "", "opened": 100.0,
-         "project": "hitl", "title": "design orchestrator",
-         "role": "orchestrator"},
-        {"kind": "ask", "path": "/session/loose", "opened": 50.0,
-         "story": "nex-1"},
-    ]}
-    ext = statusd.external_projects(snap)
-    assert [p["project"] for p in ext] == ["hitl"]
-    assert [r["title"] for r in ext[0]["rows"]] == [
-        "design orchestrator", "d2 — store × blackboard"]
-
-    # a project row never doubles as a loose session
-    assert [sf.get("story") for sf in statusd.orphan_surfaces(snap)] == ["nex-1"]
-
-    html = statusd.render_fleet(snap, now=300.0)
-    assert "hitl" in html and "design orchestrator" in html
-    assert 'href="/view/d2"' in html
-    # the page-less orchestrator row renders without a dead link
-    assert 'href=""' not in html
-    assert "No stories in flight" not in html
 
 
 def test_register_external_without_a_page_is_presence_only():
@@ -389,57 +315,6 @@ def test_sweep_leaves_a_pageless_external_alone():
         assert [r["title"] for r in surface_mod.status_list(cfg)] == ["orchestrator"]
 
 
-def test_agent_state_badges_name_the_drivers_states():
-    """Driver ask 2026-09-20: 'unclear whether an agent has started
-    processing, is working, or has errored out.' The badge states are named
-    from the driver's side of the loop, and the stall case — feedback queued
-    with no agent listening — is the one that alarms."""
-    B = statusd.agent_state_badge
-    assert B(None) == ("", "")
-    assert B({"status": "ended"}) == ("ended", "")
-    assert B({"status": "open", "pending_prompts": 2, "presence": "waiting"}) == (
-        "queued — no agent listening", "needs")
-    assert B({"status": "open", "pending_prompts": 1, "presence": "listening"}) == (
-        "delivering to agent", "running")
-    assert B({"status": "open", "pending_prompts": 0, "presence": "working"}) == (
-        "agent working", "running")
-    assert B({"status": "open", "pending_prompts": 0, "presence": "waiting",
-              "last_agent_reply_at": "2026-09-20T08:00:00Z"}) == (
-        "agent replied — your turn", "finished")
-    assert B({"status": "open", "pending_prompts": 0, "presence": "listening"}) == (
-        "awaiting you", "")
-
-
-def test_badges_tell_a_page_with_no_owner_from_an_idle_agent():
-    """Driver ask 2026-09-22: 'no agent listening' covered both a page nobody
-    will ever pick up and a dialogue between turns. With the runner's
-    ownership known, the two read apart."""
-    B = statusd.agent_state_badge
-    queued = {"status": "open", "pending_prompts": 2, "presence": "waiting"}
-    quiet = {"status": "open", "pending_prompts": 0, "presence": "waiting"}
-    assert B(queued, owned=False) == ("queued — no owner yet, adopting", "needs")
-    assert B(queued, owned=True) == ("queued — agent between turns", "running")
-    assert B(quiet, owned=False) == ("no owner — attach from manage", "")
-    assert B(quiet, owned=True) == ("awaiting you", "")
-    assert B(None, owned=False) == ("no owner", "")
-    # a loop outside the runner working on an unowned page is still working
-    assert B({"status": "open", "presence": "working"}, owned=False) == (
-        "agent working", "running")
-
-
-def test_manage_view_attach_control_follows_ownership():
-    row = {"title": "d4", "path": "/session/k4", "earlier": []}
-    page = lambda owner: statusd.render_page("k4", row, [], [], owner=owner)
-    open_form = page({"state": "none", "error": ""})
-    assert 'name="action" value="attach"' in open_form
-    assert 'name="instruction"' in open_form
-    owned = page({"state": "task", "task": "task-7"})
-    assert 'value="attach"' not in owned and "Owned by dialogue task-7" in owned
-    assert "second owner" in page({"state": "outside"})
-    assert "already queued" not in page({"state": "pending"})
-    assert "Last attach failed: board down" in page({"state": "none", "error": "board down"})
-
-
 def test_history_renders_journal_batches_newest_first():
     with tempfile.TemporaryDirectory() as d:
         artifact = str(Path(d) / "art.html")
@@ -501,117 +376,6 @@ def test_journal_is_parsed_once_per_change_and_per_concurrent_burst():
             assert statusd.journal_batches("a.html", Path(d)) == []
         finally:
             Path.read_text = real_read
-
-
-def test_fleet_rows_carry_live_state_and_history_links():
-    with tempfile.TemporaryDirectory() as d:
-        artifact = str(Path(d) / "art.html")
-        (Path(d) / "feedback-journal.jsonl").write_text(
-            json.dumps({"at": "2026-09-20T01:00:00Z", "file": artifact,
-                        "prompts": [{"prompt": "x"}]}) + "\n")
-        snap = {"surfaces": [
-            {"kind": "external", "path": "/session/k1", "opened": 100.0,
-             "project": "hitl", "title": "d2", "artifact": artifact},
-        ]}
-        import os
-        os.environ["REVIEW_SURFACE_STATE_DIR"] = d
-        html = statusd.render_fleet(snap, now=200.0, statuses={
-            "k1": {"status": "open", "pending_prompts": 0, "presence": "working",
-                   "updated_at": "1970-01-01T00:02:30+00:00"}})
-        assert "agent working" in html
-        assert 'href="/history/k1"' in html and "history (1)" in html
-        assert "touched " in html
-        # and with no statuses (surface server down) the page still renders
-        assert "agent working" not in statusd.render_fleet(snap, now=200.0)
-        del os.environ["REVIEW_SURFACE_STATE_DIR"]
-
-
-def test_decided_title_overrides_presence_badge():
-    snap = {"stories": {}, "tasks": {}, "surfaces": [
-        {"path": "/session/abc", "title": "d8 — report anatomy (DECIDED: adopted)",
-         "project": "hitl", "kind": "external", "role": "discussion",
-         "artifact": "", "opened": 1789900000.0},
-    ]}
-    from statusd import render_fleet
-    html = render_fleet(snap, now=0, statuses={
-        "abc": {"presence": "waiting", "pending_prompts": 0,
-                "last_agent_reply_at": "2026-09-20T00:00:00Z"}})
-    assert "decided — nothing needs you" in html
-    assert "your turn" not in html
-
-
-def test_decided_surfaces_fold_and_active_ones_stay_in_the_scan():
-    """The fleet was becoming every decision ever made: settled surfaces never
-    leave. Decided rows collapse into a per-project fold; active rows render
-    outside it; the filter input ships on the page."""
-    snap = {"stories": {}, "tasks": {}, "surfaces": [
-        {"path": "/session/aaa", "title": "framework choice (DECIDED: axum)",
-         "project": "hitl", "kind": "external", "role": "discussion",
-         "artifact": "", "opened": 1789900000.0},
-        {"path": "/session/bbb", "title": "workspace organization",
-         "project": "hitl", "kind": "external", "role": "discussion",
-         "artifact": "", "opened": 1789900000.0},
-    ]}
-    from statusd import render_fleet, render_home
-    html = render_fleet(snap, now=0)
-    start = html.index('<details class="fold"')
-    fold = html[start:html.index('</section>', start)]    # rows nest their own ⋮ menu
-    assert "1 decided" in fold and "DECIDED: axum" in fold
-    assert "workspace organization" not in fold          # active row outside
-    assert "workspace organization" in html
-    page = render_home(snap, now=0)
-    assert 'id="filter"' in page and 'id="states"' in page
-
-
-def test_registered_checkout_rows_are_dispatch_targets():
-    """A pathless project row used to render as an inert 'session' the driver
-    could not click (reported as broken). With a cwd it becomes a dispatch
-    target: clickable, carrying the directory the task box should prefill."""
-    snap = {"stories": {}, "tasks": {}, "surfaces": [
-        {"path": "", "title": "code checkout", "project": "cadre",
-         "kind": "external", "role": "checkout",
-         "cwd": "/home/x/Projects/cadre/cadre",
-         "artifact": "", "opened": 1789900000.0},
-    ]}
-    from statusd import render_fleet, render_home
-    html = render_fleet(snap, now=0)
-    assert 'data-cwd="/home/x/Projects/cadre/cadre"' in html
-    assert 'class="story dispatch"' in html and 'new task' in html
-    # The home page lists items made of pages; a checkout row is no item.
-    assert 'data-cwd="/home/x/Projects/cadre/cadre"' not in render_home(snap, now=0)
-
-
-def test_stranded_rows_carry_a_loud_badge_and_the_dead_letter_link():
-    """The strand must be visible the moment it happens: a needs-class badge
-    on the row, one link per dead-lettered batch — and never folded away with
-    the decided surfaces, because hiding the alarm defeats it."""
-    snap = {"stories": {}, "tasks": {}, "surfaces": [
-        {"path": "/session/d7", "title": "workspace organization",
-         "project": "hitl", "kind": "external", "artifact": "", "opened": 100.0,
-         "stranded": ["20260921-1-a.json", "20260921-2-a.json"]},
-        {"path": "/session/d8", "title": "report anatomy (DECIDED: adopted)",
-         "project": "hitl", "kind": "external", "artifact": "", "opened": 100.0,
-         "stranded": ["20260921-3-b.json"]},
-        {"path": "/session/t1", "title": "", "task": "task-x", "kind": "task",
-         "artifact": "", "opened": 100.0, "stranded": ["20260921-4-c.json"]},
-    ]}
-    html = statusd.render_fleet(snap, now=200.0, statuses={
-        "d7": {"status": "open", "pending_prompts": 0, "presence": "waiting"}})
-    assert html.count('class="badge needs">stranded — feedback reached no one') == 3
-    assert "(2)" in html
-    for n in ("20260921-1-a.json", "20260921-2-a.json", "20260921-3-b.json",
-              "20260921-4-c.json"):
-        assert f'href="/stranded/{n}"' in html
-    # the decided-but-stranded row stays in the scan, badge instead of "decided"
-    assert '<details class="fold"' not in html
-    assert "decided — nothing needs you" not in html
-
-
-def test_a_stranded_loose_page_links_its_dead_letter():
-    snap = {"surfaces": [{"kind": "notice", "path": "/session/n1", "key": "n1",
-                          "open": True, "stranded": ["20260921-5-n.json"]}]}
-    html = statusd.render_fleet(snap, now=0)
-    assert 'href="/stranded/20260921-5-n.json"' in html
 
 
 def test_dead_letter_page_serves_the_batch_verbatim_and_refuses_other_paths():
@@ -700,24 +464,6 @@ def test_proxy_lets_only_the_fleet_frame_a_session():
     assert statusd.framable_header("/session/k", "Content-Type", "text/html") == "text/html"
 
 
-def test_fleet_rows_keep_returned_apart_from_touched():
-    """Opening a page moves the page server's updated_at, so that clock alone
-    made week-old work read as new. The row carries both, labeled."""
-    snap = {"surfaces": [{"kind": "task", "path": "/session/k1", "opened": 100.0,
-                          "task": "task-fix-it-20261001-000000-abc123",
-                          "project": "cadre", "title": "fix it", "artifact": ""}]}
-    html = statusd.render_fleet(
-        snap, now=10_000.0,
-        statuses={"k1": {"status": "open", "presence": "waiting", "pending_prompts": 0,
-                         "updated_at": "1970-01-01T02:40:00+00:00"}},
-        returned={"task-fix-it-20261001-000000-abc123": 10_000.0 - 7200})
-    assert "returned 2h ago" in html
-    assert "touched 6m ago" in html
-    assert "upd " not in html
-    # the page's opened time steps onto the hover once "returned" is shown
-    assert 'title="page opened 2h ago"' in html
-
-
 def _runs_fixture(root: Path):
     (root / "surfaces").mkdir(parents=True)
     (root / "history.jsonl").write_text("\n".join(json.dumps(e) for e in [
@@ -732,36 +478,6 @@ def _runs_fixture(root: Path):
     (root / "surfaces" / "sessions.json").write_text(json.dumps({
         "/a.html": {"kind": "task", "path": "/session/aaa", "key": "aaa", "open": True,
                     "opened": 900.0, "task": "task-old-one-20261001-000000-aaaaaa"}}))
-
-
-def test_runs_page_lists_every_project_newest_first_and_filters():
-    with tempfile.TemporaryDirectory() as root:
-        _runs_fixture(Path(root))
-        srv = _Server(Path(root) / "status")
-        try:
-            code, body = srv.get("/runs")
-            assert code == 200
-            # both projects on one list, the newest return on top
-            assert body.index("new one") < body.index("old one")
-            assert 'href="/view/aaa"' in body and "failed" in body
-            _, body = srv.get("/runs?sort=oldest")
-            assert body.index("old one") < body.index("new one")
-            _, body = srv.get("/runs?project=alpha")
-            assert "old one" in body and "new one" not in body.split("</form>")[1]
-            _, body = srv.get("/runs?view=failed")
-            assert "new one" in body.split("</form>")[1]
-            assert "old one" not in body.split("</form>")[1]
-            _, body = srv.get("/runs?view=open")
-            assert "old one" in body.split("</form>")[1]
-            assert "new one" not in body.split("</form>")[1]
-            # the way in is the header's "every run"; the newest result is
-            # the Work list's "newest result" sort, not a card of its own
-            _, home = srv.get("/")
-            assert ">every run</a>" in home and 'href="/runs"' in home
-            _, partial = srv.get("/?partial=1")
-            assert "Recently returned" not in partial
-        finally:
-            srv.close()
 
 
 def test_the_fleet_api_ships_only_the_recent_rows_the_card_shows():
@@ -784,17 +500,3 @@ def test_the_fleet_api_ships_only_the_recent_rows_the_card_shows():
             assert len(json.loads(body)["returned"]) == statusd.RECENT_LIMIT + 5
         finally:
             srv.close()
-
-
-def test_run_rows_read_by_page_title_and_fall_back_to_the_task_id():
-    row = {"task": "task-fix-the-thing-20261001-000000-abc123", "project": "cadre",
-           "node": "task", "ended": 0.0, "seconds": 60.0, "cost": 1.0, "ok": True,
-           "turns": 2, "open": True,
-           "page": {"path": "/session/k", "key": "k", "title": "Fix the thing, round 2"}}
-    html = statusd._run_row(row, now=3600.0)
-    assert "Fix the thing, round 2" in html and 'href="/view/k"' in html
-    assert 'title="2 turns, 1 min of agent time"' in html
-    # a dialogue turn is the common case and gets no node badge
-    assert '<span class="badge">task</span>' not in html
-    bare = statusd._run_row({**row, "page": None}, now=3600.0)
-    assert "fix the thing" in bare and "href" not in bare

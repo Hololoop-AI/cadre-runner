@@ -17,7 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import statusd
 from runnerlib import conversations as conv
 
 NOW = 1_800_000_000.0
@@ -59,13 +58,3 @@ def test_a_fifth_round_lists_all_four_before_it():
     # the head's own rounds, newest first, then the page it carried on
     assert keys == [f"{head}-r4", f"{head}-r3", f"{head}-r2", f"{head}-r1", plan]
     assert row["earlier"][0]["path"] == "/open?file=/s/t-implement-r4.html"
-
-
-def test_a_task_that_started_nothing_is_drawn_as_its_graph():
-    snap = {"surfaces": [{"path": "/session/" + "c" * 16, "task": "solo", "opened": NOW - 60,
-                          "title": "Solo dialogue", "kind": "task", "cwd": "/w",
-                          "earlier": []}]}
-    html = statusd.render_fleet(snap, NOW, tree={}, by_item=True)
-    item = html[html.index('data-fold="solo"'):]
-    assert '<div class="graph">' in item
-    assert 'title="when this page was written"' in item   # the timestamp the list lacked

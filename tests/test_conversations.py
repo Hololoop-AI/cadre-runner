@@ -39,23 +39,6 @@ def _discussion():
 SUPERSEDES = [{"type": "supersedes", "from": ROUND, "to": ORIG}]
 
 
-def test_a_superseded_page_and_its_round_render_as_one_row_under_the_project():
-    rows = conv.collapse(_discussion(), SUPERSEDES)
-    assert len(rows) == 1
-    row = rows[0]
-    assert conv.key_of(row) == ROUND                      # newest page in the chain
-    assert row["project"] == "hitl"                       # the project it belongs to
-    assert row["title"] == "d4 — SQLite driver"           # the name the driver knows
-    assert [e["key"] for e in row["earlier"]] == [ORIG]   # reachable, not listed
-
-    html = statusd.render_fleet({"surfaces": _discussion()}, now=300.0,
-                                graph=(SUPERSEDES, {}, {}))
-    assert html.count('class="rowline"') == 1
-    assert f'href="/view/{ROUND}"' in html and f'href="/view/{ORIG}"' not in html
-    assert f'href="/page/{ROUND}">1 earlier round<' in html
-    assert '<span class="repo">tasks</span>' not in html
-
-
 def test_pages_of_one_dialogue_task_fold_without_any_link():
     """The runner's own knowledge: an adopted page carries its dialogue's task
     id (registry.json `page`), so pages sharing a task are one conversation."""
@@ -128,14 +111,6 @@ def test_a_task_with_no_project_files_under_its_checkout():
     assert {r["project"] for r in rows} == {"hitl"}
 
 
-def test_a_strand_on_an_earlier_round_stays_on_the_row():
-    surfaces = _discussion()
-    surfaces[0]["stranded"] = ["20260922-1-x.json"]
-    html = statusd.render_fleet({"surfaces": surfaces}, now=300.0,
-                                graph=(SUPERSEDES, {}, {}))
-    assert 'href="/stranded/20260922-1-x.json"' in html
-
-
 def test_a_move_link_beats_the_recorded_project():
     moved = SUPERSEDES + [{"type": "child-of", "from": ROUND, "to": "cadre"}]
     assert conv.collapse(_discussion(), moved)[0]["project"] == "cadre"
@@ -182,19 +157,6 @@ def test_find_reaches_folded_rounds_and_pages_never_on_the_fleet():
     assert by_key[OTHER]["state"] == "ended"
     assert by_key[ORIG]["project"] == "hitl"
     assert conv.find("", _discussion(), [], {}, pages) == []
-
-
-def test_the_home_page_has_no_dispatch_rows():
-    """The home page lists items made of pages. A registered checkout used to
-    be a row that prefilled a fleet-wide task box with its folder; New work's
-    folder field (with the projects' folders one click away) does that now, so
-    no checkout row and none of its click script is on the home page."""
-    snap = {"surfaces": [{"path": "", "title": "fedora-1 system", "project": "cadre",
-                          "kind": "external", "role": "checkout",
-                          "cwd": "/home/x/cadre", "opened": 1.0}]}
-    page = statusd.render_home(snap, now=0)
-    assert 'data-name="fedora-1 system"' not in page and "dispatchTo" not in page
-    assert 'id="workdir"' in page and 'class="sugg"' in page
 
 
 # ------------------------------------------------------------- http surface
@@ -290,25 +252,6 @@ def test_fleet_stream_says_hello_then_change_when_the_snapshot_moves():
             env.close()
 
 
-def test_home_folds_the_conversation_and_find_reaches_the_earlier_round():
-    with tempfile.TemporaryDirectory() as root:
-        env = _Env(root)
-        try:
-            statusd.conv_mod.append_link(statusd.PANEL_LINKS, "supersedes", ROUND, ORIG)
-            home = env.get("/")
-            assert home.count(f'href="/view/{ROUND}"') == 1
-            assert f'href="/view/{ORIG}"' not in home
-            assert f'EventSource(\'{statusd.STREAM_PATH}\')' in home
-            assert "setInterval(tick" not in home and "5 s" not in home
-            found = env.get("/find?q=hitl-d4")
-            assert f'href="/view/{ORIG}"' in found and "replaced" in found
-            page = env.get(f"/page/{ORIG}")                 # an earlier round's page
-            assert "the conversation continues in the newest one" in page
-            assert f'href="/view/{ROUND}"' in page and f'href="/view/{ORIG}"' in page
-        finally:
-            env.close()
-
-
 def test_repairs_move_replace_and_refuse_by_the_link_rules():
     with tempfile.TemporaryDirectory() as root:
         env = _Env(root)
@@ -322,7 +265,6 @@ def test_repairs_move_replace_and_refuse_by_the_link_rules():
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "cadre"})
             assert "Moved+to+cadre" in loc
-            assert 'data-project="cadre"' in env.get("/?partial=1")  # project is a filter on home
             code, loc = env.post(statusd.REPAIR_PATH,
                                  {"action": "move", "key": ROUND, "project": "../etc"})
             assert "Refused" in loc
@@ -362,20 +304,6 @@ if __name__ == "__main__":
 
 
 # ------------------------------------------------------------------ archive
-
-def test_every_page_row_carries_a_menu_with_archive():
-    """Retiring a page used to mean opening its manage view and pressing a
-    button labelled for stuck sessions. Each row now has a ⋮ menu whose
-    Archive posts straight from the fleet and comes back to it."""
-    html = statusd.render_fleet({"surfaces": _discussion()}, now=300.0,
-                                graph=(SUPERSEDES, {}, {}))
-    assert html.count('class="rowmenu"') == 1
-    assert '<input type="hidden" name="action" value="archive">' in html
-    assert f'<input type="hidden" name="key" value="{ROUND}">' in html
-    assert '<input type="hidden" name="back" value="home">' in html
-    assert ">⋮</summary>" in html                          # vertical: narrower than ⋯
-    assert "Manage" not in html                             # the menu is the manage control
-    assert f'href="/page/{ROUND}">1 earlier round<' in html  # rounds stay on the row
 
 
 class _Upstream:
@@ -419,7 +347,7 @@ def test_archive_ends_the_session_and_lands_back_on_the_fleet():
             assert loc.startswith("/?") and "Archived" in urllib.parse.unquote_plus(loc)
             assert up.ended == [f"/api/{ORIG}/end"]
             env.write_snapshot([s for s in _discussion() if s["path"].endswith(ORIG)])
-            assert f'href="/view/{ORIG}"' not in env.get("/?partial=1")  # gone at once
+            assert f"/session/{ORIG}" not in env.get("/api/fleet")  # gone at once
         finally:
             statusd._CFG = keep_cfg
             statusd._ARCHIVED.clear()

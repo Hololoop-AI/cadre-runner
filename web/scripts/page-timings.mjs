@@ -4,7 +4,7 @@
 //
 //   node scripts/page-timings.mjs [--base http://fedora-1.tail2057e0.ts.net:8183]
 //        [--latency 80] [--mbit 10] [--runs 5] [--session /session/<key>]
-//        [--only fleet|classic|review] [--warm]
+//        [--only fleet|review] [--warm]
 //
 // Prints one line per page: the median and every run of "content visible"
 // (the first work item on the fleet, the artifact's body inside the review
@@ -104,7 +104,6 @@ const browser = await chromium.launch({ executablePath: chromiumPath() });
 console.log(`${BASE}, ${LATENCY} ms latency, ${MBIT} Mbit/s, ${RUNS} ${WARM ? 'second-visit' : 'cold'} runs each`);
 const fleetShown = (page) => page.waitForSelector('details.item', { timeout: 30000 });
 if (!ONLY || ONLY === 'fleet') await report(browser, 'fleet (React, /)', BASE + '/', fleetShown);
-if (!ONLY || ONLY === 'classic') await report(browser, 'fleet (Python, /classic)', BASE + '/classic', fleetShown);
 if (!ONLY || ONLY === 'review') {
   const session = arg('session', '') || await firstSession(browser);
   // the artifact frame is replaced as the page loads, so poll whichever is current

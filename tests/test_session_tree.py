@@ -10,7 +10,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import statusd                                                       # noqa: E402
 from runnerlib import engine_seam, session_tree, tasks               # noqa: E402
 from runnerlib.blackboard import Board                               # noqa: E402
 from test_dialogue_actions import FakeCfg                            # noqa: E402
@@ -99,36 +98,6 @@ NODES = {
 }
 
 
-def test_the_fleet_row_of_an_orchestrator_drops_down_its_whole_tree():
-    snap = {"surfaces": [
-        {"kind": "task", "path": "/session/aaaaaaaaaaaaaaaa", "title": "Orchestrate",
-         "project": "research", "opened": 1.0, "artifact": "/o.html", "task": "orch"},
-        {"kind": "task", "path": "/session/bbbbbbbbbbbbbbbb", "title": "Kid",
-         "project": "research", "opened": 2.0, "artifact": "/k.html", "task": "kid"}]}
-    html = statusd.render_fleet(snap, now=10.0, tree=NODES)
-    start = html.index('<details class="kids"><summary>2 child')
-    drop = html[start:html.index("the whole tree", start)]
-    assert "<summary>2 child sessions</summary>" in drop
-    assert drop.index(">Kid<") < drop.index(">Grandkid<"), "nested, parent first"
-    assert "Designed the node." in drop
-    assert drop.endswith('href="/tree/orch">')
-    assert html.count('<details class="kids">') == 2, "every row that launched others"
-    assert "<summary>1 child session</summary>" in html          # the kid's own
-    assert 'href="/tree/orch" title="launched by Orchestrate">↳ parent' in html, \
-        "a child row links back to its parent"
-    assert '<details class="kids">' not in statusd.render_fleet(snap, now=10.0)
-
-
-def test_the_tree_page_shows_a_session_without_its_review_page():
-    one = statusd.render_tree("kid", NODES, now=10.0)
-    assert 'href="/tree/orch">Orchestrate</a>' in one          # where it came from
-    assert ">Grandkid<" in one and "1 child session<" in one
-    assert "Designed the node." in one
-    assert "<iframe" not in one
-    every = statusd.render_tree("", NODES, now=10.0)
-    assert ">Orchestrate<" in every and every.count('<section class="card">') == 1
-
-
 def test_a_parent_that_is_no_task_here_leaves_the_child_a_root():
     d = Path(tempfile.mkdtemp())
     b = Board(d / "board.db")
@@ -138,19 +107,6 @@ def test_a_parent_that_is_no_task_here_leaves_the_child_a_root():
     b.close()
     nodes = session_tree.load(d)
     assert set(nodes) == {"orch", "kid"}, "no node, and no link to a /tree page that 404s"
-
-
-def test_another_machines_malformed_tree_degrades_instead_of_breaking_its_section():
-    bad = {**NODES, "junk": "not a node", "odd": {"parent": ["orch"], "since": "yesterday"},
-           "a/b?c": {"title": "Slashed", "parent": "orch", "since": 4.0}}
-    snap = {"surfaces": [{"kind": "task", "path": "/session/aaaaaaaaaaaaaaaa",
-                          "title": "Orchestrate", "project": "research", "opened": 1.0,
-                          "artifact": "/o.html", "task": "orch"}]}
-    html = statusd.render_fleet(snap, now=10.0, tree=bad)
-    assert 'href="/tree/a%2Fb%3Fc"' in html, "a task id is quoted into its link"
-    assert "<summary>3 child sessions</summary>" in html
-    assert statusd.render_fleet(snap, now=10.0, tree=["not", "a", "tree"])
-    assert ">Orchestrate<" in statusd.render_tree("", bad, now=10.0)
 
 
 def test_an_explicit_parent_wins_over_the_launching_session():

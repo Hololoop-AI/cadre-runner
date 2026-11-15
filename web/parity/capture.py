@@ -1,4 +1,4 @@
-"""Freeze a backend's fleet into a fixture for parity/serve.py: its
+"""Freeze a backend's fleet into a fixture (tests/test_web_contract.py checks it): its
 /api/fleet and /api/newwork as they are now, the skill library they were
 drawn from, the finished turns and page records the costs and runs screens
 read, and the instant they were read. Run it on the machine whose fleet it
