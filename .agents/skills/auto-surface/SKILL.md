@@ -148,7 +148,9 @@ Rules that make these links trustworthy:
 - Use the pipeline theme (`surface-theme.css` vocabulary) and nothing else — no custom CSS,
   no inline styles.
 - Cap the measure: body text in a centered column (the theme's `.wrap`); never let prose
-  run full-bleed.
+  run full-bleed. When the page's main content is code, a diff, a wide table or a
+  dashboard, open the body as `<body class=wide>`: the page takes the whole window,
+  paragraphs keep their reading width, and phones still get one column.
 - One question per card. Two decisions in one form guarantees one goes unanswered.
 - Length budget: the uncollapsed page reads in ~3 minutes for a small change, ~6 for a
   large one. Contracts, transcripts, and long evidence go in `<details>` — open only the
