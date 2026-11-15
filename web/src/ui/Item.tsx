@@ -245,6 +245,13 @@ function Actions({ it, onNewWork }: { it: Item; onNewWork: (parent: string) => v
         <a className="btn ghost nwu" data-parent={key} href={`/?parent=${encodeURIComponent(key)}#newwork`}
           onClick={(e) => { e.preventDefault(); onNewWork(key); }}>New work under this</a>
       )}
+      <form method="post" action="/kanban">
+        <input type="hidden" name="action" value="add" />
+        <input type="hidden" name="column" value="backlog" />
+        <input type="hidden" name="title" value={it.title} />
+        <input type="hidden" name="item" value={key} />
+        <button type="submit" title="puts a card for this on the Board's Backlog, linked back here">Add to board</button>
+      </form>
       {it.tags.map((t) => <ItemButton key={t} item={key} action="untag" label={`#${t} ×`} tag={t} />)}
     </div>
   );

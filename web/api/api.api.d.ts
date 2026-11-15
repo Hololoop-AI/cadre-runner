@@ -32,6 +32,8 @@ export interface Server {
     fetchView(key: string): Promise<ViewInfo>;
     /** the URL of a path on this machine, for what the app loads but does not fetch (a framed page) */
     url(path: string): string;
+    /** GET /api/kanban: the kanban board, its columns and cards in order */
+    fetchKanban(): Promise<Kanban>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */

@@ -15,6 +15,7 @@ import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
 import { useFleet } from './useFleet';
 import { CostsScreen } from './Costs';
+import { KanbanScreen } from './Kanban';
 import { LibraryScreen } from './Library';
 import { current, keepLinksInApp, postScreenForms } from './router';
 import { PageScreen } from './Page';
@@ -28,7 +29,7 @@ import { useWorkLayout } from './useWorkLayout';
 import { WorkList } from './WorkList';
 
 /** Forms inside the Work list that post without leaving the app. */
-const LIST_POSTS = ['/items', '/tasks', '/repair'];
+const LIST_POSTS = ['/items', '/tasks', '/repair', '/kanban'];
 
 /** No groups yet: one array, so memos keyed on it hold while the fleet loads. */
 const NO_GROUPS: never[] = [];
@@ -53,6 +54,7 @@ export function App() {
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
           : here.screen === 'costs' ? <CostsScreen key={machines.base} />
             : here.screen === 'runs' ? <RunsScreen key={machines.base} />
+              : here.screen === 'kanban' ? <KanbanScreen key={machines.base} />
               : here.screen === 'project' ? <ProjectScreen key={machines.base} id={here.id} />
                 : here.screen === 'page' ? <PageScreen key={machines.base} pageKey={here.key} />
                   : here.screen === 'view' ? <ViewScreen key={machines.base} pageKey={here.key} />
@@ -143,6 +145,8 @@ function Home({ machines }: { machines: Machines }) {
     e.preventDefault();
     const data = formBody(fm);
     server.post(action, data).then(({ notice: msg, path, location: there }) => {
+      // Add to board lands on the Board; the driver stays here and reads what happened
+      if (action === '/kanban') return setNotice(msg);
       // landing anywhere but home (a refused Archive goes to the page's manage
       // page) is a navigation on the Python page too
       if (path !== '/') return window.location.assign(server.base + there);

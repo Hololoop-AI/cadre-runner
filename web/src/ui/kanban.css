@@ -1,0 +1,40 @@
+/* The Board (Kanban.tsx). React only: there is no Python page to match, so
+   this is not part of the generated fleet.css. Colours are fleet.css's
+   variables. Wide: the four columns side by side across the whole window.
+   Phone: one column under another. */
+
+.wrap:has(.kanban){max-width:none}
+.kanban{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start}
+@media (max-width:760px){.kanban{grid-template-columns:1fr}}
+
+.kcol{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;min-height:8rem}
+.kcol h2{display:flex;align-items:baseline;gap:.5rem;margin:0 0 8px;font-size:.72rem;text-transform:uppercase;
+ letter-spacing:.09em;color:var(--label)}
+.kcol h2 .kn{font-family:var(--mono);letter-spacing:0;color:var(--muted)}
+.kcol ol{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+
+.kanban input,.kanban textarea{width:100%;background:var(--sunk);color:var(--fg);border:1px solid var(--border);
+ border-radius:8px;padding:6px 8px;font:inherit;font-size:.86rem}
+.kanban input:focus,.kanban textarea:focus{outline:none;border-color:var(--accent)}
+.kanban textarea{resize:vertical;margin-top:6px}
+
+.kcard{background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;cursor:grab}
+.kcard:hover{border-color:var(--label)}
+.kcard.dragging{opacity:.45}
+.kcard .ktitle{display:block;width:100%;padding:0;border:0;background:transparent;color:var(--fg);
+ font:inherit;font-size:.9rem;text-align:left;cursor:pointer;overflow-wrap:anywhere}
+.kcard .ktitle:hover{color:var(--accent)}
+.kcard .knote{margin:4px 0 0;color:var(--muted);font-size:.8rem;white-space:pre-wrap;overflow-wrap:anywhere}
+
+.kfoot{display:flex;align-items:center;gap:6px;margin-top:6px;font-family:var(--mono);font-size:.72rem;color:var(--label)}
+.kfoot .sp{flex:1}
+.kfoot a{color:var(--accent);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+.kfoot a:hover{text-decoration:underline}
+.kfoot .kby{color:var(--tag);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kanban button.ghost,.kanban button.primary{border:1px solid var(--border);border-radius:6px;background:transparent;
+ color:var(--muted);font:inherit;padding:1px 8px;cursor:pointer}
+.kanban button.ghost:hover:not(:disabled){color:var(--fg);border-color:var(--label)}
+.kanban button.ghost:disabled{opacity:.3;cursor:default}
+.kanban button.primary{border-color:var(--accent);color:var(--accent);
+ background:color-mix(in srgb,var(--accent) 13%,transparent)}
+@media (max-width:760px){.kanban button.ghost,.kanban button.primary{padding:5px 14px}}

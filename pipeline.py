@@ -25,6 +25,7 @@ from runnerlib import library as library_mod
 from runnerlib import node_cli
 from runnerlib import cards as cards_mod
 from runnerlib import chat as chat_mod
+from runnerlib import kanban as kanban_mod
 from runnerlib import projects as projects_mod
 from runnerlib import surface as surface_mod
 from runnerlib import messages
@@ -995,6 +996,45 @@ def cmd_cards(cfg, args):
         show(c)
 
 
+def cmd_kanban(cfg, args):
+    """The kanban board the driver plans on (runnerlib/kanban.py): list it,
+    or add, move, edit and remove cards. The fleet's Board screen shows each
+    change within a few seconds, pushed, not polled."""
+    if args.action == "list":
+        board = kanban_mod.load(cfg.data_dir)
+        print(json.dumps(board, indent=2) if args.json else kanban_mod.listing(board))
+        return
+    if not args.ref:
+        sys.exit(f"kanban {args.action}: "
+                 + ("give the card a title" if args.action == "add" else "name the card by its id"))
+    if args.action == "move" and not args.column:
+        sys.exit("kanban move: name the column it goes to")
+    if args.action != "move" and args.column:
+        sys.exit(f"kanban {args.action}: unexpected {args.column!r}"
+                 + (" (the column goes in --column)" if args.action == "add" else ""))
+    if args.action == "edit" and args.title is None and args.note is None:
+        sys.exit("kanban edit: say what changes, --title and/or --note")
+    stray = [flag for flag, v, used in (("--before", args.before, ("move",)),
+                                        ("--title", args.title, ("edit",)),
+                                        ("--note", args.note, ("add", "edit")),
+                                        ("--item", args.item, ("add",)),
+                                        ("--column", args.add_column, ("add",)))
+             if v is not None and args.action not in used]
+    if stray:
+        sys.exit(f"kanban {args.action}: {', '.join(stray)} does not apply here")
+    if args.action == "add":
+        fields = {"title": args.ref, "column": args.add_column or "", "note": args.note,
+                  "item": args.item or "", "by": os.environ.get("CADRE_TASK") or kanban_mod.DRIVER}
+    else:
+        fields = {"card": args.ref, "column": args.column, "before": args.before or "",
+                  "title": args.title, "note": args.note}
+    try:
+        msg, card = kanban_mod.apply(cfg.data_dir, args.action, **fields)
+    except ValueError as e:
+        sys.exit(f"kanban {args.action} refused: {e}")
+    print(card["id"] if args.action == "add" else msg)
+
+
 def cmd_library(cfg, args):
     """Every agent, skill and workflow installed here, and how to launch it."""
     entries = library_mod.scan(dirs=args.dir or [str(Path.cwd())],
@@ -1116,6 +1156,20 @@ def main():
                    help="review: the grader's grade, kept beside yours")
     p.add_argument("--reasoning", help="review: the grader's one-line reason")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("kanban", help="the kanban board: list it, or add, move, edit "
+                                      "and remove cards (the fleet's Board screen)")
+    p.add_argument("action", choices=["list", *kanban_mod.ACTIONS])
+    p.add_argument("ref", nargs="?", default="",
+                   help="add: the card's title; move, edit, remove: the card's id")
+    p.add_argument("column", nargs="?", default="",
+                   help="move: the column it goes to (" + ", ".join(kanban_mod.COLUMNS) + ")")
+    p.add_argument("--column", dest="add_column", choices=list(kanban_mod.COLUMNS),
+                   help="add: the column it starts in (default: backlog)")
+    p.add_argument("--before", help="move: the card it goes in front of (default: the end)")
+    p.add_argument("--title", help="edit: the new title")
+    p.add_argument("--note", help="add, edit: the card's note")
+    p.add_argument("--item", help="add: the fleet item it came from (a task id, or page:<key>)")
+    p.add_argument("--json", action="store_true", help="list: the board as JSON")
     p = sub.add_parser("library", help="list the agents, skills and workflows installed here")
     p.add_argument("--kind", choices=list(library_mod.KINDS))
     p.add_argument("--dir", action="append", help="also scan <dir>/.claude (default: here)")
@@ -1165,7 +1219,7 @@ def main():
      "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "chat-reply": cmd_chat_reply,
-     "project": cmd_project, "cards": cmd_cards, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "serve": cmd_serve,
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
