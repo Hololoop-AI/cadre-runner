@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, inGroup, KANBAN_BOARD, LABELS, limitChoices, loadSel, saveSel, serverView, tagChips, type Kanban, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, HOME_GROUP, inGroup, LABELS, limitChoices, loadSel, saveSel, serverView, tagChips, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
 import { Header } from './Header';
@@ -112,15 +112,18 @@ function Home({ machines }: { machines: Machines }) {
   const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
   const badges = useMemo(() => (home ? groupBadges(home.items, home.member, groups) : {}), [home, groups]);
-  // The board's group shows its active cards. The fleet re-reads on every
-  // stream change, and a board change moves the fleet's version, so the board
-  // is re-read with it.
+  // The group the board belongs to (its `board`) shows its active cards. The
+  // fleet re-reads on every stream change, and a board change moves the
+  // fleet's version, so the board is re-read with it; a read that lost the
+  // race to a newer one, or to leaving the group, is dropped.
   const [board, setBoard] = useState<Kanban | null>(null);
-  const boardShown = group === KANBAN_BOARD;
+  const picked = group !== HOME_GROUP;
   useEffect(() => {
-    if (!boardShown) return;
-    server.fetchKanban().then(setBoard).catch(() => setBoard(null));
-  }, [server, fleet, boardShown]);
+    if (!picked) return setBoard(null);
+    let stale = false;
+    server.fetchKanban().then((b) => { if (!stale) setBoard(b); }).catch(() => { if (!stale) setBoard(null); });
+    return () => { stale = true; };
+  }, [server, fleet, picked]);
   const cardWork = useMemo<CardWork>(() => Object.fromEntries((home?.items || []).map((it) => [it.key, { title: it.title, state: LABELS[it.state] }])),
     [home]);
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
@@ -183,7 +186,7 @@ function Home({ machines }: { machines: Machines }) {
         <div id="fleet-running">
           {fleet && <RunningNow cards={fleet.running || []} slots={fleet.slots || 0} now={now} home={nw.home} />}
         </div>
-        {boardShown && board && <ActiveCards board={board} work={cardWork} />}
+        {board && board.board === group && <ActiveCards board={board} work={cardWork} />}
         <h2 className="sect">Work</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}

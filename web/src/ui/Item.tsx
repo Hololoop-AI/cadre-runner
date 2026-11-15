@@ -247,10 +247,9 @@ function Actions({ it, onNewWork }: { it: Item; onNewWork: (parent: string) => v
       )}
       <form method="post" action="/kanban">
         <input type="hidden" name="action" value="add" />
-        <input type="hidden" name="column" value="backlog" />
         <input type="hidden" name="title" value={it.title} />
         <input type="hidden" name="item" value={key} />
-        <button type="submit" title="puts a card for this on the Board's Backlog, linked back here">Add to board</button>
+        <button type="submit" title="puts a card for this in the Board's first column, linked back here">Add to board</button>
       </form>
       {it.tags.map((t) => <ItemButton key={t} item={key} action="untag" label={`#${t} ×`} tag={t} />)}
     </div>

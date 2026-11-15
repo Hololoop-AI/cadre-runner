@@ -1,13 +1,11 @@
 // The kanban board's rules, copied from runnerlib/kanban.py so the Board
 // screen can draw a drag at once, before the server's answer comes back.
 
+import { treeHref } from './format';
 import type { Kanban, KanbanCard } from './payload';
 
 /** kanban.DRIVER: who `by` names when the driver added a card */
 export const DRIVER = 'driver';
-
-/** kanban.BOARD: the group whose board this is; its home page shows the active cards */
-export const KANBAN_BOARD = 'dev';
 
 /** kanban.label: "doing" reads as "Doing" */
 export function columnLabel(column: string): string {
@@ -49,5 +47,5 @@ export function kanbanMove(board: Kanban, card: string, column: string, before: 
 
 /** Where a card's fleet item opens: a task's session tree, a lone page's page. */
 export function cardItemHref(item: string): string {
-  return item.startsWith('page:') ? `/page/${encodeURIComponent(item.slice(5))}` : `/tree/${encodeURIComponent(item)}`;
+  return item.startsWith('page:') ? `/page/${encodeURIComponent(item.slice(5))}` : treeHref(item);
 }

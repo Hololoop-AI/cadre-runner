@@ -562,8 +562,6 @@ export declare function cardItemHref(item: string): string;
 export declare function columnLabel(column: string): string;
 /** kanban.DRIVER: who `by` names when the driver added a card */
 export declare const DRIVER = "driver";
-/** kanban.BOARD: the group whose board this is; its home page shows the active cards */
-export declare const KANBAN_BOARD = "dev";
 /**
  * kanban._move: the board with `card` in `column`, in front of `before`
  * (a card in that column) or at its end when `before` is ''. A move the

@@ -24,6 +24,9 @@ const LIVE: Record<Live, string> = {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** What a card's item link says when its work has no title of its own. */
+const itemLabel = (item: string) => (item.startsWith('page:') ? 'its page' : taskLabel(item));
+
 /** The Board screen: the chosen machine's board, kept current by its fleet stream. */
 export function KanbanScreen() {
   const server = useServer();
@@ -83,7 +86,7 @@ export function ActiveCards({ board, work }: { board: Kanban; work: CardWork }) 
   return (
     <section className="kactive">
       <h2 className="sect">Board <a href="/kanban">open the board →</a></h2>
-      {!cards.length ? <p className="meta">Nothing in Ready or Doing.</p> : (
+      {!cards.length ? <p className="meta">{`Nothing in ${board.columns.slice(1, -1).map(columnLabel).join(' or ')}.`}</p> : (
         <ul>
           {cards.map((c) => {
             const w = c.item ? work[c.item] : undefined;
@@ -91,7 +94,7 @@ export function ActiveCards({ board, work }: { board: Kanban; work: CardWork }) 
               <li key={c.id}>
                 <span className="kc">{columnLabel(c.column)}</span>
                 <span className="kt">{c.title}</span>
-                {c.item && <a href={cardItemHref(c.item)}>{w?.title || (c.item.startsWith('page:') ? 'its page' : taskLabel(c.item))}</a>}
+                {c.item && <a href={cardItemHref(c.item)}>{w?.title || itemLabel(c.item)}</a>}
                 {w && <span className="ks">{w.state}</span>}
               </li>
             );
@@ -160,7 +163,7 @@ function CardFace({ card, prev, next, onEdit, onChange }: {
       <button type="button" className="ktitle" title="edit" onClick={onEdit}>{card.title}</button>
       {card.note && <p className="knote">{card.note}</p>}
       <div className="kfoot">
-        {card.item && <a href={cardItemHref(card.item)}>{card.item.startsWith('page:') ? 'its page' : taskLabel(card.item)}</a>}
+        {card.item && <a href={cardItemHref(card.item)}>{itemLabel(card.item)}</a>}
         {card.by !== DRIVER && <span className="kby" title={card.by}>{`by ${taskLabel(card.by)}`}</span>}
         <span className="sp"></span>
         <button type="button" className="ghost" disabled={!prev} aria-label={prev ? `Move to ${columnLabel(prev)}` : 'Move left'}

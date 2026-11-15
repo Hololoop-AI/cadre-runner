@@ -35,6 +35,7 @@ COLUMNS = ("backlog", "ready", "doing", "done")
 ACTIONS = ("add", "move", "edit", "remove")
 DRIVER = "driver"
 TITLE_MAX = 200
+REF_MAX = 200  # an item key or a task id
 NOTE_MAX = 4000
 ID = re.compile(r"^[0-9a-f]{6}$")
 
@@ -58,6 +59,8 @@ def load(data_dir) -> dict:
         raw = {}
     cards = raw.get("cards") if isinstance(raw, dict) else None
     board, seen = empty(), set()
+    if isinstance(raw, dict) and isinstance(raw.get("board"), str) and raw["board"].strip():
+        board["board"] = raw["board"].strip()
     for c in cards if isinstance(cards, list) else ():
         card = _clean(c)
         if card and card["id"] not in seen:
@@ -73,13 +76,21 @@ def _clean(c) -> dict | None:
     if not (isinstance(cid, str) and ID.match(cid) and title and column in COLUMNS):
         return None
     return {"id": cid, "title": title, "note": str(c.get("note") or ""), "column": column,
-            "item": str(c.get("item") or ""), "by": str(c.get("by") or DRIVER),
+            "item": _text(c.get("item"))[:REF_MAX], "by": _text(c.get("by"))[:REF_MAX] or DRIVER,
             "created_at": _epoch(c.get("created_at")), "moved_at": _epoch(c.get("moved_at"))}
 
 
 def _text(v) -> str:
     """A title on one line, its runs of whitespace one space."""
     return " ".join(v.split()) if isinstance(v, str) else ""
+
+
+def _ref(v, what: str) -> str:
+    """An item key or a task id: one word, refused when longer than any real one."""
+    v = _text(v)
+    if len(v) > REF_MAX or " " in v:
+        raise ValueError(f"{what} is not an item key or task id")
+    return v
 
 
 def _epoch(v) -> float:
@@ -101,7 +112,7 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
     in the column, or an empty title; the file is then left as it was."""
     if action not in ACTIONS:
         raise ValueError(f"unknown board action {action!r}")
-    column = column or ("backlog" if action == "add" else "")
+    column = column or (COLUMNS[0] if action == "add" else "")
     if action in ("add", "move") and column not in COLUMNS:
         raise ValueError(f"no column {column!r}; the columns are {', '.join(COLUMNS)}")
     now = time.time() if now is None else now
@@ -111,7 +122,7 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
         cards = board["cards"]
         if action == "add":
             new = {"id": _new_id(cards), "title": _title(_cut(title)), "note": _note(note),
-                   "column": column, "item": item.strip(), "by": by or DRIVER,
+                   "column": column, "item": _ref(item, "item"), "by": _ref(by, "by") or DRIVER,
                    "created_at": now, "moved_at": now}
             cards.append(new)
             msg = f"Added “{new['title']}” to {label(column)}."
@@ -170,10 +181,13 @@ def _cut(v) -> str:
 
 
 def _keep_unreadable(path: Path):
-    """A board file that exists but is not JSON is moved to kanban.json.bad
-    before the next write replaces it, so a hand edit gone wrong loses nothing."""
+    """A board file that exists but is not a board (not JSON, or no list of
+    cards) is moved to kanban.json.bad before the next write replaces it, so
+    a hand edit gone wrong loses nothing."""
     try:
-        json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not (isinstance(raw, dict) and isinstance(raw.get("cards", []), list)):
+            raise ValueError("not a board")
     except FileNotFoundError:
         pass
     except (OSError, ValueError):

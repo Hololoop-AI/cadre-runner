@@ -277,3 +277,23 @@ def test_an_infinite_time_reads_as_none(tmp_path):
 def test_the_command_refuses_flags_that_do_not_apply(tmp_path, args):
     done = _cli(tmp_path, *args)
     assert done.returncode != 0 and "kanban" in done.stderr
+
+
+def test_a_board_file_of_the_wrong_shape_is_kept_aside_too(tmp_path):
+    (tmp_path / kanban.FILE).write_text('{"cards": "oops"}')
+    add(tmp_path, "After the mishap")
+    assert (tmp_path / (kanban.FILE + ".bad")).read_text() == '{"cards": "oops"}'
+
+
+def test_an_item_or_by_that_is_not_one_short_word_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        kanban.apply(tmp_path, "add", title="t", item="x" * (kanban.REF_MAX + 1))
+    with pytest.raises(ValueError):
+        kanban.apply(tmp_path, "add", title="t", by="two words")
+    assert kanban.load(tmp_path)["cards"] == []
+
+
+def test_the_board_keeps_the_group_its_file_names(tmp_path):
+    (tmp_path / kanban.FILE).write_text('{"board": "kitchen", "cards": []}')
+    add(tmp_path, "Order flour")
+    assert kanban.load(tmp_path)["board"] == "kitchen"
