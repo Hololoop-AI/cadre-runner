@@ -880,6 +880,35 @@
           },
           "ended": {
             "type": "boolean"
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeptRound"
+            },
+            "description": "the kept copies of this page's earlier rounds (<page>-r<N>.html), oldest first"
+          }
+        }
+      },
+      "KeptRound": {
+        "x-ts": "KeptRound",
+        "type": "object",
+        "required": [
+          "round",
+          "file"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer"
+          },
+          "file": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "at": {
+            "type": "number"
           }
         }
       },

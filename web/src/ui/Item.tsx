@@ -79,7 +79,8 @@ function PRow({ sf, ctx, o = {} }: { sf: Surface; ctx: Ctx; o?: PRowOpts }) {
       {(cls === 'running' || cls === 'needs') && <span className={`badge ${cls === 'running' ? 'work' : 'q'}`}>{label}</span>}
       {o.when && <span className="badge" title="when this page was written">{relTime(num(sf.opened), ctx.now)}</span>}
       <Spent sf={sf} ctx={ctx} />
-      {!o.head && <HistoryLink sf={sf} ctx={ctx} />}
+      {/* the answer history is on every page row, tree or list */}
+      <HistoryLink sf={sf} ctx={ctx} />
       <Menu sf={sf} rounds={!o.head} />
     </div>
   );
@@ -136,7 +137,7 @@ function HistoryRow({ r, width, label, ctx }: { r: GraphRow; width: number; labe
       <Cell r={r} width={width} />
       <a className="t" href={viewHref(e.path)} title={e.title}>{e.title}</a>
       <span className="rn">{label}</span>
-      <span className="badge" title={`when this ${r.round ? 'round was written' : 'thread was opened'}`}>{relTime(e.opened, ctx.now)}</span>
+      <span className="badge" title={r.round?.round ? 'when this round was replaced by the next' : `when this ${r.round ? 'round was written' : 'thread was opened'}`}>{relTime(e.opened, ctx.now)}</span>
     </div>
   );
 }
@@ -283,16 +284,19 @@ export interface ItemProps {
 export const ItemView = memo(function ItemView({ it, ctx, offlist, open, onToggle, onNewWork, textRef, drawn = 0 }: ItemProps) {
   const key = it.key;
   const hasKids = !!ctx.kids[key]?.length;
+  // A task's item is drawn as its graph even when it started nothing: a
+  // linear dialogue is a tree of one, and one layout keeps every item alike.
+  const graphed = !key.startsWith('page:') && it.pages.length > 0;
   const cur: ReactNode[] = [];
   const old: ReactNode[] = [];
   it.pages.forEach((sf, n) => {
     const row = <PRow key={keyOf(sf) || n} sf={sf} ctx={ctx} />;
     (n === 0 || !answered(sf, ctx.statuses) ? cur : old).push(row);
   });
-  // An item with a tree draws it as its graph. (statusd._items_html also
-  // builds an "Agents started from this" list, but only for an item with no
-  // tree, where it is always empty, so it never shows; it is not drawn here.)
-  const pages: ReactNode = hasKids ? <ItemGraph it={it} ctx={ctx} />
+  // A task's item draws as its graph. (statusd._items_html also builds an
+  // "Agents started from this" list, but only for an item with no tree, where
+  // it is always empty, so it never shows; it is not drawn here.)
+  const pages: ReactNode = graphed ? <ItemGraph it={it} ctx={ctx} />
     : cur.length || old.length ? <>{cur}<Earlier rows={old} noun="answered page" /></>
       : <p className="empty">No page yet.</p>;
   const pname = own(ctx.names, it.project) ?? it.project;

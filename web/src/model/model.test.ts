@@ -23,6 +23,25 @@ describe('format, in statusd.py words', () => {
 });
 
 describe('collapse', () => {
+  it('lists a page\'s kept round copies as earlier rounds, after the page they belong to', () => {
+    const A = 'aaaaaaaaaaaaaaa1', B = 'aaaaaaaaaaaaaaa2';
+    const [row] = collapse(
+      [{ path: `/session/${B}`, task: 't1', opened: 50, title: 'implement' }],
+      [],
+      {},
+      {
+        [A]: { file: '/s/t1.html', title: 'plan', updated: 10, ended: true },
+        [B]: {
+          file: '/s/t1-implement.html', title: 'implement', updated: 50,
+          rounds: [1, 2, 3, 4].map((n) => ({ round: n, file: `/s/t1-implement-r${n}.html`, at: 10 + n * 10 })),
+        },
+      },
+    );
+    // the head's own four kept rounds, newest first; the planning page joins by task only when live
+    expect(row.earlier!.map((e) => e.key)).toEqual([`${B}-r4`, `${B}-r3`, `${B}-r2`, `${B}-r1`]);
+    expect(row.earlier![0]).toMatchObject({ path: '/open?file=/s/t1-implement-r4.html', opened: 50, round: 4 });
+  });
+
   it('folds a dialogue\'s rounds into one row, newest round as the head', () => {
     const rows = collapse(
       [

@@ -2593,7 +2593,8 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
                 + (f'<span class="badge" title="when this page was written">'
                    f'{escape(_rel_time(float(sf.get("opened") or 0), now))}</span>' if when else "")
                 + f'{bits["spent"](sf)}'
-                + ("" if head else bits["history"](sf))
+                # the answer history is on every page row, tree or list
+                + bits["history"](sf)
                 + (bits["menu"](sf, False) if head else bits["menu"](sf)) + '</div>')
 
     rows, idle, off = [], [], []
@@ -2612,10 +2613,13 @@ def _items_html(snap, now, tree, kids, projs, doing, statuses, returned,
         kid_rows = _kid_rows(key, tree, kids, now, endings, bare)
         started = ("".join(h for h, live in kid_rows if live)
                    + _earlier([h for h, live in kid_rows if not live], "finished agent"))
-        if kids.get(key):
+        if not key.startswith("page:") and it["pages"]:
             # An item with a tree reads as one: each page under the page whose
             # agent started it, oldest launch first, so who made what and in
-            # what order is the shape of the list rather than a lookup.
+            # what order is the shape of the list rather than a lookup. A task
+            # that started nothing is a tree of one and is drawn the same way,
+            # so a linear dialogue does not fall back to a second layout
+            # (driver, 14 Nov 2026).
             pages, started = _graph(key, it["pages"], tree, kids, statuses, now, endings,
                                     bare, lambda sf: _prow(sf, when=True, head=True)), ""
         dot = ('<span class="unseen" title="has a page you have not opened since the agent '
@@ -3581,7 +3585,9 @@ def render_page(key: str, row: dict, projects: list[str], candidates: list[dict]
                "opened": row.get("opened") or 0}] + list(row.get("earlier") or [])
     newest = '<span class="chip open">newest</span>'
     items = "".join(
-        f'<div class="rowline"><a class="row" href="{VIEW_PATH}{escape(r["key"])}">'
+        # a kept round copy is a file, not a session: it opens by its own path
+        f'<div class="rowline"><a class="row" href="'
+        f'{escape(r["path"]) if r.get("round") else VIEW_PATH + escape(r["key"])}">'
         f'<span class="title">{escape(str(r["title"]))}</span>'
         f'{newest if i == 0 else ""}'
         f'<span class="badge">{escape(_rel_time(r.get("opened") or 0, now))}</span>'

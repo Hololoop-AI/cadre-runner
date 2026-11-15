@@ -49,6 +49,8 @@ export interface Earlier {
     path: string;
     title: string;
     opened: number;
+    /** set on a kept copy of a page's earlier round (tasks.archive_round): its round number */
+    round?: number;
 }
 /** A run that ended without leaving a page (statusd.bare_endings). */
 export interface Ending {
@@ -248,6 +250,8 @@ export interface PageInfo {
     title?: string;
     updated?: number;
     ended?: boolean;
+    /** the kept copies of this page's earlier rounds, oldest first */
+    rounds?: KeptRound[];
 }
 /** A launched task with no page yet (statusd.pageless_tasks). */
 export interface Pageless {

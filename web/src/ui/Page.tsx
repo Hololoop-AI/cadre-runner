@@ -50,7 +50,7 @@ export function PageScreen({ pageKey }: { pageKey: string }) {
       {pageKey === head ? null : <p className="meta">{`you opened an earlier round (${pageKey}); the conversation continues in the newest one`}</p>}
       <section className="card"><h2>{`this conversation · ${rounds.length} round${rounds.length !== 1 ? 's' : ''}, newest first`}</h2>
         {rounds.map((r, i) => (
-          <div key={r.key} className="rowline"><a className="row" href={`/view/${r.key}`}>
+          <div key={r.key} className="rowline"><a className="row" href={'round' in r && r.round ? s(r.path) : `/view/${r.key}`}>
             <span className="title">{s(r.title)}</span>
             {i === 0 && <span className="chip open">newest</span>}
             <span className="badge">{relTime(r.opened || 0, now)}</span>
