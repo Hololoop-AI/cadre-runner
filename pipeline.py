@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runnerlib import claude_run, config as config_mod
 from runnerlib import cadres as cadres_mod
 from runnerlib import codestamp
+from runnerlib import records as records_mod
 from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
@@ -1020,6 +1021,51 @@ def cmd_cadres(cfg, args):
         print(f"{c['id']:24} {c['name']}  {n} runs")
 
 
+def cmd_records(cfg, args):
+    """Records (runnerlib/records.py): files a cadre keeps. Agents save them
+    with `add`, to a cadre (--cadre) and a type within it (--type), and read
+    them back with `list` and `show`."""
+    projs = projects_mod.load(cfg.data_dir)
+    cadre = None
+    if args.cadre is not None:
+        cadre = cadres_mod.resolve(projs, args.cadre) if args.cadre else ""
+        if cadre is None:
+            sys.exit(f"no cadre {args.cadre!r} — `pipeline.py cadres list`")
+    try:
+        if args.action == "add":
+            if not args.ref and args.text is None:
+                sys.exit("records add needs a file (or - for stdin) or --text")
+            if args.text is not None:
+                src = {"data": args.text.encode()}
+            elif args.ref == "-":
+                src = {"data": sys.stdin.buffer.read()}
+            else:
+                src = {"source": args.ref}
+            rec = records_mod.add(cfg.data_dir, **src, name=args.name or "",
+                                  cadre=cadre or "", rtype=args.type or "", note=args.note or "",
+                                  by=os.environ.get("CADRE_TASK") or "")
+            print(json.dumps(rec, indent=2) if args.json else f"{rec['id']}  {rec['path']}")
+            return
+        if args.action == "show":
+            rec = records_mod.get(cfg.data_dir, args.ref)
+            if rec is None:
+                sys.exit(f"no record {args.ref!r}")
+            print(json.dumps(rec, indent=2))
+            return
+        rtype = records_mod.check_type(args.type) if args.type is not None else None
+        recs = records_mod.query(cfg.data_dir, cadre=cadre, rtype=rtype)
+        if args.json:
+            print(json.dumps(recs, indent=2))
+            return
+        if not recs:
+            print("no records")
+        for r in recs:
+            where = (r["cadre"] or "general") + (f"/{r['type']}" if r["type"] else "")
+            print(f"{r['id']}  {where:24} {r['name']:32} {r['bytes']:>9} B  {r['path']}")
+    except records_mod.RecordError as e:
+        sys.exit(f"records {args.action} refused: {e}")
+
+
 def cmd_kanban(cfg, args):
     """The kanban board the driver plans on (runnerlib/kanban.py): list it,
     or add, move, edit and remove cards. The fleet's Board screen shows each
@@ -1186,6 +1232,19 @@ def main():
                                       "set <task> <cadre>)")
     p.add_argument("action", choices=["list", "migrate", "set"])
     p.add_argument("rest", nargs="*", help="set: the task id, then the cadre")
+    p = sub.add_parser("records", help="records: files a cadre keeps (add a file, "
+                                       "list, show); agents save them here")
+    p.add_argument("action", choices=["add", "list", "show"])
+    p.add_argument("ref", nargs="?", default="",
+                   help="add: the file to save (- reads stdin); show: the record id")
+    p.add_argument("--cadre", help="add: the cadre it belongs to (id or name; default: none, "
+                                   "a record in general); list: only that cadre's ('' for general)")
+    p.add_argument("--type", help="add: its type within the cadre (receipt, scan, report…); "
+                                  "list: only that type")
+    p.add_argument("--name", help="add: its file name (default: the file's own)")
+    p.add_argument("--note", help="add: one line on what it is")
+    p.add_argument("--text", help="add: save this text instead of a file")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("kanban", help="the kanban board: list it, or add, move, edit "
                                       "and remove cards (the fleet's Board screen)")
     p.add_argument("action", choices=["list", *kanban_mod.ACTIONS])
@@ -1249,7 +1308,7 @@ def main():
      "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "chat-reply": cmd_chat_reply,
-     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "cadres": cmd_cadres, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "cadres": cmd_cadres, "records": cmd_records, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "serve": cmd_serve,
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)
