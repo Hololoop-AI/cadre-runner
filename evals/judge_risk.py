@@ -2,7 +2,7 @@
 """Judge 3 — risk-hold decision briefs (gate c).
 
 The risk hold is the only gate with merge authority, and per
-`docs/audits/2026-09-surface-quality.md` its prompt is the best specified one we
+`evals/audits/2026-09-surface-quality.md` its prompt is the best specified one we
 have while the page is missing the decision half:
 
     "What approving commits to" absent … merge target, what ships, reversal cost.

@@ -84,8 +84,8 @@ chmod +x ~/Projects/review-surface/dist/cli.mjs
 
 # 4. the skills sessions load
 git clone https://github.com/BrandonPerez-Dev/ai-dev-skills.git \
-    ~/dev-config/ai-workflow-config
-bash ~/dev-config/ai-workflow-config/scripts/setup-claude.sh
+    ~/.local/share/cadre/ai-dev-skills
+bash ~/.local/share/cadre/ai-dev-skills/scripts/setup-claude.sh
 ```
 
 Skills reach a session two different ways, and you want both:
@@ -111,7 +111,7 @@ Write `~/Projects/cadre/cadre-runner/config.local.toml`:
 [runner]
 poll_interval = 15
 data_dir = "~/.local/state/cadre-local"
-skills_source = "~/dev-config/ai-workflow-config/skills"
+skills_source = "~/.local/share/cadre/ai-dev-skills/skills"
 status_bind = "127.0.0.1"        # 0.0.0.0 only on a network you trust
 status_port = 8181
 

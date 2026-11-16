@@ -30,8 +30,14 @@ COMPONENTS=(
   # (no admin rights) and builds it:
   # "blackboard|https://github.com/Hololoop-AI/blackboard.git|<ref>|$HOME/Projects/cadre/blackboard|setup_blackboard"
 )
-SKILLS_REPO=https://github.com/BrandonPerez-Dev/ai-dev-skills.git
-SKILLS_DIR="${CADRE_SKILLS_DIR:-$HOME/dev-config/ai-workflow-config}"
+# The skills Cadre's agents load. Override both to use your own copy.
+SKILLS_REPO="${CADRE_SKILLS_REPO:-https://github.com/BrandonPerez-Dev/ai-dev-skills.git}"
+# An install from before the skills moved under ~/.local/share keeps its clone.
+OLD_SKILLS_DIR="$HOME/dev-config/ai-workflow-config"
+if [ -z "${CADRE_SKILLS_DIR:-}" ] && [ -d "$OLD_SKILLS_DIR/.git" ]; then
+  CADRE_SKILLS_DIR="$OLD_SKILLS_DIR"
+fi
+SKILLS_DIR="${CADRE_SKILLS_DIR:-$HOME/.local/share/cadre/ai-dev-skills}"
 BIN_DIR="$HOME/.local/bin"
 UNIT_DIR="$HOME/.config/systemd/user"
 OS=$(uname -s)

@@ -4,8 +4,8 @@
 [runner]
 poll_interval = 45                                  # longest gap between daemon passes (work wakes it sooner)
 data_dir = "~/.local/state/pipeline-runner"         # registry, board, pages, logs
-skills_source = "~/dev-config/ai-workflow-config/skills"  # skills linked into a turn's directory
-status_bind = "127.0.0.1"          # statusd.py: bind address (built-in default 0.0.0.0) and port;
+skills_source = "~/.local/share/cadre/ai-dev-skills/skills"  # skills linked into a turn's directory
+status_bind = "127.0.0.1"          # statusd.py: bind address (built-in default 127.0.0.1) and port;
 status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
                                    # several addresses: ["127.0.0.1", "<private address>"]
 # allowed_hosts = ["box.example.internal"]  # names other machines reach this page by;

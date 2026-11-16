@@ -11,7 +11,7 @@
   checkout must `git fetch` before it checks out `main`.
 - **Tests:** `python3 -m pytest -q` (stdlib only; no claude, network or
   review-surface CLI needed).
-- **Setup for people:** the README's "Installing it" and "More than one
+- **Setup for people:** the README's "Quick start" and "More than one
   machine"; details in `docs/DIALOGUE-SETUP.md`.
 - **No environment-specific details in the repo.** This repo is public and a
   general-purpose tool: no real hostnames, tailnet names, private IPs, user

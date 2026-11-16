@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Judge 2 — interrogation / revise ROUND surfaces (gate b).
 
-Gate (b) is the broken gate: `docs/audits/2026-09-surface-quality.md` found that
+Gate (b) is the broken gate: `evals/audits/2026-09-surface-quality.md` found that
 round N overwrites round N−1, so "what changed since your feedback" was
 unimplementable, and that driver annotations reach the agent as floating
 sentences. Pack 1 fixes the plumbing (versioned round artifacts, preserved

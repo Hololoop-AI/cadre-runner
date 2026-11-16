@@ -38,9 +38,9 @@ assert (cfg.model_for("task"), cfg.effort_for("task")) == ("opus", "max")
 bare = Config({}, Path("config.toml"))
 assert bare.model_for("task") == "opus" and bare.effort_for("task") == "high"
 
-# Portability dials: every one of them has a default that is the behaviour the
-# runner shipped with, so an existing config.toml keeps working untouched.
-assert (bare.runner["status_bind"], bare.runner["status_port"]) == ("0.0.0.0", 8181)
+# Portability dials. The bind defaults to loopback: the page has no login, so a
+# config that wants other machines to reach it says so (status_bind).
+assert (bare.runner["status_bind"], bare.runner["status_port"]) == ("127.0.0.1", 8181)
 
 # An old config.toml that still carries the PR pipeline's keys loads: they are
 # ignored, not refused.

@@ -22,7 +22,7 @@ process changes stops being necessary.
   appends a mechanically-derived RENDERED STRUCTURE inventory (diff hunks,
   chips, embedded media) to the graded text so page structure is judgeable
   without the judge reading markup. Criteria come from
-  `docs/audits/2026-09-surface-quality.md` and the `auto-surface` skill; each
+  `evals/audits/2026-09-surface-quality.md` and the `auto-surface` skill; each
   judge has a good/corrupt fixture pair under `fixtures/`, and
   `tests/test_eval_judges.py` covers everything that is not the model call.
 - `run_spec_eval.sh` — builds the fixture, runs the spec-writer node headless,

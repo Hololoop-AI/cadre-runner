@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Judge 4 — final / PR-review surfaces (gate d).
 
-`docs/audits/2026-09-surface-quality.md` calls gate (d) "ambitious, wrong center
+`evals/audits/2026-09-surface-quality.md` calls gate (d) "ambitious, wrong center
 of gravity": assembly.md already demands demonstration, curated hotspots and
 ranked residual risks, but the page opens with context instead of the verdict
 case, offers an unordered pile of snippets, and shows final state where the
