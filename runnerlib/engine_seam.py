@@ -24,7 +24,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import claude_run, engine, projects
+from . import cadres, claude_run, engine, projects
 from . import runs as runs_mod
 from .blackboard import Board
 from .nodes import Nodes
@@ -99,6 +99,7 @@ def state(cfg) -> dict:
         # operator's live state).
         os.environ["CADRE_DATA_DIR"] = str(cfg.data_dir)
         tasks.seed(cfg.data_dir, cfg)           # workflow #3's nodes
+        cadres.seed_defaults(cfg.data_dir)      # the shipped cadres this machine has never had
         board = Board(path)
         actions = engine.load_action_set(ACTIONS_PATHS)
         start_new_actions_at_head(board, actions)

@@ -348,3 +348,69 @@ def test_closed_pages_file_under_their_project_for_the_finished_list():
     }))
     got = statusd.closed_pages(projects.load(d), d)
     assert [m["key"] for m in got["web"]] == ["k2", "k1"]
+
+
+
+def _shipped(d: Path, cadres_list) -> Path:
+    p = d / "shipped.json"
+    p.write_text(json.dumps({"cadres": cadres_list}))
+    return p
+
+
+def test_the_shipped_cadres_file_names_each_cadre_by_its_slug_and_dev_owns_the_kanban():
+    from runnerlib import cadres
+    from runnerlib.registry import slugify
+    got = cadres.shipped()
+    assert [c["id"] for c in got] == ["dev", "kitchen", "personal"]
+    assert all(c["id"] == slugify(c["name"]) for c in got)
+    assert [c["id"] for c in got if c.get("kanban")] == ["dev"]
+
+
+def test_a_new_machine_gets_the_whole_shipped_cadre_and_dev_gets_the_kanban_tab():
+    from runnerlib import cadres, kanban
+    d = scratch()
+    assert cadres.seed_defaults(d) == ["dev", "kitchen", "personal"]
+    projs = projects.load(d)
+    assert [c["name"] for c in cadres.cadre_list(projs)] == ["Dev", "Kitchen", "Personal"]
+    assert projs["dev"]["dirs"] == [], "no folders ship: the machine adds its own"
+    assert kanban.load(d)["board"] == "dev"
+    board = kanban.load(d)["board"]
+    assert "kanban" in [s["id"] for s in cadres.nav(projs, "dev", board=board)["screens"]]
+    assert "kanban" not in [s["id"] for s in cadres.nav(projs, "kitchen", board=board)["screens"]]
+
+
+def test_shipped_config_rides_along_but_machine_fields_do_not():
+    from runnerlib import cadres
+    d = scratch()
+    src = _shipped(d, [{"id": "lab", "name": "Lab", "nav": ["home", "records"], "skills": ["investigating"],
+                        "launch": "skill:investigating", "dirs": ["/somewhere"], "archived": True}])
+    assert cadres.seed_defaults(d, src) == ["lab"]
+    rec = projects.load(d)["lab"]
+    assert (rec["nav"], rec["skills"], rec["launch"]) == (["home", "records"], ["investigating"], "skill:investigating")
+    assert (rec["dirs"], rec["archived"]) == ([], False)
+
+
+def test_a_removed_default_stays_removed_and_a_later_one_still_arrives():
+    from runnerlib import cadres
+    d = scratch()
+    cadres.seed_defaults(d)
+    projects.archive(d, "kitchen")
+    assert cadres.seed_defaults(d) == []
+    assert [c["id"] for c in cadres.cadre_list(projects.load(d))] == ["dev", "personal"]
+    # a cadre added to the shipped file in a later release reaches this install once
+    later = _shipped(d, [*cadres.shipped(), {"id": "garden", "name": "Garden"}])
+    assert cadres.seed_defaults(d, later) == ["garden"]
+    assert cadres.seed_defaults(d, later) == []
+
+
+def test_an_existing_install_keeps_its_own_cadres_and_board_and_gains_the_missing_ones():
+    from runnerlib import cadres, kanban
+    d = scratch()
+    projects.create(d, "Dev", dirs=[])
+    projects.update(d, "dev", nav=["home", "settings"])
+    projects.create(d, "Mine")
+    kanban.own(d, "mine")
+    assert cadres.seed_defaults(d) == ["kitchen", "personal"]
+    projs = projects.load(d)
+    assert projs["dev"]["nav"] == ["home", "settings"], "the machine's own edits win"
+    assert kanban.load(d)["board"] == "mine", "a board that already has an owner keeps it"
