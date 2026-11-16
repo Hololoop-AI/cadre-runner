@@ -23,33 +23,22 @@ four prerequisites the installer cannot install for you (Python 3.11+, Node 22+,
 git, the Claude Code CLI), with the no-admin way to get each on a Mac, and it
 explains what you are looking at once the page is up.
 
-## Joining the shared team backend
+## More than one machine
 
-The team shares one always-on Cadre backend on **fedora-1**. Your own fleet page
-shows it next to your laptop's work, in its own section: open a page there,
-annotate it, and the next turn runs on fedora-1 — everyone on the team sees the
-same pages.
+One fleet page can show several machines' Cadre side by side — for example
+your laptop's work next to an always-on shared backend that a team uses
+together. Each machine you want to show is listed in `config.local.toml`:
 
-1. Install as above, and get your machine onto the team's Tailscale tailnet
-   (`tailscale status` should list `fedora-1`).
-2. Add this to `config.local.toml` (next to `pipeline.py`):
+```toml
+[[backends]]
+name = "shared backend"
+url = "http://<host>:<port>"
+```
 
-   ```toml
-   [[backends]]
-   name = "fedora-1 · shared team backend"
-   url = "http://fedora-1.tail2057e0.ts.net:8183"
-   ```
-
-3. Restart the fleet page (`python3 pipeline.py up` again, or
-   `systemctl --user restart cadre-statusd` with the services). The machine bar
-   at the top of http://127.0.0.1:8181 now lists fedora-1; a red
-   "unreachable" card means your machine cannot reach it over the tailnet.
-
-Your own machine stays private: nothing above shares your pages. To start work
-*on* fedora-1, use "new work →" in its section (it opens fedora-1's own project
-page). To make another machine a backend others can read, or to look after the
-fedora-1 one, see "More than one machine" in
-[docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md).
+The machines need a private network between them (a VPN such as Tailscale, or
+a trusted LAN); the fleet page has no login, so never expose it publicly. How
+to make a machine readable by others, and what it does not do yet, is in
+"More than one machine" in [docs/DIALOGUE-SETUP.md](docs/DIALOGUE-SETUP.md).
 
 ## What it runs
 

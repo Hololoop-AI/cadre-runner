@@ -2,7 +2,7 @@
 // browser over a throttled link (Chromium's network emulation: added
 // latency per request, capped down/up throughput).
 //
-//   node scripts/page-timings.mjs [--base http://fedora-1.tail2057e0.ts.net:8183]
+//   node scripts/page-timings.mjs [--base http://127.0.0.1:8181]
 //        [--latency 80] [--mbit 10] [--runs 5] [--session /session/<key>]
 //        [--only fleet|review] [--warm]
 //
@@ -20,7 +20,7 @@ const arg = (name, dflt) => {
   const i = process.argv.indexOf('--' + name);
   return i > 0 ? process.argv[i + 1] : dflt;
 };
-const BASE = arg('base', 'http://fedora-1.tail2057e0.ts.net:8183');
+const BASE = arg('base', 'http://127.0.0.1:8181');
 const LATENCY = Number(arg('latency', 80));
 const MBIT = Number(arg('mbit', 10));
 const RUNS = Number(arg('runs', 5));

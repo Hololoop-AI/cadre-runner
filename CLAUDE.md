@@ -8,6 +8,10 @@
   through a PR. The main checkout only ever moves by pulling `main`.
 - **Tests:** `python3 -m pytest -q` (stdlib only; no claude, network or
   review-surface CLI needed).
-- **Setup for people:** the README's "Installing it" and "Joining the shared
-  team backend"; details in `docs/DIALOGUE-SETUP.md`, including "More than one
-  machine" (several backends on one fleet page, over Tailscale).
+- **Setup for people:** the README's "Installing it" and "More than one
+  machine"; details in `docs/DIALOGUE-SETUP.md`.
+- **No environment-specific details in the repo.** This repo is public and a
+  general-purpose tool: no real hostnames, tailnet names, private IPs, user
+  names or home paths in docs, examples, tests or scripts. Use placeholders
+  (`<host>`, `box-1`, `100.64.0.x`, `/home/dev`); operator notes for a
+  particular deployment live outside the repo.

@@ -1,7 +1,7 @@
 // Screenshot + short video of a Cadre fleet page. usage: node capture.mjs <url> <outdir> <label>
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('/home/juiz/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+const { chromium } = require('playwright');
 const [url, out, label] = process.argv.slice(2);
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 },

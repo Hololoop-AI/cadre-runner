@@ -41,7 +41,7 @@ def main():
                     tasks[11]: {"ended": now - 4000, "ok": True, "node": "task"}}
     f["pageless"] = [
         {"task": "task-a-run-that-failed-20261104-010101-aaaaaa", "since": now - 5000,
-         "project": "research", "title": "A run that failed", "cwd": "/home/juiz",
+         "project": "research", "title": "A run that failed", "cwd": "/home/dev",
          "running": False, "ran": False, "started": False,
          "failed": "ActionFailed: claude exited 1: the model refused the prompt because it was empty"},
         {"task": "task-never-started-20261104-010101-bbbbbb", "since": now - 9000,
