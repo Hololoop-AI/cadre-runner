@@ -1,6 +1,12 @@
-"""Records: the files a cadre keeps that are not events (Kitchen's receipts
-and scans, a Dev run's exported report). Agents write them through the CLI,
-`pipeline.py records add`, and read them back with `records list`.
+"""Records: the pages a cadre keeps that are not events (an architecture
+decision record, Kitchen's pantry list, a recipe). Agents write them through
+the CLI, `pipeline.py records add`, and read them back with `records list`.
+
+A record is always an HTML document: it is an artifact that talks to the
+person, like a review page, never a Markdown or text file. A file whose
+name does not end in .html or whose content does not open as an HTML
+document (<!doctype html> or <html>) is refused, and nothing is written.
+A scan or a photo belongs inside a record's page, not as a record itself.
 
 A record is a file copied into the store plus one line of facts about it:
 
@@ -10,7 +16,7 @@ A record is a file copied into the store plus one line of facts about it:
                       "sha256", "note", "by", "created_at"}, ...]}
 
 `cadre` is the cadre the record was saved to ("" for a record in general);
-`type` sorts records inside a cadre ("receipt", "scan", "report"; "" for
+`type` sorts records inside a cadre ("adr", "pantry", "recipe"; "" for
 none), so each type can later be drawn by its own component. `by` is the
 task id of the agent that saved it (CADRE_TASK), else "driver".
 
@@ -26,7 +32,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import tempfile
 import time
 from contextlib import contextmanager
@@ -42,6 +47,8 @@ MAX_BYTES = 50 * 1024 * 1024
 TYPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 ID = re.compile(r"^[0-9a-f]{8}$")
 NOTE_MAX = 2000
+HTML_SUFFIXES = (".html", ".htm")
+HTML_START = re.compile(rb"^\s*(<!--.*?-->\s*)*<(!doctype\s+html|html)[\s>]", re.I | re.S)
 
 
 class RecordError(ValueError):
@@ -93,6 +100,21 @@ def check_type(rtype) -> str:
     return rtype
 
 
+def check_html(name: str, body: bytes) -> str:
+    """`name` as the record's file name (.html added when it has no suffix);
+    refused unless the name and the content are an HTML document."""
+    name = _safe_name(name or "record")
+    if not Path(name).suffix:
+        name += ".html"
+    if Path(name).suffix.lower() not in HTML_SUFFIXES:
+        raise RecordError(f"a record is an HTML page; {name} is not (.html only — "
+                          f"put a scan or a note inside a page)")
+    if not HTML_START.match(body.lstrip(b"\xef\xbb\xbf")[:4096]):
+        raise RecordError(f"{name} does not open as an HTML document "
+                          f"(<!doctype html> or <html> first)")
+    return name
+
+
 def add(data_dir, *, source=None, data: bytes | None = None, name: str = "",
         cadre: str = "", rtype: str = "", note: str = "", by: str = "") -> dict:
     """Copy `source` (a file path) or `data` into the store under `cadre`
@@ -109,17 +131,15 @@ def add(data_dir, *, source=None, data: bytes | None = None, name: str = "",
         name = name or src.name
     elif len(data) > MAX_BYTES:
         raise RecordError(f"the record is over {MAX_BYTES // (1024 * 1024)} MB")
+    body = Path(source).expanduser().read_bytes() if source is not None else data
+    name = check_html(name, body)
     rid = secrets.token_hex(4)
     with _locked(data_dir) as d:
-        rel = Path(cadre or GENERAL) / (rtype or UNTYPED) / f"{rid}-{_safe_name(name or 'record')}"
+        rel = Path(cadre or GENERAL) / (rtype or UNTYPED) / f"{rid}-{name}"
         dest = d / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if source is not None:
-            shutil.copyfile(Path(source).expanduser(), dest)
-        else:
-            dest.write_bytes(data)
-        body = dest.read_bytes()
-        rec = {"id": rid, "cadre": cadre or "", "type": rtype, "name": _safe_name(name or "record"),
+        dest.write_bytes(body)
+        rec = {"id": rid, "cadre": cadre or "", "type": rtype, "name": name,
                "path": str(dest), "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(),
                "note": str(note or "")[:NOTE_MAX], "by": by or DRIVER, "created_at": time.time()}
         recs = load(data_dir)

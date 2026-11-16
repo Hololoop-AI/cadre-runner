@@ -219,6 +219,40 @@ export interface Nav {
   pinned: NavLink[];
   /** the rail: every cadre, then Other */
   cadres: { id: string; name: string }[];
+  /** what its Settings tab shows: its own setup, not its work */
+  settings: CadreSettings;
+}
+
+/** A cadre's own setup, read from its project record (runnerlib/cadres.py settings). */
+export interface CadreSettings {
+  /** the project record it is ('' for Other, which has none) */
+  project: string;
+  /** folders whose runs it gets */
+  folders: string[];
+  /** projects grouped under it, whose runs it gets too */
+  members: { id: string; name: string }[];
+  /** the tabs its record asks for; empty means the default */
+  nav: string[];
+}
+
+/** One event on the blackboard, the store agents write to each other (runnerlib/blackboard.py). */
+export interface BlackboardEvent {
+  seq: number;
+  id: string;
+  ts: number;
+  namespace: string;
+  topic: string;
+  key: string;
+  kind: string;
+  provenance: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  correlation_id: string | null;
+  visible_after: number | null;
+}
+
+/** GET /api/blackboard?limit=<n>: the newest events, newest first. */
+export interface Blackboard {
+  events: BlackboardEvent[];
 }
 
 /** One machine the app can switch to: its name and origin ('' = where the app was loaded from). */

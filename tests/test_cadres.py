@@ -134,14 +134,24 @@ def test_week_cost_is_per_cadre_and_only_seven_days():
 
 def test_nav_lists_the_screens_always_with_settings(fleet):
     projs = projects.load(fleet)
-    nav = cadres.nav(projs, "dev")
-    assert [s["label"] for s in nav["screens"]] == ["Home", "Board", "Agents", "Settings"]
+    nav = cadres.nav(projs, "dev", board="dev")
+    assert [s["label"] for s in nav["screens"]] == ["Home", "Kanban", "Blackboard", "Agents", "Settings"]
     assert nav["screens"][0]["href"] == "/c/dev" and nav["screens"][-1]["href"] == "/c/dev/settings"
     assert [c["id"] for c in nav["cadres"]] == ["dev", "kitchen", cadres.OTHER]
-    projects.update(fleet, "dev", nav=["home", "board"], pinned=[{"label": "Design", "href": "/view/abc"}])
-    nav = cadres.nav(projects.load(fleet), "dev")
-    assert [s["id"] for s in nav["screens"]] == ["home", "board", "settings"]
+    # a cadre that does not own the kanban board has neither system screen
+    assert [s["id"] for s in cadres.nav(projs, "kitchen", board="dev")["screens"]] == ["home", "agents", "settings"]
+    projects.update(fleet, "dev", nav=["home", "kanban"], pinned=[{"label": "Design", "href": "/view/abc"}])
+    nav = cadres.nav(projects.load(fleet), "dev", board="dev")
+    assert [s["id"] for s in nav["screens"]] == ["home", "kanban", "settings"]
     assert nav["pinned"] == [{"label": "Design", "href": "/view/abc"}]
+
+
+def test_settings_show_the_cadres_setup_not_its_work(fleet):
+    projs = projects.load(fleet)
+    st = cadres.nav(projs, "dev")["settings"]
+    assert st["project"] == "dev" and st["nav"] == []
+    assert [m["id"] for m in st["members"]] == [p["id"] for p in projects.live(projs) if p.get("group") == "dev"]
+    assert cadres.nav(projs, cadres.OTHER)["settings"] == {"project": "", "folders": [], "members": [], "nav": []}
 
 
 def test_the_server_answers_nav_and_a_cadres_fleet(fleet, monkeypatch):
@@ -158,6 +168,14 @@ def test_the_server_answers_nav_and_a_cadres_fleet(fleet, monkeypatch):
         with pytest.raises(urllib.error.HTTPError) as hit:
             urllib.request.urlopen(url + "/api/nav?cadre=garden", timeout=5)
         assert hit.value.code == 404
+        with urllib.request.urlopen(url + "/api/blackboard", timeout=5) as r:
+            assert json.loads(r.read()) == {"events": []}, "no board.db yet is no events"
+        with Board(fleet / "board.db") as bb:
+            for n in range(3):
+                bb.write("tasks", "dialogue", f"task-{n}", "signal", {"status": "started"})
+        with urllib.request.urlopen(url + "/api/blackboard?limit=2", timeout=5) as r:
+            got = json.loads(r.read())["events"]
+        assert [e["key"] for e in got] == ["task-2", "task-1"]
         with urllib.request.urlopen(url + "/api/fleet?cadre=kitchen", timeout=5) as r:
             body = json.loads(r.read())
         assert body["cadre"] == "kitchen" and [x["task"] for x in body["running"]] == ["t-kit"]

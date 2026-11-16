@@ -14,9 +14,9 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { buildHome, groupBadges, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
+import { BlackboardScreen } from './Blackboard';
 import { GroupBar } from './Groups';
 import { KanbanScreen } from './Kanban';
-import { ProjectScreen } from './Project';
 import { go } from './router';
 import { Framed } from './Screen';
 import { useServer } from './server';
@@ -45,6 +45,8 @@ export interface Chrome {
   menu: ReactNode;
   /** the header tabs when wide, and the phone's open menu */
   tabs: ReactNode;
+  /** the cadre's navigation, once it has arrived */
+  nav: Nav | null;
 }
 const ChromeContext = createContext<Chrome | null>(null);
 
@@ -154,7 +156,7 @@ export function CadreShell({ id, tab, fleet, children }: {
     </>
   ) : error ? <p className="notice">{`Could not load this cadre's navigation: ${error}`}</p> : null;
   return (
-    <ChromeContext.Provider value={{ cadre: id, name, menu, tabs }}>
+    <ChromeContext.Provider value={{ cadre: id, name, menu, tabs, nav }}>
       <GroupBar groups={groups} group={id} badges={badges} shut={false} open={open}
         onPick={(g) => { setOpen(false); railPick(g); }} onShut={() => {}} />
       <div className={shut ? 'cshell shut' : 'cshell'}>
@@ -169,17 +171,58 @@ export function CadreShell({ id, tab, fleet, children }: {
 export function CadreScreen({ id, tab }: { id: string; tab: string }) {
   const chrome = useChrome();
   if (!chrome) return null;
-  const title = tab === 'board' ? 'Board' : tab === 'settings' ? 'Settings' : tab === 'agents' ? 'Agents' : tab;
+  const title = chrome.nav?.screens.find((s) => s.id === tab)?.label || tab;
   return (
     <div className="wrap">
       <CadreBar chrome={chrome} title={title} />
       <Framed.Provider value>
-        {tab === 'board' ? <KanbanScreen cadre={id} />
-          : tab === 'settings' ? (id === OTHER ? <OtherSettings /> : <ProjectScreen id={id} />)
-            : tab === 'agents' ? <AgentsPending name={chrome.name} />
-              : <p className="notice">{`${chrome.name} has no screen called ${tab}.`}</p>}
+        {tab === 'kanban' ? <KanbanScreen cadre={id} />
+          : tab === 'blackboard' ? <BlackboardScreen />
+            : tab === 'settings' ? (id === OTHER ? <OtherSettings /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)
+              : tab === 'agents' ? <AgentsPending name={chrome.name} />
+                : <p className="notice">{`${chrome.name} has no screen called ${tab}.`}</p>}
       </Framed.Provider>
     </div>
+  );
+}
+
+/**
+ * A cadre's Settings tab: its own setup, not its work. What it is (its
+ * project record), where its runs come from (its folders and the projects
+ * grouped under it), its tabs and pinned pages, and how each is changed.
+ * Its runs and the launcher are on Home and on the project page it links.
+ */
+function CadreSettingsScreen({ id, nav }: { id: string; nav: Nav | null }) {
+  if (!nav) return <p className="meta">Loading…</p>;
+  const st = nav.settings;
+  const tabs = nav.screens.map((s) => s.label).join(', ');
+  return (
+    <section className="csettings">
+      <h2 className="sect">Settings</h2>
+      <p className="meta">{`How ${nav.cadre.name} is set up. Its work is on its Home tab; this page is only its setup.`}</p>
+      <dl>
+        <dt>Its record</dt>
+        <dd>{`The project ${st.project || id}. `}<a href={`/project/${encodeURIComponent(st.project || id)}`}>Open the project page</a>
+          {' for its launcher and context store, or to archive it. Its folders change with '}<code>{`pipeline.py project set ${st.project || id} --dir <folder>`}</code>{'; its tabs and pinned pages are the record\'s '}<code>nav</code>{' and '}<code>pinned</code>{' fields.'}</dd>
+        <dt>Runs it gets</dt>
+        <dd>
+          {'Any run launched from inside it (New work here, or '}<code>{`pipeline.py task --cadre ${id}`}</code>{'). '}
+          {'A run launched with no cadre named comes here when it runs in '}
+          {st.folders.length || st.members.length ? 'one of these:' : 'its folder; it has none.'}
+          {(st.folders.length > 0 || st.members.length > 0) && (
+            <ul>
+              {st.folders.map((f) => <li key={f}><code>{f}</code></li>)}
+              {st.members.map((m) => <li key={m.id}>{'the project '}<a href={`/project/${encodeURIComponent(m.id)}`}>{m.name}</a></li>)}
+            </ul>
+          )}
+          {'Move a run here with '}<code>{`pipeline.py cadres set <task> ${id}`}</code>{'.'}
+        </dd>
+        <dt>Tabs</dt>
+        <dd>{`${tabs}${st.nav.length ? ', as its record asks (nav).' : ', the default.'}`}</dd>
+        <dt>Pinned pages</dt>
+        <dd>{nav.pinned.length ? nav.pinned.map((p) => p.label).join(', ') : 'None yet.'}</dd>
+      </dl>
+    </section>
   );
 }
 

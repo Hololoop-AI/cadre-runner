@@ -1022,7 +1022,7 @@ def cmd_cadres(cfg, args):
 
 
 def cmd_records(cfg, args):
-    """Records (runnerlib/records.py): files a cadre keeps. Agents save them
+    """Records (runnerlib/records.py): HTML pages a cadre keeps. Agents save them
     with `add`, to a cadre (--cadre) and a type within it (--type), and read
     them back with `list` and `show`."""
     projs = projects_mod.load(cfg.data_dir)
@@ -1034,7 +1034,7 @@ def cmd_records(cfg, args):
     try:
         if args.action == "add":
             if not args.ref and args.text is None:
-                sys.exit("records add needs a file (or - for stdin) or --text")
+                sys.exit("records add needs an .html page (or - for stdin) or --text")
             if args.text is not None:
                 src = {"data": args.text.encode()}
             elif args.ref == "-":
@@ -1232,18 +1232,18 @@ def main():
                                       "set <task> <cadre>)")
     p.add_argument("action", choices=["list", "migrate", "set"])
     p.add_argument("rest", nargs="*", help="set: the task id, then the cadre")
-    p = sub.add_parser("records", help="records: files a cadre keeps (add a file, "
+    p = sub.add_parser("records", help="records: HTML pages a cadre keeps (add a page, "
                                        "list, show); agents save them here")
     p.add_argument("action", choices=["add", "list", "show"])
     p.add_argument("ref", nargs="?", default="",
-                   help="add: the file to save (- reads stdin); show: the record id")
+                   help="add: the .html page to save (- reads stdin); show: the record id")
     p.add_argument("--cadre", help="add: the cadre it belongs to (id or name; default: none, "
                                    "a record in general); list: only that cadre's ('' for general)")
-    p.add_argument("--type", help="add: its type within the cadre (receipt, scan, report…); "
+    p.add_argument("--type", help="add: its type within the cadre (adr, pantry, recipe…); "
                                   "list: only that type")
-    p.add_argument("--name", help="add: its file name (default: the file's own)")
+    p.add_argument("--name", help="add: its file name, .html (default: the file's own)")
     p.add_argument("--note", help="add: one line on what it is")
-    p.add_argument("--text", help="add: save this text instead of a file")
+    p.add_argument("--text", help="add: save this HTML document instead of a file")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("kanban", help="the kanban board: list it, or add, move, edit "
                                       "and remove cards (the fleet's Board screen)")

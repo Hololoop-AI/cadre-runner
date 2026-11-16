@@ -52,6 +52,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from pathlib import Path
 
 # The eight communication types, as kind -> required payload fields. Anything
 # else is rejected at the write; raw output and progress lines stay in herdr.
@@ -498,3 +499,25 @@ def _row_to_event(row) -> dict:
             "payload": json.loads(row["payload"]),
             "correlation_id": row["correlation_id"],
             "visible_after": row["visible_after"]}
+
+
+def recent(path, limit: int = 100) -> list[dict]:
+    """The newest `limit` events, newest first, read without writing: the
+    fleet's Blackboard screen looks, the daemon owns the file. A missing or
+    unreadable file is no events, never an error."""
+    p = Path(path)
+    if not p.is_file():
+        return []
+    try:
+        db = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return []
+    try:
+        db.row_factory = sqlite3.Row
+        rows = db.execute("SELECT * FROM events ORDER BY seq DESC LIMIT ?",
+                          (max(1, min(int(limit), 500)),)).fetchall()
+        return [_row_to_event(r) for r in rows]
+    except (sqlite3.Error, ValueError):
+        return []
+    finally:
+        db.close()

@@ -30,7 +30,7 @@ import statusd
 CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
-GETS = ["/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
+GETS = ["/api/blackboard", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
         "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}",
         "/api/view/{key}", "/api/kanban", "/api/nav"]
 # what a path parameter is filled with when a case is requested

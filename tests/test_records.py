@@ -31,33 +31,52 @@ def cli(data, *args, stdin=None, task=""):
                           env=env, timeout=60)
 
 
+PAGE = "<!doctype html><html><body><h1>{}</h1></body></html>"
+
+
 def test_a_record_is_saved_to_a_named_cadre_and_type_and_listed_back(data, tmp_path):
-    scan = tmp_path / "receipt 14 Nov.jpg"
-    scan.write_bytes(b"\xff\xd8 not really a jpeg")
-    got = cli(data, "add", str(scan), "--cadre", "Kitchen", "--type", "receipt", "--note", "Aldi",
+    page = tmp_path / "pantry 14 Nov.html"
+    page.write_text(PAGE.format("Pantry"))
+    got = cli(data, "add", str(page), "--cadre", "Kitchen", "--type", "pantry", "--note", "living list",
               "--json", task="task-shop")
     assert got.returncode == 0, got.stderr
     rec = json.loads(got.stdout)
     assert (rec["cadre"], rec["type"], rec["name"], rec["by"], rec["note"]) == \
-        ("kitchen", "receipt", "receipt-14-Nov.jpg", "task-shop", "Aldi")
-    assert Path(rec["path"]).read_bytes() == scan.read_bytes()
-    assert Path(rec["path"]).parent == data / "records" / "kitchen" / "receipt"
+        ("kitchen", "pantry", "pantry-14-Nov.html", "task-shop", "living list")
+    assert Path(rec["path"]).read_bytes() == page.read_bytes()
+    assert Path(rec["path"]).parent == data / "records" / "kitchen" / "pantry"
 
-    cli(data, "add", "--text", "general note")
-    cli(data, "add", "-", "--cadre", "kitchen", "--type", "scan", "--name", "shelf.txt", stdin="beans")
+    cli(data, "add", "--text", PAGE.format("general"))
+    got = cli(data, "add", "-", "--cadre", "kitchen", "--type", "recipe", "--name", "stir-fry", stdin=PAGE.format("Stir-fry"))
+    assert json.loads(cli(data, "list", "--cadre", "kitchen", "--type", "recipe", "--json").stdout)[0]["name"] == "stir-fry.html"
     kitchen = json.loads(cli(data, "list", "--cadre", "kitchen", "--json").stdout)
-    assert [r["type"] for r in kitchen] == ["scan", "receipt"]
-    receipts = json.loads(cli(data, "list", "--cadre", "kitchen", "--type", "receipt", "--json").stdout)
-    assert [r["id"] for r in receipts] == [rec["id"]]
+    assert [r["type"] for r in kitchen] == ["recipe", "pantry"]
+    pantry = json.loads(cli(data, "list", "--cadre", "kitchen", "--type", "pantry", "--json").stdout)
+    assert [r["id"] for r in pantry] == [rec["id"]]
     general = json.loads(cli(data, "list", "--cadre", "", "--json").stdout)
-    assert [Path(r["path"]).read_text() for r in general] == ["general note"]
+    assert [Path(r["path"]).read_text() for r in general] == [PAGE.format("general")]
     assert len(json.loads(cli(data, "list", "--json").stdout)) == 3
     assert json.loads(cli(data, "show", rec["id"]).stdout)["sha256"] == rec["sha256"]
 
 
+def test_a_record_is_always_an_html_page(data, tmp_path):
+    md = tmp_path / "decision.md"
+    md.write_text("# A decision")
+    got = cli(data, "add", str(md), "--cadre", "dev", "--type", "adr")
+    assert got.returncode != 0 and "HTML page" in got.stderr
+    fake = tmp_path / "fake.html"
+    fake.write_text("# still markdown")
+    got = cli(data, "add", str(fake), "--cadre", "dev")
+    assert got.returncode != 0 and "does not open as an HTML document" in got.stderr
+    assert cli(data, "add", "--text", "plain words").returncode != 0
+    assert records.load(data) == []
+    ok = cli(data, "add", "--text", "\n  <!-- an ADR -->\n<HTML lang=en><body>ok</body></HTML>", "--name", "adr-1")
+    assert ok.returncode == 0, ok.stderr
+
+
 def test_unknown_cadres_and_bad_types_are_refused_and_nothing_is_written(data, tmp_path):
-    f = tmp_path / "x.txt"
-    f.write_text("x")
+    f = tmp_path / "x.html"
+    f.write_text(PAGE.format("x"))
     no_cadre = cli(data, "add", str(f), "--cadre", "garden")
     assert no_cadre.returncode != 0 and "no cadre 'garden'" in no_cadre.stderr
     bad_type = cli(data, "add", str(f), "--cadre", "dev", "--type", "Receipts!")

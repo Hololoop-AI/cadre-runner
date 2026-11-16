@@ -6,7 +6,7 @@
 export type {
   Backend, Backends, ClosedPage, Kanban, KanbanCard, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
   PageOwner, PagePayload, ProjectContext, ProjectPayload, TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
-  RunningCard, SessionStatus, Surface, TreeNode, ViewInfo, Nav, NavLink,
+  RunningCard, SessionStatus, Surface, TreeNode, ViewInfo, Nav, NavLink, CadreSettings, Blackboard, BlackboardEvent,
 } from './payload';
 export { cadreCards, itemCadre, needsYou, type CadreCard } from './cadres';
 export { cmp, escapedCut, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';

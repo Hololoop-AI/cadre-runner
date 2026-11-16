@@ -573,6 +573,34 @@
         }
       }
     },
+    "/api/blackboard": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The newest events on the blackboard, the store agents write to each other (runnerlib/blackboard.py recent), newest first. Read only; no board.db is no events.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the newest events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Blackboard"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/kanban": {
       "post": {
         "x-tier": "app",
@@ -2429,7 +2457,8 @@
           "screens",
           "batches",
           "pinned",
-          "cadres"
+          "cadres",
+          "settings"
         ],
         "properties": {
           "cadre": {
@@ -2462,6 +2491,120 @@
               "$ref": "#/components/schemas/CadreRef"
             },
             "description": "the rail: every cadre, then Other"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/CadreSettings"
+          }
+        }
+      },
+      "CadreSettings": {
+        "x-ts": "CadreSettings",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "folders",
+          "members",
+          "nav"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "the project record it is ('' for Other)"
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            }
+          },
+          "nav": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "the tabs its record asks for; empty is the default"
+          }
+        }
+      },
+      "BlackboardEvent": {
+        "x-ts": "BlackboardEvent",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seq",
+          "id",
+          "ts",
+          "namespace",
+          "topic",
+          "key",
+          "kind",
+          "provenance",
+          "payload",
+          "correlation_id",
+          "visible_after"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ts": {
+            "type": "number"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visible_after": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "Blackboard": {
+        "x-ts": "Blackboard",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlackboardEvent"
+            }
           }
         }
       }

@@ -73,7 +73,7 @@ export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
         {' · agents use '}<code>pipeline.py kanban</code></p>
       {notice && <p className="notice">{notice}</p>}
       {!board ? <Pending error={error} />
-        : cadre && board.board !== cadre ? <p className="meta">{`This cadre has no board yet. The one board there is belongs to ${board.board}.`}</p>
+        : cadre && board.board !== cadre ? <p className="meta">{`This cadre has no kanban board. The one kanban board there is belongs to ${board.board}.`}</p>
           : <Board board={board} onChange={send} />}
     </Screen>
   );

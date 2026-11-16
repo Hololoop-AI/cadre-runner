@@ -66,7 +66,27 @@ body.home header button.cmenu{padding:3px 11px;border:1px solid var(--border);bo
  .cmainwrap > .wrap > nav.ctabs{display:none}
  body.home header:has(button.cmenu) h1{flex-basis:auto}
  body.home header button.cmenu{margin-right:auto}
+ /* every dropdown takes the full width on a phone, except the home item
+    amount (it sits inside a sentence) and the header's machine switcher */
+ select:not(#limit):not(#machine){display:block;width:100%;max-width:none;box-sizing:border-box;flex:1 1 100%}
+ .items select.projfilter{float:none;margin:6px 0}
 }
+
+/* the Settings tab: the cadre's setup as a list of facts */
+.csettings dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 18px;margin:12px 0}
+.csettings dt{color:var(--label);font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding-top:2px}
+.csettings dd{margin:0}
+.csettings dd ul{margin:6px 0;padding-left:18px}
+@media (max-width:640px){.csettings dl{grid-template-columns:minmax(0,1fr)}.csettings dd{margin-bottom:8px}}
+
+/* the Blackboard tab: the newest events, one row each */
+table.bboard{width:100%;border-collapse:collapse;font-size:13px}
+table.bboard th{text-align:left;color:var(--label);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+ padding:6px 8px;border-bottom:1px solid var(--border)}
+table.bboard td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}
+table.bboard td:first-child,table.bboard td:last-child{white-space:nowrap;color:var(--muted)}
+@media (max-width:640px){table.bboard thead{display:none}table.bboard tr{display:block;border-bottom:1px solid var(--border);padding:6px 0}
+ table.bboard td{display:inline-block;border:0;padding:2px 6px}}
 
 /* Hololoop: a card per cadre */
 ul.cadres{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}

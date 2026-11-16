@@ -36,6 +36,8 @@ export interface Server {
     fetchKanban(): Promise<Kanban>;
     /** GET /api/nav?cadre=<id>: a cadre's rail, header tabs and side column */
     fetchNav(cadre: string): Promise<Nav>;
+    /** GET /api/blackboard: the newest events agents wrote to each other */
+    fetchBlackboard(): Promise<Blackboard>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */

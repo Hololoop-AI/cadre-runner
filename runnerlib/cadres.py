@@ -45,10 +45,17 @@ OTHER_NAME = "Other"
 # Each is a screen of the fleet app under /c/<id>/; "home" is /c/<id> itself.
 # The fleet-wide screens (runs, costs, the library) are not a cadre's: they
 # stay on Hololoop until they can be cut to one cadre's runs.
-DEFAULT_NAV = ("home", "board", "agents", "settings")
+DEFAULT_NAV = ("home", "agents", "settings")
+# The cadre that owns the kanban board (kanban.json's `board`) also gets its
+# two system screens: the Kanban board (cards a person and agents move) and
+# the Blackboard (the event store agents write to each other,
+# runnerlib/blackboard.py). They are different things; no other cadre has
+# either until it is given one through its record's `nav`.
+BOARD_NAV = ("home", "kanban", "blackboard", "agents", "settings")
 SCREENS = {
     "home": "Home",
-    "board": "Board",
+    "kanban": "Kanban",
+    "blackboard": "Blackboard",
     "agents": "Agents",
     "settings": "Settings",
 }
@@ -259,16 +266,18 @@ def week_usd(turns: list[dict], tasks: dict, projs: dict, now: float | None = No
     return out
 
 
-def nav(projs: dict, cadre: str) -> dict:
+def nav(projs: dict, cadre: str, *, board: str = "") -> dict:
     """What the shell draws for `cadre` (GET /api/nav?cadre=<id>): its rail
     entry, its screens as header tabs (from the project record's `nav`, else
-    DEFAULT_NAV; Settings is always there), and its second column — batches
+    BOARD_NAV for the cadre owning the kanban board `board`, else
+    DEFAULT_NAV; Settings is always there), its second column — batches
     (none until the board has them) and pinned pages (the record's
-    `pinned`: [{label, href}])."""
+    `pinned`: [{label, href}]) — and what its Settings tab shows."""
     rec = projs.get(cadre) or {}
     name = OTHER_NAME if cadre == OTHER else rec.get("name") or cadre
     base = f"/c/{cadre}"
-    wanted = [s for s in (rec.get("nav") or DEFAULT_NAV) if s in SCREENS]
+    default = BOARD_NAV if board and cadre == board else DEFAULT_NAV
+    wanted = [s for s in (rec.get("nav") or default) if s in SCREENS]
     if "settings" not in wanted:
         wanted.append("settings")
     screens = [{"id": s, "label": SCREENS[s], "href": base if s == "home" else f"{base}/{s}"}
@@ -277,7 +286,23 @@ def nav(projs: dict, cadre: str) -> dict:
               for p in rec.get("pinned") or () if isinstance(p, dict) and p.get("href")]
     return {"cadre": {"id": cadre, "name": name}, "screens": screens,
             "batches": [], "pinned": pinned,
-            "cadres": [*cadre_list(projs), {"id": OTHER, "name": OTHER_NAME}]}
+            "cadres": [*cadre_list(projs), {"id": OTHER, "name": OTHER_NAME}],
+            "settings": settings(projs, cadre)}
+
+
+def settings(projs: dict, cadre: str) -> dict:
+    """What the Settings tab shows: the cadre's own setup, read from its
+    project record — the folders and projects whose runs it gets, the tabs
+    it asked for (`nav`, empty for the default) — not its work."""
+    if cadre == OTHER:
+        return {"project": "", "folders": [], "members": [], "nav": []}
+    rec = projs.get(cadre) or {}
+    live = projects.live(projs)
+    members = [{"id": p["id"], "name": p["name"]} for p in live if p.get("group") == cadre]
+    return {"project": cadre,
+            "folders": [str(d) for d in rec.get("dirs") or () if isinstance(d, str)],
+            "members": members,
+            "nav": [s for s in rec.get("nav") or () if s in SCREENS]}
 
 
 def migrate_dir(data_dir) -> int:

@@ -4,7 +4,7 @@ import { route } from './router';
 // The same paths as tests/test_web_app.py: statusd serves the React app for
 // exactly the paths this router draws.
 const REACT_PATHS = ['/', '/library', '/costs', '/runs', '/tree', '/tree/task-a', '/project/cadre', '/page/abcd', '/view/abcd', '/kanban',
-  '/c/dev', '/c/dev/board', '/c/other/settings'];
+  '/c/dev', '/c/dev/kanban', '/c/other/settings'];
 const PYTHON_PATHS = ['/costs.json', '/history/abcd', '/stranded/x.json', '/cards', '/fs', '/c/dev/nosuch'];
 
 describe('router', () => {

@@ -22,11 +22,15 @@ const FLEET: Fleet = {
 } as unknown as Fleet;
 const NAV: Nav = {
   cadre: { id: 'dev', name: 'Dev' },
-  screens: [{ id: 'home', label: 'Home', href: '/c/dev' }, { id: 'board', label: 'Board', href: '/c/dev/board' },
+  screens: [{ id: 'home', label: 'Home', href: '/c/dev' }, { id: 'kanban', label: 'Kanban', href: '/c/dev/kanban' },
+    { id: 'blackboard', label: 'Blackboard', href: '/c/dev/blackboard' },
     { id: 'agents', label: 'Agents', href: '/c/dev/agents' }, { id: 'settings', label: 'Settings', href: '/c/dev/settings' }],
   batches: [], pinned: [{ label: 'Cadre design', href: '/view/abc' }],
   cadres: [{ id: 'dev', name: 'Dev' }, { id: 'kitchen', name: 'Kitchen' }, { id: OTHER, name: 'Other' }],
+  settings: { project: 'dev', folders: [], members: [{ id: 'cadre-runner', name: 'cadre-runner' }], nav: [] },
 };
+const EVENT = { seq: 7, id: 'ev7', ts: NOW - 60, namespace: 'tasks', topic: 'dialogue', key: 'task-x', kind: 'command',
+  provenance: { agent: 'implement' }, payload: { target: 'handoff', node: 'task' }, correlation_id: null, visible_after: null };
 
 describe('the cadre model', () => {
   const home = buildHome(FLEET, serverView(''), NOW, '');
@@ -64,6 +68,7 @@ function serving(path: string) {
     asked.push(u.pathname + u.search);
     const body = u.pathname === '/api/fleet' ? FLEET
       : u.pathname === '/api/nav' ? NAV
+        : u.pathname === '/api/blackboard' ? { events: [EVENT] }
         : u.pathname === '/api/kanban' ? { board: 'dev', columns: ['backlog', 'ready', 'doing', 'done'], cards: [] }
           : u.pathname === '/api/backends' ? { backends: [] }
             : u.pathname === '/api/newwork' ? { home: '/home/me', library: [] } : {};
@@ -98,7 +103,8 @@ describe('a cadre app', () => {
     await act(async () => { render(<App />); });
     const tabs = screen.getAllByRole('navigation', { name: 'Dev screens' })[0];
     expect(within(tabs).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual(
-      [['Home', '/c/dev'], ['Board', '/c/dev/board'], ['Agents', '/c/dev/agents'], ['Settings', '/c/dev/settings']]);
+      [['Home', '/c/dev'], ['Kanban', '/c/dev/kanban'], ['Blackboard', '/c/dev/blackboard'], ['Agents', '/c/dev/agents'],
+        ['Settings', '/c/dev/settings']]);
     expect(within(tabs).getByText('Home').getAttribute('aria-current')).toBe('page');
     const side = screen.getByRole('complementary', { name: 'Dev: batches and pinned pages' });
     expect(within(side).getByText('Cadre design').getAttribute('href')).toBe('/view/abc');
@@ -117,10 +123,29 @@ describe('a cadre app', () => {
   });
 
   it('keeps the shell on its other screens, with Settings reachable from each', async () => {
-    serving('/c/kitchen/board');
+    serving('/c/kitchen/kanban');
     await act(async () => { render(<App />); });
     expect(screen.getAllByRole('navigation', { name: 'Dev screens' }).length).toBeGreaterThan(0);
-    expect(screen.getByText(/This cadre has no board yet/)).toBeTruthy();
+    expect(screen.getByText(/This cadre has no kanban board/)).toBeTruthy();
+  });
+
+  it('keeps the kanban board and the blackboard apart: the Blackboard tab lists events', async () => {
+    serving('/c/dev/blackboard');
+    await act(async () => { render(<App />); });
+    const table = document.querySelector('table.bboard')!;
+    expect(table.textContent).toContain('tasks/dialogue/task-x');
+    expect(table.textContent).toContain('target=handoff');
+    expect(document.querySelector('.kanban')).toBeNull();
+  });
+
+  it("shows the cadre's setup on Settings, not its runs", async () => {
+    serving('/c/dev/settings');
+    await act(async () => { render(<App />); });
+    const st = document.querySelector('section.csettings')!;
+    expect(st.textContent).toContain('How Dev is set up');
+    expect(within(st as HTMLElement).getByText('cadre-runner').getAttribute('href')).toBe('/project/cadre-runner');
+    expect(document.getElementById('fleet')).toBeNull();
+    expect(document.body.textContent).not.toContain('t-dev page');
   });
 });
 

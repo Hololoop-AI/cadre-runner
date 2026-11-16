@@ -46,6 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import blackboard as blackboard_mod
 from runnerlib import cadres as cadres_mod
 from runnerlib import cards as cards_mod
 from runnerlib import codestamp
@@ -157,9 +158,12 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
 REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$"
-                         r"|^/c/[^/]+(/(board|agents|settings))?$")
+                         r"|^/c/[^/]+(/(kanban|blackboard|agents|settings))?$")
 # A cadre's navigation (runnerlib/cadres.py nav): GET /api/nav?cadre=<id>.
 NAV_API_PATH = "/api/nav"
+# The newest events on the blackboard (runnerlib/blackboard.py recent), read
+# only: GET /api/blackboard?limit=<n>. The Blackboard tab draws them.
+BLACKBOARD_API_PATH = "/api/blackboard"
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -2451,7 +2455,15 @@ class Handler(BaseHTTPRequestHandler):
             if cadre is None:
                 self.send_error(404, "no such cadre")
             else:
-                self._send_json(cadres_mod.nav(projs, cadre))
+                self._send_json(cadres_mod.nav(projs, cadre,
+                                               board=kanban_mod.load(DATA_DIR)["board"]))
+            return
+        if path == BLACKBOARD_API_PATH and self.command in ("GET", "HEAD"):
+            try:
+                limit = int((query.get("limit") or ["100"])[0])
+            except ValueError:
+                limit = 100
+            self._send_json({"events": blackboard_mod.recent(DATA_DIR / "board.db", limit)})
             return
         if path.startswith(VIEW_API_PATH) and self.command in ("GET", "HEAD"):
             key = urllib.parse.unquote(path[len(VIEW_API_PATH):])

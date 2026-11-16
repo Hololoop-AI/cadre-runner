@@ -201,13 +201,13 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
         <Header weekUsd={fleet ? Number(fleet.cadre_week_usd?.[group]) || 0 : undefined} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
           groupName={groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
-          boardHref={cadreHref(group, 'board')} />
+          boardHref={cadreHref(group, 'kanban')} />
         {chrome?.tabs}
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
         <div className="cgrid">
         <div className="cmain">
-        {board && board.board === group && <ActiveCards board={board} work={cardWork} href={cadreHref(group, 'board')} />}
+        {board && board.board === group && <ActiveCards board={board} work={cardWork} href={cadreHref(group, 'kanban')} />}
         <h2 className="sect">Work</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}

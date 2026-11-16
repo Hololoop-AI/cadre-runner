@@ -30,7 +30,7 @@ export function route(path: string): Route | null {
   if (p === '/') return { screen: 'home' };
   if (p === '/library' || p === '/costs' || p === '/runs' || p === '/kanban') return { screen: p.slice(1) as 'library' | 'costs' | 'runs' | 'kanban' };
   if (p === '/tree') return { screen: 'tree', task: '' };
-  const c = /^\/c\/([^/]+)(?:\/(board|agents|settings))?$/.exec(p);
+  const c = /^\/c\/([^/]+)(?:\/(kanban|blackboard|agents|settings))?$/.exec(p);
   if (c) {
     const id = decodeURIComponent(c[1]);
     return { screen: 'cadre', cadre: id === 'other' ? OTHER : id, tab: c[2] || 'home' };

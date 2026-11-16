@@ -4,7 +4,7 @@
 // peers' pages: statusd.CORS_ORIGINS); `connect` binds the calls to one
 // machine. This file is the module's only public entry.
 import type {
-  Backend, Backends, CostSummary, Dirs, Fleet, Kanban, Nav, Library, NewWorkInfo, PagePayload, ProjectPayload, Runs, TreePayload,
+  Backend, Backends, Blackboard, CostSummary, Dirs, Fleet, Kanban, Nav, Library, NewWorkInfo, PagePayload, ProjectPayload, Runs, TreePayload,
   ViewInfo,
 } from '../model';
 
@@ -54,6 +54,8 @@ export interface Server {
   fetchKanban(): Promise<Kanban>;
   /** GET /api/nav?cadre=<id>: a cadre's rail, header tabs and side column */
   fetchNav(cadre: string): Promise<Nav>;
+  /** GET /api/blackboard: the newest events agents wrote to each other */
+  fetchBlackboard(): Promise<Blackboard>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
@@ -79,6 +81,7 @@ export function connect(base: string): Server {
     url: at,
     fetchKanban: () => getJson<Kanban>(at('/api/kanban')),
     fetchNav: (cadre) => getJson<Nav>(at('/api/nav?cadre=' + encodeURIComponent(cadre))),
+    fetchBlackboard: () => getJson<Blackboard>(at('/api/blackboard?limit=100')),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };

@@ -15,7 +15,7 @@ builds with `base: '/app/'`. It is also what `/`, `/library`, `/costs`,
 answer with (`statusd.REACT_ROUTE`); without a build in `dist/` those paths
 are a 404 that says to build it. The Python pages they replaced are gone.
 `/` is Hololoop, a card per cadre and none of their runs; `/c/<id>` (and
-`/c/<id>/board`, `/agents`, `/settings`) is one cadre's own app, holding only
+`/c/<id>/agents` and `/settings`; Dev also has `/kanban` and `/blackboard`) is one cadre's own app, holding only
 the runs that cadre owns (`runnerlib/cadres.py`), with the rail, header tabs
 and a foldable side column from `GET /api/nav?cadre=<id>` (one menu button on
 a phone). `/view/<key>` is the frame around one agent page: it loads the chosen
