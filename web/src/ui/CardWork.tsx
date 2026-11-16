@@ -23,7 +23,7 @@ import './kanban.css';
 export function tallyText(t: CardTally): string {
   if (!t.runs) return 'no runs yet';
   return [`${t.runs} run${t.runs === 1 ? '' : 's'}`, t.yourTurn && `${t.yourTurn} your turn`,
-    t.working && `${t.working} working`, t.done && `${t.done} done`].filter(Boolean).join(' · ');
+    t.working && `${t.working} working`, t.done && `${t.done} done`, t.fresh && `${t.fresh} new`].filter(Boolean).join(' · ');
 }
 
 /**
@@ -77,7 +77,7 @@ export function CardBlock({ card, fleet, home, pages, onCards, cadre, folder, op
   const runs = cardRuns(card, fleet);
   const t = cardTally(runs);
   return (
-    <details className="item wcard" data-card={card.id} open={open || t.yourTurn > 0}>
+    <details className="item wcard" data-card={card.id} open={open || t.fresh > 0}>
       <summary className="row">
         <span className="caret"></span>
         <span className="kc">{columnLabel(card.column)}</span>
@@ -137,7 +137,7 @@ export function CardWork({ board, fleet, home, kanbanHref, cadre, folder, onChan
     <section className="cwork" aria-label="Work on the board">
       <h2 className="sect">Work on the board <a href={kanbanHref}>open the board →</a></h2>
       {!active.length && <p className="meta">{`Nothing in ${board.columns.slice(1, -1).map(columnLabel).join(' or ')}. Move a card there to start on it.`}</p>}
-      {active.length > 0 && <div className="card items">{active.map((c) => block(c, c.column === board.columns[board.columns.length - 2]))}</div>}
+      {active.length > 0 && <div className="card items">{active.map((c) => block(c, false))}</div>}
       <p className="meta wbacklog"><a href={kanbanHref}>{`Backlog · ${backlog.length}`}{done.length ? ` · ${done.length} done` : ''}</a>
         {' on the board, where any card opens to start work on it.'}</p>
       <form className="widea" onSubmit={add}>

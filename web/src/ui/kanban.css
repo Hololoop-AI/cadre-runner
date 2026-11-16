@@ -24,7 +24,9 @@
 .kcard .ktitle{display:block;width:100%;padding:0;border:0;background:transparent;color:var(--fg);
  font:inherit;font-size:.9rem;text-align:left;cursor:pointer;overflow-wrap:anywhere}
 .kcard .ktitle:hover{color:var(--accent)}
-.kcard .knote{margin:4px 0 0;color:var(--muted);font-size:.8rem;white-space:pre-wrap;overflow-wrap:anywhere}
+/* a card's note is folded to two lines on the board (its whole text is the tooltip, and the editor) */
+.kcard .knote{margin:4px 0 0;color:var(--muted);font-size:.8rem;white-space:pre-wrap;overflow-wrap:anywhere;
+ display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
 
 .kfoot{display:flex;align-items:center;gap:6px;margin-top:6px;font-family:var(--mono);font-size:.72rem;color:var(--label)}
 .kfoot .sp{flex:1}
