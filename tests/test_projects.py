@@ -364,6 +364,8 @@ def test_the_shipped_cadres_file_names_each_cadre_by_its_slug_and_dev_owns_the_k
     assert [c["id"] for c in got] == ["dev", "kitchen", "personal"]
     assert all(c["id"] == slugify(c["name"]) for c in got)
     assert [c["id"] for c in got if c.get("kanban")] == ["dev"]
+    assert {c["id"]: c.get("skills", []) for c in got} == {
+        "dev": ["code-walkthrough"], "kitchen": [], "personal": []}, "only Dev ships the walkthrough"
 
 
 def test_a_new_machine_gets_the_whole_shipped_cadre_and_dev_gets_the_kanban_tab():
@@ -414,3 +416,35 @@ def test_an_existing_install_keeps_its_own_cadres_and_board_and_gains_the_missin
     projs = projects.load(d)
     assert projs["dev"]["nav"] == ["home", "settings"], "the machine's own edits win"
     assert kanban.load(d)["board"] == "mine", "a board that already has an owner keeps it"
+
+
+def test_a_run_gets_the_skills_of_every_cadre_it_is_in_and_a_run_elsewhere_does_not():
+    """A cadre's skills reach every run in it: a project filed under the cadre,
+    and a run given to the cadre at launch from a folder in no project. A run in
+    another cadre does not get them, which is what keeps one cadre's tools out of
+    another's sessions."""
+    from runnerlib import cadres
+    d = scratch()
+    dev_work, kitchen_work, loose = _dirs(d, "dev-work", "kitchen-work", "loose")
+    source = d / "skills-tree"
+    (source / "walkthrough").mkdir(parents=True)
+    cfg, reg = FakeCfg(d), FakeReg()
+    cfg.skills_source = source
+    projects.create(d, "Dev", dirs=[], skills=["walkthrough"])
+    projects.create(d, "Kitchen", dirs=[])
+    projects.create(d, "Repo", dirs=[str(dev_work)], group="dev")
+    projects.create(d, "Meals", dirs=[str(kitchen_work)], group="kitchen")
+    cadres.assign(d, "task-loose", "dev")
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, task_id="task-dev", cwd=str(dev_work), project="repo")
+    request(b, task_id="task-kitchen", cwd=str(kitchen_work), project="meals")
+    request(b, task_id="task-loose", cwd=str(loose))
+
+    calls = []
+    for spec in engine.tick(b, acts, n, d).spawns:
+        drive_recording_dirs(cfg, reg, b, spec, calls)
+    assert len(calls) == 3
+    link = Path(".claude") / "skills" / "walkthrough"
+    assert (dev_work / link).is_symlink(), "a project filed under the cadre gets its skills"
+    assert (loose / link).is_symlink(), "so does a run given to the cadre at launch"
+    assert not (kitchen_work / link).exists(), "another cadre's run does not"

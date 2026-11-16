@@ -292,7 +292,7 @@ def run_task_spawn(cfg, reg, board: Board, log, run_turn, spec: dict, payload: d
                 rec[k] = payload[k]
     projs = projects.load(cfg.data_dir)
     pid = rec.get("project") if rec.get("project") in projs else None
-    skills = list((projs.get(pid) or {}).get("skills") or [])
+    skills = cadres.skills_for(cfg.data_dir, projs, task_id, pid or "")
     if str(rec.get("run") or "").startswith("skill:"):
         skills.append(rec["run"].split(":", 1)[1])
     try:

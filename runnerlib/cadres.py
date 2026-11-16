@@ -284,6 +284,17 @@ def owner(tasks: dict, projs: dict, task: str, project="", tags=()) -> str:
     return tasks.get(task) if task and tasks.get(task) else rule(projs, project, tags)
 
 
+def skills_for(data_dir, projs: dict, task: str, project="") -> list[str]:
+    """The skills a run is given at launch: its project's own, then those of
+    every cadre it is in (its owner and the cadres holding that one), each
+    once. A cadre's tools reach only its own runs, so one cadre's skills never
+    load in another's sessions."""
+    names = list((projs.get(project) or {}).get("skills") or []) if project else []
+    for cadre in chain(projs, owner(load(data_dir), projs, task, project)):
+        names += (projs.get(cadre) or {}).get("skills") or []
+    return list(dict.fromkeys(n for n in names if n))
+
+
 def payload_for(payload: dict, cadre: str) -> dict:
     """The fleet payload (statusd.fleet_payload) with only `cadre`'s runs:
     its pages, its page-less launches, its running agents, its spend and its
