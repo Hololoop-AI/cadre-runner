@@ -1,26 +1,29 @@
-// The fleet app. `/` is Hololoop: a card per cadre and no runs
-// (Hololoop.tsx). `/c/<id>` is that cadre's own app (Cadre.tsx), whose home
-// is its dashboard, drawn here: the board and the Work list lead in the main
-// column, Needs you and Running now sit beside them, all on one page. Its
-// list holds only the cadre's own runs. The data is this machine's
+// The fleet app. Every cadre is an app of its own with runs of its own
+// (Cadre.tsx): `/c/<id>`, and `/` for Holo, the cadre that works on the
+// cadres and the system, whose home also has a card per cadre. A cadre's
+// home is its dashboard, drawn here: in the cadre that owns the kanban
+// board, the board's cards lead, each holding the runs done for it, and the
+// runs on no card follow as one-off work; Needs you and Running now sit
+// beside them, all on one page. It holds only the cadre's own runs. The data is this machine's
 // /api/fleet (useFleet); the model makes it into what is drawn (buildHome,
 // layout).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveView, inGroup, LABELS, limitChoices, loadSel, needsYou, OTHER, s, saveSel, serverView, tagChips, viewHref, type Kanban, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { groupSuffix } from './Groups';
 import { Header } from './Header';
 import { CadreScreen, CadreShell, cadreHref, useChrome } from './Cadre';
-import { Hololoop } from './Hololoop';
+import { CadreCardList, useHoloRedirect } from './Holo';
+import { CardWork } from './CardWork';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
 import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
 import { useFleet, type FleetState } from './useFleet';
 import { CostsScreen } from './Costs';
-import { ActiveCards, KanbanScreen, type CardWork } from './Kanban';
+import { KanbanScreen } from './Kanban';
 import { LibraryScreen } from './Library';
 import { current, keepLinksInApp, postScreenForms } from './router';
 import { PageScreen } from './Page';
@@ -52,13 +55,13 @@ export function App() {
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
   useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
-  // the Python pages give the body a class on home only; Hololoop and a cadre are homes
+  // the Python pages give the body a class on home only; Holo and a cadre are homes
   useEffect(() => {
-    document.body.className = here.screen === 'home' ? 'home' : here.screen === 'cadre' ? 'home cadre' : '';
+    document.body.className = here.screen === 'home' || here.screen === 'cadre' ? 'home cadre' : '';
   }, [here]);
   return (
     <ServerProvider base={machines.base}>
-      {here.screen === 'home' ? <Hololoop key={machines.base} machines={machines} />
+      {here.screen === 'home' ? <CadreApp key={machines.base} machines={machines} cadre={HOLO} tab="home" />
         : here.screen === 'cadre' ? <CadreApp key={machines.base} machines={machines} cadre={here.cadre} tab={here.tab} />
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
           : here.screen === 'costs' ? <CostsScreen key={machines.base} />
@@ -119,7 +122,8 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
   // Archived from this browser: hidden at once, before the re-fetch that
   // brings the server's own archived list (fleet.archived).
   const [archivedHere, setArchivedHere] = useState<Set<string>>(() => new Set());
-  const [work, setWork] = useState({ open: !!query.get('parent'), parent: query.get('parent') });
+  const [work, setWork] = useState<{ open: boolean; parent: string | null }>({ open: !!query.get('parent'), parent: query.get('parent') });
+  useHoloRedirect(cadre === HOLO);
   const [workError, setWorkError] = useState('');
   const [nw, setNw] = useState<NewWorkInfo>({ home: '', library: [] });
   useEffect(() => { server.fetchNewWork().then(setNw).catch(() => {}); }, [server]);
@@ -132,26 +136,33 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
   const group = cadre; // a cadre's app holds only its own runs
   const grouped = useMemo(() => (home ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
+  const nav = chrome?.nav;
+  const hasKanban = !!nav?.screens.some((x) => x.id === 'kanban');
   useEffect(() => { document.title = `${chrome?.name || 'Cadre'} — home`; }, [chrome?.name]);
   // The cadre the board belongs to (its `board`) shows its active cards. The
   // fleet re-reads on every stream change, and a board change moves the
   // fleet's version, so the board is re-read with it; a read that lost the
   // race to a newer one, or to leaving the group, is dropped.
   const [board, setBoard] = useState<Kanban | null>(null);
-  const picked = group !== OTHER;
+  const picked = hasKanban;
   useEffect(() => {
     if (!picked) return setBoard(null);
     let stale = false;
     server.fetchKanban().then((b) => { if (!stale) setBoard(b); }).catch(() => { if (!stale) setBoard(null); });
     return () => { stale = true; };
   }, [server, fleet, picked]);
-  const cardWork = useMemo<CardWork>(() => Object.fromEntries((home?.items || []).map((it) => [it.key, { title: it.title, state: LABELS[it.state] }])),
-    [home]);
-  const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
+  // The cadre owning the board files its runs under the cards they were done
+  // for; the Work list below holds the rest, the one-off runs.
+  const ownsBoard = !!board && board.board === group;
+  const onCards = useMemo(() => (ownsBoard ? runsOnCards(board) : new Set<string>()), [ownsBoard, board]);
+  const loose = useMemo(() => (grouped && onCards.size ? (it: { key: string }) => grouped(it) && !onCards.has(it.key) : grouped),
+    [grouped, onCards]);
+  const all = useWorkLayout(home, sel, { q: '', proj: '', sort, limit, grouped });
+  const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped: loose });
   const found = useFind(q, home);
   // Needs you: the cadre's own items whose turn it is under the cadre's own
   // limit, whatever the chips and find show (layout() places every in-scope item)
-  const waiting = laid ? needsYou([...laid.placed.list, ...laid.placed.idle, ...laid.placed.off], () => true) : [];
+  const waiting = all ? needsYou([...all.placed.list, ...all.placed.idle, ...all.placed.off], () => true) : [];
 
   const onToggle = useCallback((key: string, isOpen: boolean) => setOpen((cur) => {
     if (cur.has(key) === isOpen) return cur;
@@ -200,15 +211,20 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
       <div className="wrap cdash">
         <Header weekUsd={fleet ? Number(fleet.cadre_week_usd?.[group]) || 0 : undefined} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
-          groupName={groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
-          boardHref={cadreHref(group, 'kanban')} />
+          groupName={group === HOLO ? 'holo' : groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
+          boardHref={cadreHref(group, hasKanban ? 'kanban' : 'blackboard')} boardLabel={hasKanban ? 'board' : 'blackboard'} />
         {chrome?.tabs}
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
         <div className="cgrid">
         <div className="cmain">
-        {board && board.board === group && <ActiveCards board={board} work={cardWork} href={cadreHref(group, 'kanban')} />}
-        <h2 className="sect">Work</h2>
+        {group === HOLO && fleet && home && <CadreCardList fleet={fleet} home={home} />}
+        {ownsBoard && board && fleet && home && (
+          <CardWork board={board} fleet={fleet} home={home!} kanbanHref={cadreHref(group, 'kanban')}
+            cadre={group === OTHER ? 'other' : group} folder={nav?.settings.folders[0] || ''}
+            onChanged={(msg) => { setNotice(msg); refetch(); }} />
+        )}
+        <h2 className="sect">{ownsBoard ? 'One-off work (on no card)' : group === HOLO ? 'Holo\'s own work' : 'Work'}</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}
           setLimit={(n) => keep({ limit: n })} projects={projects} />
@@ -250,7 +266,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}
-        cadre={group === OTHER ? 'other' : group}
+        cadre={group === OTHER ? 'other' : group === HOLO ? 'holo' : group}
         onClose={() => setWork((w) => ({ ...w, open: false }))}
         error={workError}
         onSubmit={(fm) => {

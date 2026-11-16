@@ -1,5 +1,5 @@
 import { formBody, type Server } from '../api';
-import { OTHER } from '../model';
+import { HOLO, OTHER } from '../model';
 
 // Which screen a path shows. The screens keep the Python pages' paths
 // (/library, /costs, /runs, /tree/<task>) so their links stay the Python
@@ -8,7 +8,7 @@ import { OTHER } from '../model';
 
 /** One screen of the app. */
 export type Route =
-  /** Hololoop: a card per cadre, no runs */
+  /** Holo: a card per cadre, no runs */
   | { screen: 'home' }
   /** a cadre's own app (Cadre.tsx): `cadre` is its id (groups.OTHER for /c/other), `tab` one of its screens */
   | { screen: 'cadre'; cadre: string; tab: string }
@@ -30,10 +30,10 @@ export function route(path: string): Route | null {
   if (p === '/') return { screen: 'home' };
   if (p === '/library' || p === '/costs' || p === '/runs' || p === '/kanban') return { screen: p.slice(1) as 'library' | 'costs' | 'runs' | 'kanban' };
   if (p === '/tree') return { screen: 'tree', task: '' };
-  const c = /^\/c\/([^/]+)(?:\/(kanban|blackboard|agents|settings))?$/.exec(p);
+  const c = /^\/c\/([^/]+)(?:\/(kanban|blackboard|records|agents|settings))?$/.exec(p);
   if (c) {
     const id = decodeURIComponent(c[1]);
-    return { screen: 'cadre', cadre: id === 'other' ? OTHER : id, tab: c[2] || 'home' };
+    return { screen: 'cadre', cadre: id === 'other' ? OTHER : id === 'holo' || id === 'hololoop' ? HOLO : id, tab: c[2] || 'home' };
   }
   const m = /^\/(tree|project|page|view)\/([^/]+)$/.exec(p);
   if (!m) return null;

@@ -6,7 +6,7 @@
 export type {
   Backend, Backends, ClosedPage, Kanban, KanbanCard, CostBucket, CostSummary, Dirs, Earlier, Ending, Fleet, InstalledEntry, Library, RunRow, Runs,
   PageOwner, PagePayload, ProjectContext, ProjectPayload, TreePayload, TurnRecord, ItemRecord, LibraryEntry, LinkRecord, NewWorkInfo, PageInfo, Pageless, Project,
-  RunningCard, SessionStatus, Surface, TreeNode, ViewInfo, Nav, NavLink, CadreSettings, Blackboard, BlackboardEvent,
+  RunningCard, SessionStatus, Surface, TreeNode, ViewInfo, Nav, NavLink, CadreSettings, Blackboard, BlackboardEvent, CadreRecord, CadreRecords,
 } from './payload';
 export { cadreCards, itemCadre, needsYou, type CadreCard } from './cadres';
 export { cmp, escapedCut, hasKey, homePath, num, own, pyFixed, relTime, s, taskLabel, treeHref, usd, viewHref } from './format';
@@ -17,8 +17,8 @@ export {
   type Item, type State,
 } from './items';
 export { buildItemGraph, ROW, x, type Dot, type Graph, type GraphRow } from './graph';
-export { effectiveGroup, fleetGroups, groupBadges, groupTag, HOME_GROUP, inGroup, itemGroups, OTHER, type Group } from './groups';
-export { activeCards, byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove } from './kanban';
+export { effectiveGroup, fleetGroups, groupBadges, groupTag, HOLO, HOME_GROUP, inGroup, itemGroups, OTHER, type Group } from './groups';
+export { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, DRIVER, kanbanMove, runPages, runsOnCards, type CardRun, type CardTally } from './kanban';
 export { liveProjects } from './projects';
 export { ancestors, clean, descendants, kidsOf, parentsOf } from './tree';
 export type { Tree } from './tree';

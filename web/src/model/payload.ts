@@ -148,6 +148,8 @@ export interface KanbanCard {
   column: string;
   /** the fleet item it was pulled from, '' for none */
   item: string;
+  /** task ids of the runs done for it (launched from it, or attached) */
+  runs: string[];
   /** who added it: an agent's task id, or 'driver' */
   by: string;
   created_at: number;
@@ -233,6 +235,27 @@ export interface CadreSettings {
   members: { id: string; name: string }[];
   /** the tabs its record asks for; empty means the default */
   nav: string[];
+}
+
+/** One of a cadre's records (runnerlib/records.py): an HTML page it keeps. */
+export interface CadreRecord {
+  id: string;
+  cadre: string;
+  type: string;
+  name: string;
+  path: string;
+  bytes: number;
+  sha256: string;
+  note: string;
+  by: string;
+  created_at: number;
+  /** opens it as a review page: /open?file=<path> */
+  href: string;
+}
+
+/** GET /api/records?cadre=<id>: a cadre's records, newest first. */
+export interface CadreRecords {
+  records: CadreRecord[];
 }
 
 /** One event on the blackboard, the store agents write to each other (runnerlib/blackboard.py). */

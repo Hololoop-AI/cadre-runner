@@ -3,7 +3,7 @@
 // task's cadre from there. An item the server has no record for (a page
 // with no task, or an older machine's payload) falls back to the group rule
 // in groups.ts, the same rule the server's migration used. No cadre is
-// OTHER. Hololoop, the fleet's home, sees a card per cadre and no runs.
+// OTHER. Holo, the fleet's home, sees a card per cadre and no runs.
 
 import { DONE, HIDDEN, HOME_LIMIT, YOUR_TURN, type Item } from './items';
 import type { Fleet, Project } from './payload';
@@ -15,7 +15,7 @@ export function itemCadre(it: Pick<Item, 'key' | 'project' | 'tags'>, owned: Rec
   return owned[it.key] || itemGroups(it, projs, groups)[0] || OTHER;
 }
 
-/** What Hololoop's card for one cadre says. */
+/** What Holo's card for one cadre says. */
 export interface CadreCard {
   id: string;
   name: string;
@@ -28,7 +28,7 @@ export interface CadreCard {
 }
 
 /**
- * Hololoop's cards: one per cadre, then Other when anything is in it.
+ * Holo's cards: one per cadre, then Other when anything is in it.
  * `member` is Home.member (item key -> its cadre and the groups above it,
  * none for Other), so a cadre nested in another counts in both; done and
  * hidden items are not counted. Waiting is counted as the cadre's own page

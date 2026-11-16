@@ -43,10 +43,10 @@ def test_an_added_card_loads_in_its_column(tmp_path):
     msg, card = kanban.apply(tmp_path, "add", title="Find a dentist", column="ready",
                              note="near work", item="task-a", by="task-x", now=100.0)
     board = kanban.load(tmp_path)
-    assert board["board"] == "dev"
+    assert board["board"] == "", "no owner until one is given: nothing is hard-coded"
     assert board["columns"] == ["backlog", "ready", "doing", "done"]
     assert board["cards"] == [{"id": card["id"], "title": "Find a dentist", "note": "near work",
-                               "column": "ready", "item": "task-a", "by": "task-x",
+                               "column": "ready", "item": "task-a", "runs": [], "by": "task-x",
                                "created_at": 100.0, "moved_at": 100.0}]
     assert len(card["id"]) == 6 and int(card["id"], 16) >= 0
     assert "Find a dentist" in msg and "Ready" in msg
@@ -113,7 +113,7 @@ def test_unknown_card_column_or_action_and_an_empty_title_are_refused_untouched(
 def test_a_missing_or_malformed_file_loads_as_an_empty_board(tmp_path, content):
     if content is not None:
         (tmp_path / kanban.FILE).write_text(content)
-    assert kanban.load(tmp_path) == {"board": "dev", "columns": ["backlog", "ready", "doing", "done"],
+    assert kanban.load(tmp_path) == {"board": "", "columns": ["backlog", "ready", "doing", "done"],
                                      "cards": []}
 
 
@@ -297,3 +297,30 @@ def test_the_board_keeps_the_group_its_file_names(tmp_path):
     (tmp_path / kanban.FILE).write_text('{"board": "kitchen", "cards": []}')
     add(tmp_path, "Order flour")
     assert kanban.load(tmp_path)["board"] == "kitchen"
+
+
+# ------------------------------------------------------------------ runs on cards
+
+def test_runs_attach_to_one_card_at_a_time_and_detach(tmp_path):
+    a, b = add(tmp_path, "Plan meals", "doing"), add(tmp_path, "Shop", "ready")
+    kanban.apply(tmp_path, "attach", card=a, item="task-1")
+    kanban.apply(tmp_path, "attach", card=a, item="task-2")
+    kanban.apply(tmp_path, "attach", card=a, item="task-1")      # again: once
+    board = kanban.load(tmp_path)
+    assert [c["runs"] for c in board["cards"]] == [["task-1", "task-2"], []]
+    kanban.apply(tmp_path, "attach", card=b, item="task-2")      # moves it
+    board = kanban.load(tmp_path)
+    assert [c["runs"] for c in board["cards"]] == [["task-1"], ["task-2"]]
+    assert kanban.card_for(board, "task-2")["id"] == b
+    kanban.apply(tmp_path, "detach", card=a, item="task-1")
+    assert kanban.card_for(kanban.load(tmp_path), "task-1") is None
+    with pytest.raises(ValueError, match="name the run"):
+        kanban.apply(tmp_path, "attach", card=a, item="")
+
+
+def test_the_board_owner_is_data_given_per_machine(tmp_path):
+    add(tmp_path, "Plan meals")
+    assert kanban.load(tmp_path)["board"] == ""
+    kanban.own(tmp_path, "kitchen")
+    board = kanban.load(tmp_path)
+    assert board["board"] == "kitchen" and [c["title"] for c in board["cards"]] == ["Plan meals"]

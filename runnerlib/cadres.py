@@ -4,8 +4,9 @@ A cadre is a group of work on the fleet's rail (Dev, Kitchen, Personal, …):
 a live project that another live project names as its group, or a live
 project with no folder (web/src/model/groups.ts `fleetGroups`, ported
 here). Work run in a cadre is that cadre's: its runs show only in its app
-(the fleet route /c/<id>), and Hololoop (the fleet's home) sees a card per
-cadre, never the runs.
+(the fleet route /c/<id>). Holo, the fleet's home (/), is a cadre too:
+it owns the runs that work on the cadres and the system themselves (HOLO),
+and above its own runs it shows a card per cadre.
 
 Ownership is fixed at launch and kept in `<data_dir>/cadres.json`:
 
@@ -40,22 +41,28 @@ LOCK = "cadres.lock"
 # The rail's entry for work in no cadre; groups.ts calls it OTHER too.
 OTHER = "~other"
 OTHER_NAME = "Other"
+# Holo (once called Hololoop; its id keeps that name so stored runs keep
+# their cadre), the fleet's home, is a cadre with runs of its own: the meta work
+# on the cadres and the system. It is not a project, so it is fixed here.
+HOLO = "~hololoop"
+HOLO_NAME = "Holo"
+SPECIAL = {OTHER: OTHER_NAME, HOLO: HOLO_NAME}
 
 # What a cadre's header tabs show when its project record names no `nav`.
 # Each is a screen of the fleet app under /c/<id>/; "home" is /c/<id> itself.
 # The fleet-wide screens (runs, costs, the library) are not a cadre's: they
-# stay on Hololoop until they can be cut to one cadre's runs.
-DEFAULT_NAV = ("home", "agents", "settings")
-# The cadre that owns the kanban board (kanban.json's `board`) also gets its
-# two system screens: the Kanban board (cards a person and agents move) and
-# the Blackboard (the event store agents write to each other,
-# runnerlib/blackboard.py). They are different things; no other cadre has
-# either until it is given one through its record's `nav`.
-BOARD_NAV = ("home", "kanban", "blackboard", "agents", "settings")
+# stay on Holo until they can be cut to one cadre's runs.
+DEFAULT_NAV = ("home", "blackboard", "records", "agents", "settings")
+# Every cadre has a Blackboard (the events its agents write to each other,
+# runnerlib/blackboard.py) and Records (its pages). Only the cadre that owns
+# the kanban board (kanban.json's `board`, set per machine with
+# `pipeline.py kanban own`) also gets the Kanban tab.
+BOARD_NAV = ("home", "kanban", "blackboard", "records", "agents", "settings")
 SCREENS = {
     "home": "Home",
     "kanban": "Kanban",
     "blackboard": "Blackboard",
+    "records": "Records",
     "agents": "Agents",
     "settings": "Settings",
 }
@@ -74,7 +81,7 @@ def cadre_list(projs: dict) -> list[dict]:
 
 
 def known(projs: dict, cadre: str) -> bool:
-    return cadre == OTHER or any(c["id"] == cadre for c in cadre_list(projs))
+    return cadre in SPECIAL or any(c["id"] == cadre for c in cadre_list(projs))
 
 
 def resolve(projs: dict, ref) -> str | None:
@@ -84,6 +91,8 @@ def resolve(projs: dict, ref) -> str | None:
         return None
     if ref.lower() in (OTHER, "other"):
         return OTHER
+    if ref.lower() in (HOLO, "hololoop", "holo"):
+        return HOLO
     for c in cadre_list(projs):
         if ref.lower() in (c["id"].lower(), c["name"].lower()):
             return c["id"]
@@ -166,7 +175,7 @@ def at_launch(data_dir, projs: dict, *, cadre=None, parent=None, project=None) -
         got = resolve(projs, cadre)
         if got is None:
             names = ", ".join(c["id"] for c in cadre_list(projs)) or "none yet"
-            raise ValueError(f"no cadre {cadre!r} (cadres: {names}, or other)")
+            raise ValueError(f"no cadre {cadre!r} (cadres: {names}, holo or other)")
         return got
     if parent:
         mine = load(data_dir).get(str(parent))
@@ -200,8 +209,8 @@ def migrate(data_dir, task_records: dict, items_store: dict, projs: dict) -> int
 def chain(projs: dict, cadre: str) -> list[str]:
     """`cadre` and every cadre above it: a run in a nested cadre shows in
     the cadres holding it too, as the fleet's groups always have."""
-    if cadre == OTHER:
-        return [OTHER]
+    if cadre in SPECIAL:
+        return [cadre]
     ids = {c["id"] for c in cadre_list(projs)}
     out, node = [], cadre
     while node and node not in out:
@@ -274,13 +283,14 @@ def nav(projs: dict, cadre: str, *, board: str = "") -> dict:
     (none until the board has them) and pinned pages (the record's
     `pinned`: [{label, href}]) — and what its Settings tab shows."""
     rec = projs.get(cadre) or {}
-    name = OTHER_NAME if cadre == OTHER else rec.get("name") or cadre
-    base = f"/c/{cadre}"
+    name = SPECIAL.get(cadre) or rec.get("name") or cadre
+    base = "/c/" + {OTHER: "other", HOLO: "holo"}.get(cadre, cadre)
+    home = "/" if cadre == HOLO else base
     default = BOARD_NAV if board and cadre == board else DEFAULT_NAV
     wanted = [s for s in (rec.get("nav") or default) if s in SCREENS]
     if "settings" not in wanted:
         wanted.append("settings")
-    screens = [{"id": s, "label": SCREENS[s], "href": base if s == "home" else f"{base}/{s}"}
+    screens = [{"id": s, "label": SCREENS[s], "href": home if s == "home" else f"{base}/{s}"}
                for s in wanted]
     pinned = [{"label": str(p.get("label") or p.get("href")), "href": str(p["href"])}
               for p in rec.get("pinned") or () if isinstance(p, dict) and p.get("href")]
@@ -294,7 +304,7 @@ def settings(projs: dict, cadre: str) -> dict:
     """What the Settings tab shows: the cadre's own setup, read from its
     project record — the folders and projects whose runs it gets, the tabs
     it asked for (`nav`, empty for the default) — not its work."""
-    if cadre == OTHER:
+    if cadre in SPECIAL:
         return {"project": "", "folders": [], "members": [], "nav": []}
     rec = projs.get(cadre) or {}
     live = projects.live(projs)

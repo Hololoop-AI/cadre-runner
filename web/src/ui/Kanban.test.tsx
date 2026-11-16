@@ -4,7 +4,7 @@ import type { Kanban } from '../model';
 import { Board, type BoardChange } from './Kanban';
 
 const card = (id: string, title: string, column: string, extra = {}) =>
-  ({ id, title, note: '', column, item: '', by: 'driver', created_at: 1, moved_at: 1, ...extra });
+  ({ id, title, note: '', column, item: '', runs: [] as string[], by: 'driver', created_at: 1, moved_at: 1, ...extra });
 const BOARD: Kanban = {
   board: 'dev', columns: ['backlog', 'ready', 'doing', 'done'],
   cards: [card('aaaaaa', 'Book a table', 'doing', { by: 'task-plan-dinner-20261115-101010-abc123' }),
