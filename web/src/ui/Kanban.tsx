@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { Live } from '../api';
-import { buildHome, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, DRIVER, kanbanMove, OTHER, serverView, taskLabel, type Fleet, type Kanban, type KanbanCard } from '../model';
+import { buildHome, byColumn, runsOnCards, cardItemHref, cardRuns, cardTally, columnLabel, DRIVER, kanbanMove, OTHER, serverView, taskLabel, type Fleet, type Kanban, type KanbanCard } from '../model';
 import { useChrome } from './Cadre';
 import { CardBlock, tallyText } from './CardWork';
 import './kanban.css';
@@ -93,7 +93,7 @@ export function KanbanScreen({ cadre = '', fleet = null }: { cadre?: string; fle
             {open && fleet && home && (
               <section className="kopen" aria-label={`The card ${open.title}, opened`}>
                 <div className="card items">
-                  <CardBlock key={open.id} card={open} fleet={fleet} home={home} pages={pages} open
+                  <CardBlock key={open.id} card={open} fleet={fleet} home={home} pages={pages} onCards={runsOnCards(board)} open
                     cadre={cadre === OTHER ? 'other' : cadre} folder={chrome?.nav?.settings.folders[0] || ''}
                     onChanged={(said) => { setNotice(said); refetch(); }} />
                 </div>
