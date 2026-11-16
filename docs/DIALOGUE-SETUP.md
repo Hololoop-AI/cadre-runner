@@ -7,7 +7,7 @@ no tracker — the whole loop is local.
 
 None of it touches your repos unless a task you dispatch does.
 
-Tested on Fedora (laptop and one server). macOS is supported by the installer
+Tested on Linux (Fedora, laptop and server). macOS is supported by the installer
 and the launcher but has not been run on a Mac yet; the first run there is the
 test.
 
@@ -230,8 +230,8 @@ and restart the fleet page:
 
 ```toml
 [[backends]]
-name = "fedora-1 · shared team backend"
-url = "http://fedora-1.tail2057e0.ts.net:8183"
+name = "shared backend"
+url = "http://<host>:<port>"
 ```
 
 A machine that is off shows as a red "unreachable" card, not a missing section.
@@ -240,40 +240,35 @@ The one exception is **/runs**, which lists only the runs of the machine
 serving it; each machine's Recently returned card links to its own.
 
 **To make a machine a backend other fleets can read**, it has to be reachable
-on the tailnet. Bind loopback *and* its tailnet address (`tailscale ip -4`):
+over a private network — a VPN such as Tailscale, or a trusted LAN. The fleet
+page asks for no password, so never bind it to a public address. Bind loopback
+*and* the machine's private-network address:
 
 ```toml
 [runner]
-status_bind = ["127.0.0.1", "100.71.181.114"]
+status_bind = ["127.0.0.1", "<private address>"]   # e.g. the output of `tailscale ip -4`
 ```
 
 Listing both keeps `http://127.0.0.1` working on that machine while the page is
-reachable only from the tailnet; `0.0.0.0` would also expose it on the LAN,
-and nothing on it asks for a password.
+reachable only from the private network; `0.0.0.0` would expose it on every
+network the machine is on.
 
 Its page server also has to accept the names other machines use for it, or
 every page they open answers `forbidden host`. `pipeline.py up` works the names
-out from the bind and `tailscale status`, passes them on as
-`REVIEW_SURFACE_ALLOWED_HOSTS` and prints the list; `allowed_hosts` in
-`[runner]` overrides it. With systemd units instead of `up`, give the variable
-to all three units, not just the page server's: anything that runs the
-`review-surface` CLI can start a replacement page server, and the replacement
-takes that process's environment. A machine running a second Cadre beside
-another one also needs `REVIEW_SURFACE_PORT` set in all three, or the CLI
-talks to the other Cadre's page server on the default port. fedora-1's shared
-backend (units `cadre-shared-*`) is the worked example.
+out from the bind (and, when Tailscale is installed, from `tailscale status`),
+passes them on as `REVIEW_SURFACE_ALLOWED_HOSTS` and prints the list;
+`allowed_hosts` in `[runner]` overrides it. With systemd units instead of `up`,
+give the variable to all three units, not just the page server's: anything
+that runs the `review-surface` CLI can start a replacement page server, and the
+replacement takes that process's environment.
 
-**Looking after fedora-1's shared backend.** Its code is a clone of `main` at
-`~/Projects/cadre/cadre-runner-shared` (config in its `config.local.toml`:
-port 8183, loopback + tailnet), its page server is
-`~/Projects/review-surface-shared` on port 4389, its state is in
-`~/.local/state/cadre-shared` and `~/.review-surface-shared`, and the daemon
-signs in through `~/.config/cadre/run-shared-daemon.sh`. To update it:
-
-```bash
-git -C ~/Projects/cadre/cadre-runner-shared pull --ff-only
-systemctl --user restart cadre-shared-statusd cadre-shared-daemon
-```
+**Running a second Cadre beside another on one machine** (for example a shared
+backend next to your own) needs its own clone, its own `config.local.toml`
+with a different `status_port` and `data_dir`, its own page-server state
+folder (`REVIEW_SURFACE_STATE_DIR`) and `REVIEW_SURFACE_PORT` set in all three
+units — otherwise its CLI talks to the other Cadre's page server on the
+default port. Updating it is a `git pull --ff-only` in its clone and a restart
+of its units.
 
 What it does not do yet: annotations carry no identity, so two people's notes
 on a shared backend's page look the same; the New project box at the top

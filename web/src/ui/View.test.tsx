@@ -40,10 +40,10 @@ describe('ViewScreen', () => {
 
   it("frames the chosen machine's page, and a page that is not a dialogue's has no study box", async () => {
     const calls = answering({ key: 'k2', session: '/session/k2', title: '', task: null });
-    await act(async () => { render(<ServerProvider base="http://fedora-2:8183"><ViewScreen pageKey="k2" /></ServerProvider>); });
-    expect(calls[0].url).toBe('http://fedora-2:8183/api/view/k2');
-    expect(screen.getByTitle('surface').getAttribute('src')).toBe('http://fedora-2:8183/session/k2');
-    expect(screen.getByText('open alone ↗').getAttribute('href')).toBe('http://fedora-2:8183/session/k2');
+    await act(async () => { render(<ServerProvider base="http://box-2:8183"><ViewScreen pageKey="k2" /></ServerProvider>); });
+    expect(calls[0].url).toBe('http://box-2:8183/api/view/k2');
+    expect(screen.getByTitle('surface').getAttribute('src')).toBe('http://box-2:8183/session/k2');
+    expect(screen.getByText('open alone ↗').getAttribute('href')).toBe('http://box-2:8183/session/k2');
     expect(screen.queryByPlaceholderText(/study a topic/)).toBeNull();
     expect(document.title).toBe('Surface — Cadre');
   });

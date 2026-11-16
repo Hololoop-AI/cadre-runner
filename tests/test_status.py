@@ -463,10 +463,10 @@ def test_proxy_lets_only_the_fleet_frame_a_session():
 def test_a_configured_machines_app_may_frame_a_session_too(monkeypatch):
     # the React app on another machine frames this machine's page when that
     # machine's app has this one chosen; nobody else may
-    monkeypatch.setattr(statusd, "CORS_ORIGINS", {"http://fedora-2:8183"})
+    monkeypatch.setattr(statusd, "CORS_ORIGINS", {"http://box-2:8183"})
     assert statusd.framable_header("/session/k", "Content-Security-Policy",
                                    "default-src 'self'; frame-ancestors 'none'") == \
-        "default-src 'self'; frame-ancestors 'self' http://fedora-2:8183"
+        "default-src 'self'; frame-ancestors 'self' http://box-2:8183"
 
 
 def _runs_fixture(root: Path):

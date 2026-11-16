@@ -26,7 +26,7 @@ def _fresh_cache():
     backends.forget()
 
 
-def _remote_payload(machine="fedora-1"):
+def _remote_payload(machine="box-1"):
     return {"version": "v1", "instance": "someone-else", "machine": machine,
             "review_events": True,
             "snap": {"surfaces": [{"kind": "task", "path": "/session/" + "e" * 16,
@@ -114,10 +114,10 @@ def test_the_version_moves_when_this_machines_fleet_does():
 
 def test_links_point_at_their_machine_and_folds_stay_per_machine():
     html = '<a href="/view/k">x</a><details class="fold" data-fold="cadre">'
-    b = {"name": "", "url": "http://fedora-1:8183"}
+    b = {"name": "", "url": "http://box-1:8183"}
     out = backends.point_at(html, b, same_origin=False)
-    assert 'href="http://fedora-1:8183/view/k"' in out and 'target="_blank"' in out
-    assert 'data-fold="http://fedora-1:8183|cadre"' in out
+    assert 'href="http://box-1:8183/view/k"' in out and 'target="_blank"' in out
+    assert 'data-fold="http://box-1:8183|cadre"' in out
     assert 'href="/view/k"' in backends.point_at(html, b, same_origin=True)
 
 
@@ -127,19 +127,19 @@ def test_row_forms_post_to_their_machine():
     # local copy of a moved page (same key) and left the remote one open.
     html = ('<form method="post" action="/repair">'
             '<input type="hidden" name="key" value="k"></form>')
-    b = {"name": "", "url": "http://fedora-1:8183"}
+    b = {"name": "", "url": "http://box-1:8183"}
     out = backends.point_at(html, b, same_origin=False)
-    assert 'action="http://fedora-1:8183/repair"' in out
+    assert 'action="http://box-1:8183/repair"' in out
     assert 'action="/repair"' in backends.point_at(html, b, same_origin=True)
 
 
 def test_this_machine_comes_first_and_bad_entries_are_dropped():
-    raw = {"backends": [{"name": "shared", "url": "http://fedora-1:8183/"},
-                        {"name": "typo", "url": "fedora-1:8183"}]}
+    raw = {"backends": [{"name": "shared", "url": "http://box-1:8183/"},
+                        {"name": "typo", "url": "box-1:8183"}]}
     got = backends.with_self(backends.configured(raw), ("0.0.0.0", 8181))
     assert got == [{"name": "", "url": "http://127.0.0.1:8181"},
-                   {"name": "shared", "url": "http://fedora-1:8183"}]
-    assert backends.self_url(("100.71.181.114", 8183)) == "http://100.71.181.114:8183"
+                   {"name": "shared", "url": "http://box-1:8183"}]
+    assert backends.self_url(("100.64.0.10", 8183)) == "http://100.64.0.10:8183"
 
 
 def test_status_bind_takes_one_address_or_several():
@@ -155,9 +155,9 @@ def _tailscale(monkeypatch, self_):
 
 
 def test_a_machine_is_named_by_config_then_tailnet_then_hostname(monkeypatch):
-    run = _tailscale(monkeypatch, {"DNSName": "fedora-1.tail2057e0.ts.net.", "HostName": "htpc"})
+    run = _tailscale(monkeypatch, {"DNSName": "box-1.tailnet-example.ts.net.", "HostName": "htpc"})
     assert backends.machine_name({"machine_name": "team"}, run=run) == "team"
-    assert backends.machine_name({}, run=run) == "fedora-1"
+    assert backends.machine_name({}, run=run) == "box-1"
     monkeypatch.setattr(backends.shutil, "which", lambda _: None)
     assert backends.machine_name({}) == backends.socket.gethostname()
 
@@ -168,12 +168,12 @@ def test_a_loopback_only_page_allows_no_remote_names(monkeypatch):
 
 
 def test_a_tailnet_bound_page_allows_the_names_tailscale_gives_this_machine(monkeypatch):
-    run = _tailscale(monkeypatch, {"DNSName": "fedora-2.tail2057e0.ts.net.",
-                                   "HostName": "fedora",
-                                   "TailscaleIPs": ["100.106.175.100"]})
+    run = _tailscale(monkeypatch, {"DNSName": "box-2.tailnet-example.ts.net.",
+                                   "HostName": "box",
+                                   "TailscaleIPs": ["100.64.0.11"]})
     names = backends.reachable_names(
-        {"status_bind": ["127.0.0.1", "100.106.175.100"]}, run=run)
-    assert names == ["100.106.175.100", "fedora-2.tail2057e0.ts.net", "fedora-2"]
+        {"status_bind": ["127.0.0.1", "100.64.0.11"]}, run=run)
+    assert names == ["100.64.0.11", "box-2.tailnet-example.ts.net", "box-2"]
 
 
 def test_explicit_allowed_hosts_win_over_detection(monkeypatch):
@@ -198,7 +198,7 @@ def test_up_hands_the_page_server_the_names_remote_browsers_use(monkeypatch):
 def test_the_outbox_is_read_where_the_page_server_writes_it(monkeypatch, tmp_path):
     """A second Cadre on one machine keeps its page server's state in its own
     folder; its daemon must read that folder's outbox, not the default one,
-    or no annotation on its pages ever reaches it (seen on fedora-1)."""
+    or no annotation on its pages ever reaches it (seen on a shared backend)."""
     from runnerlib import surface
     monkeypatch.delenv("REVIEW_SURFACE_OUTBOX", raising=False)
     monkeypatch.setenv("REVIEW_SURFACE_STATE_DIR", str(tmp_path))

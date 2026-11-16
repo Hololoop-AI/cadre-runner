@@ -5,18 +5,18 @@
 poll_interval = 45                                  # longest gap between daemon passes (work wakes it sooner)
 data_dir = "~/.local/state/pipeline-runner"         # registry, board, pages, logs
 skills_source = "~/dev-config/ai-workflow-config/skills"  # skills linked into a turn's directory
-status_bind = "0.0.0.0"            # statusd.py: bind address (tailnet default) and port;
+status_bind = "127.0.0.1"          # statusd.py: bind address (built-in default 0.0.0.0) and port;
 status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
-                                   # several addresses: ["127.0.0.1", "100.x.y.z"]
-# allowed_hosts = ["box.tailnet.ts.net"]  # names other machines reach this page by;
-                                   # default: worked out from the bind + `tailscale status`
-# machine_name = "fedora-1"        # what other fleets call this machine; default: tailnet name
+                                   # several addresses: ["127.0.0.1", "<private address>"]
+# allowed_hosts = ["box.example.internal"]  # names other machines reach this page by;
+                                   # default: worked out from the bind (+ `tailscale status` if installed)
+# machine_name = "box-1"           # what other fleets call this machine; default: Tailscale name, else hostname
 
 # Other machines' Cadre backends shown on this fleet page, each read through
 # its /api/fleet (docs/DIALOGUE-SETUP.md, "More than one machine").
 # [[backends]]
-# name = "fedora-1 · shared team backend"
-# url = "http://fedora-1.tail2057e0.ts.net:8183"
+# name = "shared backend"
+# url = "http://<host>:<port>"
 
 [claude]
 bin = "claude"

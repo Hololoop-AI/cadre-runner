@@ -216,7 +216,7 @@ class AgentReplyTest(unittest.TestCase):
 class TemplateTest(unittest.TestCase):
     """The onsubmit attribute is double-quoted HTML: any double quote inside
     it truncates the handler and the form falls back to a GET navigation —
-    the real form did exactly that on fedora-1 while curl tests passed."""
+    the real form did exactly that on a shared backend while curl tests passed."""
 
     def _artifacts(self, tmp):
         import types
