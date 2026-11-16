@@ -27,8 +27,12 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** What a card's item link says when its work has no title of its own. */
 const itemLabel = (item: string) => (item.startsWith('page:') ? 'its page' : taskLabel(item));
 
-/** The Board screen: the chosen machine's board, kept current by its fleet stream. */
-export function KanbanScreen() {
+/**
+ * The Board screen: the chosen machine's board, kept current by its fleet
+ * stream. Inside a cadre (`cadre`), a board that belongs to another cadre
+ * is not shown: there is one board today, and it is Dev's.
+ */
+export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
   const server = useServer();
   const [board, setBoard] = useState<Kanban | null>(null);
   const [error, setError] = useState('');
@@ -68,7 +72,9 @@ export function KanbanScreen() {
       <p className="meta"><a href="/">← fleet</a>{' · '}<span className={`live ${live}`}>{LIVE[live]}</span>
         {' · agents use '}<code>pipeline.py kanban</code></p>
       {notice && <p className="notice">{notice}</p>}
-      {!board ? <Pending error={error} /> : <Board board={board} onChange={send} />}
+      {!board ? <Pending error={error} />
+        : cadre && board.board !== cadre ? <p className="meta">{`This cadre has no kanban board. The one kanban board there is belongs to ${board.board}.`}</p>
+          : <Board board={board} onChange={send} />}
     </Screen>
   );
 }
@@ -81,11 +87,11 @@ export type CardWork = Record<string, { title: string; state: string }>;
  * Doing), each linked to the work attached to it, so that work is one click
  * away. A card leaves it once it is done. Read-only; the Board moves cards.
  */
-export function ActiveCards({ board, work }: { board: Kanban; work: CardWork }) {
+export function ActiveCards({ board, work, href = '/kanban' }: { board: Kanban; work: CardWork; href?: string }) {
   const cards = activeCards(board);
   return (
     <section className="kactive">
-      <h2 className="sect">Board <a href="/kanban">open the board →</a></h2>
+      <h2 className="sect">Board <a href={href}>open the board →</a></h2>
       {!cards.length ? <p className="meta">{`Nothing in ${board.columns.slice(1, -1).map(columnLabel).join(' or ')}.`}</p> : (
         <ul>
           {cards.map((c) => {

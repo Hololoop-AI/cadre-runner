@@ -197,7 +197,8 @@ export function layout(items: Item[], sel: Sel, opts: LayoutInput): Placed {
   return {
     list: shown.filter((it) => it.state !== IDLE),
     idle: shown.filter((it) => it.state === IDLE),
-    off: placed.filter((it) => !on.has(it)),
+    // another cadre's items are not drawn at all, not even hidden: a cadre's app holds only its own runs
+    off: placed.filter((it) => !on.has(it) && inScope(it)),
     count,
   };
 }

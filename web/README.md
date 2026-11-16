@@ -14,7 +14,11 @@ builds with `base: '/app/'`. It is also what `/`, `/library`, `/costs`,
 `/runs`, `/tree`, `/tree/<id>`, `/project/<id>`, `/page/<key>` and `/view/<key>`
 answer with (`statusd.REACT_ROUTE`); without a build in `dist/` those paths
 are a 404 that says to build it. The Python pages they replaced are gone.
-`/view/<key>` is the frame around one agent page: it loads the chosen
+`/` is Hololoop, a card per cadre and none of their runs; `/c/<id>` (and
+`/c/<id>/agents` and `/settings`; Dev also has `/kanban` and `/blackboard`) is one cadre's own app, holding only
+the runs that cadre owns (`runnerlib/cadres.py`), with the rail, header tabs
+and a foldable side column from `GET /api/nav?cadre=<id>` (one menu button on
+a phone). `/view/<key>` is the frame around one agent page: it loads the chosen
 machine's `/session/<key>` in an iframe, which that machine's proxy lets
 this fleet and its configured peers frame (`statusd.framable_header`).
 Screens the app does not draw yet (`/history`, `/stranded`, `/cards`) are

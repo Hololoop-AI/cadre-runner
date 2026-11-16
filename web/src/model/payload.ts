@@ -196,6 +196,63 @@ export interface Fleet {
   endings?: Record<string, Ending>;
   items?: Record<string, ItemRecord>;
   fleet_page_code?: { stale?: boolean; since?: number; head?: string };
+  /** task id -> the cadre that owns the run (runnerlib/cadres.py; OTHER: none) */
+  cadres?: Record<string, string>;
+  /** cadre id -> what its runs spent in the last 7 days */
+  cadre_week_usd?: Record<string, number>;
+}
+
+/** One entry of a cadre's navigation: a header tab, a batch or a pinned page. */
+export interface NavLink {
+  id?: string;
+  label: string;
+  href: string;
+}
+
+/** GET /api/nav?cadre=<id>: what the shell draws for one cadre (runnerlib/cadres.py nav). */
+export interface Nav {
+  cadre: { id: string; name: string };
+  /** the header tabs, in order; Settings is always one */
+  screens: NavLink[];
+  /** the side column: batches (none until the board has them) and pinned pages */
+  batches: NavLink[];
+  pinned: NavLink[];
+  /** the rail: every cadre, then Other */
+  cadres: { id: string; name: string }[];
+  /** what its Settings tab shows: its own setup, not its work */
+  settings: CadreSettings;
+}
+
+/** A cadre's own setup, read from its project record (runnerlib/cadres.py settings). */
+export interface CadreSettings {
+  /** the project record it is ('' for Other, which has none) */
+  project: string;
+  /** folders whose runs it gets */
+  folders: string[];
+  /** projects grouped under it, whose runs it gets too */
+  members: { id: string; name: string }[];
+  /** the tabs its record asks for; empty means the default */
+  nav: string[];
+}
+
+/** One event on the blackboard, the store agents write to each other (runnerlib/blackboard.py). */
+export interface BlackboardEvent {
+  seq: number;
+  id: string;
+  ts: number;
+  namespace: string;
+  topic: string;
+  key: string;
+  kind: string;
+  provenance: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  correlation_id: string | null;
+  visible_after: number | null;
+}
+
+/** GET /api/blackboard?limit=<n>: the newest events, newest first. */
+export interface Blackboard {
+  events: BlackboardEvent[];
 }
 
 /** One machine the app can switch to: its name and origin ('' = where the app was loaded from). */

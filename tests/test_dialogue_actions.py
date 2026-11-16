@@ -266,6 +266,8 @@ def test_submit_task_writes_an_event_the_engine_consumes():
     payload = dict(ev["payload"])
     project = payload.pop("project", None)
     assert project, "a task in an unregistered directory should register one"
+    # a project in no group puts the run in no cadre: Other (runnerlib/cadres.py)
+    assert payload.pop("cadre") == "~other"
     assert payload == {"target": "task", "task": task_id, "story": task_id,
                        "title": "tidy flags",
                        "task_text": "tidy the exporter's flags",

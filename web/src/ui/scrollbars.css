@@ -1,0 +1,21 @@
+/* Scrollbars across the whole fleet app, in the theme's colours: a thin
+   thumb in the muted ink over the page's own ground, brightening to the
+   accent while held or hovered. Only variables, so a light theme gets light
+   scrollbars and a dark one dark, with nothing here to change.
+   `scrollbar-color` is the standard (Firefox, Chrome 121+, Safari 18.2+);
+   the ::-webkit-scrollbar rules are for older WebKit/Blink, which ignore
+   the standard property. */
+
+:root{--scroll-thumb:color-mix(in srgb,var(--muted) 42%,transparent);
+ --scroll-thumb-hot:color-mix(in srgb,var(--accent) 70%,transparent);
+ --scroll-track:transparent}
+html{scrollbar-color:var(--scroll-thumb) var(--bg);scrollbar-width:thin}
+*{scrollbar-color:var(--scroll-thumb) var(--scroll-track);scrollbar-width:thin}
+*:hover{scrollbar-color:var(--scroll-thumb-hot) var(--scroll-track)}
+html:hover{scrollbar-color:var(--scroll-thumb) var(--bg)}
+
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--scroll-track)}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border:2px solid transparent;border-radius:10px;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover,::-webkit-scrollbar-thumb:active{background-color:var(--scroll-thumb-hot)}
+::-webkit-scrollbar-corner{background:transparent}

@@ -542,6 +542,65 @@
         }
       }
     },
+    "/api/nav": {
+      "get": {
+        "x-tier": "app",
+        "summary": "A cadre's navigation (runnerlib/cadres.py nav): the rail, its screens as header tabs, and its side column (batches, pinned pages). Review pages can draw the same list as an expandable menu.",
+        "parameters": [
+          {
+            "name": "cadre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the cadre's navigation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Nav"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such cadre"
+          }
+        }
+      }
+    },
+    "/api/blackboard": {
+      "get": {
+        "x-tier": "app",
+        "summary": "The newest events on the blackboard, the store agents write to each other (runnerlib/blackboard.py recent), newest first. Read only; no board.db is no events.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the newest events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Blackboard"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/kanban": {
       "post": {
         "x-tier": "app",
@@ -795,6 +854,31 @@
                 ]
               }
             }
+          },
+          "cadres": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "task id -> the cadre that owns the run (runnerlib/cadres.py; '~other' is no cadre)"
+          },
+          "cadre_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            },
+            "description": "the cadres on the rail, in order (cadres.cadre_list)"
+          },
+          "cadre_week_usd": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "cadre id -> what its runs spent in the last 7 days"
+          },
+          "cadre": {
+            "type": "string",
+            "description": "present only on /api/fleet?cadre=<id>: the cadre the payload was cut to"
           }
         }
       },
@@ -1082,6 +1166,26 @@
           },
           "launch": {
             "type": "string"
+          },
+          "nav": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "href": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -1533,6 +1637,10 @@
           "tags": {
             "type": "string",
             "description": "comma separated"
+          },
+          "cadre": {
+            "type": "string",
+            "description": "the cadre that owns the run (id or name); default: the parent's, else the group rule"
           }
         }
       },
@@ -2301,6 +2409,202 @@
           },
           "before": {
             "type": "string"
+          }
+        }
+      },
+      "CadreRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NavLink": {
+        "x-ts": "NavLink",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "href"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string"
+          }
+        }
+      },
+      "Nav": {
+        "x-ts": "Nav",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cadre",
+          "screens",
+          "batches",
+          "pinned",
+          "cadres",
+          "settings"
+        ],
+        "properties": {
+          "cadre": {
+            "$ref": "#/components/schemas/CadreRef"
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the header tabs, in order; Settings always among them"
+          },
+          "batches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the side column's batches (empty until the board has them)"
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the side column's pinned pages (the project record's pinned)"
+          },
+          "cadres": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            },
+            "description": "the rail: every cadre, then Other"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/CadreSettings"
+          }
+        }
+      },
+      "CadreSettings": {
+        "x-ts": "CadreSettings",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "folders",
+          "members",
+          "nav"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "the project record it is ('' for Other)"
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            }
+          },
+          "nav": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "the tabs its record asks for; empty is the default"
+          }
+        }
+      },
+      "BlackboardEvent": {
+        "x-ts": "BlackboardEvent",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seq",
+          "id",
+          "ts",
+          "namespace",
+          "topic",
+          "key",
+          "kind",
+          "provenance",
+          "payload",
+          "correlation_id",
+          "visible_after"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ts": {
+            "type": "number"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visible_after": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "Blackboard": {
+        "x-ts": "Blackboard",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlackboardEvent"
+            }
           }
         }
       }

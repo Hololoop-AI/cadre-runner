@@ -7,7 +7,8 @@ import { collapse } from './conversations';
 import { num, relTime, s } from './format';
 import { assignStates, bareByTask, fleetItems, itemFacts, order, IDLE, type Item } from './items';
 import type { Ending, Fleet, LinkRecord, PageInfo, Pageless, SessionStatus, Surface } from './payload';
-import { fleetGroups, itemGroups, type Group } from './groups';
+import { itemCadre } from './cadres';
+import { fleetGroups, itemGroups, OTHER, type Group } from './groups';
 import { liveProjects } from './projects';
 import { clean, kidsOf, type Tree } from './tree';
 import { visible, type ServerView } from './view';
@@ -43,7 +44,7 @@ export interface Home {
   tags: string[];
   /** the sidebar's groups (groups.ts); none means no sidebar */
   groups: Group[];
-  /** item key -> the group ids it is in (none: Other) */
+  /** item key -> the cadre that owns it (cadres.ts itemCadre), then the groups above it; none: Other */
   member: Record<string, string[]>;
   /** the collapsed rows and link graph find searches */
   find: { surfaces: Surface[]; records: LinkRecord[]; holders: Record<string, string>; pages: Record<string, PageInfo> };
@@ -88,7 +89,11 @@ export function buildHome(fleet: Fleet, view: ServerView, now: number, origin: s
   }
   const groups = fleetGroups(projs);
   const member: Record<string, string[]> = Object.create(null);
-  for (const it of items) member[it.key] = itemGroups(it, projs, groups);
+  const owned = fleet.cadres || {};
+  for (const it of items) {
+    const c = itemCadre(it, owned, projs, groups);
+    member[it.key] = c === OTHER ? [] : itemGroups({ project: c, tags: [] }, projs, groups);
+  }
   // statusd.parent_choices: fleet_items without statuses, so newest by when a page opened
   const parents = fleetItems({ surfaces, tree, projs, pageless, archived: gone })
     .filter((it) => !it.key.startsWith('page:')).map((it): [string, string] => [it.key, it.title]);
