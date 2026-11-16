@@ -99,15 +99,13 @@ What the page carries, in order:
    and message), what was verified, and anything from the spec you did NOT do
    and why. Then one row per instruction in the driver's last words above:
    their words quoted, what you did with them.
-3. **Understand what changed** — the driver has to be able to explain this
-   change to their team, so teach it, in at most one screen: what it does in
-   plain words, one or two short excerpts with `file:line`, then two or three
-   open questions about it (predict, explain, locate), each with your answer
-   folded in a `<details>` under it so they try before they look. Propose one
-   to three cards on it —
-   `echo '{"cards":[{"front":"In <repo>, …"}]}' | $pipeline cards propose --source <repo> --anchor <commit>` —
-   and list them, saying they wait on the Cards page (`/cards` on the fleet)
-   to be kept or dropped.
+3. **Learn this change** — one line, not a lesson: the driver gets this
+   change taught when they want it by pressing **Thread** on any passage (or
+   opening **Threads** in the footer and "Start a thread on this page") and
+   asking it to teach them, or by annotating a passage with
+   `learn: <what about it>`. Cadre opens a side thread forked from this
+   session, so it knows every reason behind the change; it teaches and
+   proposes cards there, and this page keeps its round.
 4. **Evidence** — the commands you ran and what they printed, verbatim, inside
    `<details>` when long.
 5. **What still needs a human** — pushing, a decision the spec left open,

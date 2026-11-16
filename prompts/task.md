@@ -83,21 +83,18 @@ in it as addressed to you:
 ## Keeping the driver able to discuss their own code
 
 The driver builds with agents and has to be able to explain the code to their
-team. Your page is where that happens — not in the code, and not in a later
-course. Two places on the page:
+team. The page points the way; the teaching happens on demand, in a thread,
+when they ask for it. Two places on the page:
 
-- **After you change code — every round that did.** A section headed
-  **Understand what changed**, at most one screen: what the change does in
-  plain words, one or two short excerpts with `file:line`, then two or three
-  open questions about THIS change (predict "what happens when…", explain "why
-  this shape rather than…", locate "where would a change to… go"), each with
-  your answer folded in a `<details>` under it so they try before they look.
-  Then propose one to three cards on it:
-
-      echo '{"cards":[{"front":"In <repo>, …"}]}' | $pipeline cards propose --source <repo> --anchor <file or commit>
-
-  and list them, saying they wait on the Cards page (`/cards` on the fleet) to
-  be kept or dropped. A round that changed no code skips the section.
+- **After you change code — every round that did.** Do not teach the change on
+  the page. Carry one line, headed **Learn this change**, that tells the driver
+  how to get it taught when they want it: press **Thread** on any passage (or
+  open **Threads** in the footer and "Start a thread on this page") and ask it
+  to teach them; or annotate a passage with `learn: <what about it>`. Either
+  way Cadre opens a side thread forked from this session, so it already knows
+  every reason behind the change; it teaches in the thread, proposes cards
+  there, and this dialogue keeps its round. A round that changed no code skips
+  the line.
 - **Before you change code — only when a call needs it.** When a driver call
   turns on code they may not know, put **Before you decide** directly above
   that call: what that code does today, at most 150 words with `file:line`.
@@ -113,8 +110,8 @@ back here. Keep this dialogue going: give the request its row on your page
 with the study page linked through `/open?file=` (the path is in the command's
 output), and keep the decision it blocks open until they come back. When a
 primer is not enough, offer the study session in one line — do not start one
-unasked. (An annotation that opens with `study:` never reaches you: Cadre
-starts that session itself.)
+unasked. (An annotation that opens with `learn:`, `study:` or `thread:` never reaches
+you: Cadre opens that thread itself.)
 
 ## When `$closing` is set — the last turn
 
