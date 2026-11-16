@@ -29,7 +29,7 @@ page text PLUS a deterministic, Python-computed appendix describing that markup
 (`structure_digest`). The judge never inspects HTML: it reads prose and a small
 factual inventory, both of which its quotes are verified against.
 
-Docs the criteria are drawn from: `docs/audits/2026-09-surface-quality.md`
+Docs the criteria are drawn from: `evals/audits/2026-09-surface-quality.md`
 (the per-gate bar) and the `auto-surface` skill (the page-structure contract).
 """
 

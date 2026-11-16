@@ -1,5 +1,5 @@
 {
-  "_comment": "Driver annotations from round 1, in the payload shape the surface plumbing carries (uid/selector/tag/text/prompt — see docs/audits/2026-09-surface-quality.md, gate b). judge_round.read_feedback renders this to the numbered list the judge counts rows against.",
+  "_comment": "Driver annotations from round 1, in the payload shape the surface plumbing carries (uid/selector/tag/text/prompt — see evals/audits/2026-09-surface-quality.md, gate b). judge_round.read_feedback renders this to the numbered list the judge counts rows against.",
   "round": 1,
   "points": [
     {

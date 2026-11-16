@@ -11,15 +11,15 @@ DEFAULTS = {
     "runner": {
         "poll_interval": 45,
         "data_dir": "~/.local/state/pipeline-runner",
-        "skills_source": "~/dev-config/ai-workflow-config/skills",
+        "skills_source": "~/.local/share/cadre/ai-dev-skills/skills",
         "max_concurrent_runs": 8,  # detached sessions; beyond it, turns wait (backpressure)
-        # The status/proxy service (statusd.py). 0.0.0.0 is the tailnet default
-        # this was built for; a host with a network policy narrows it here
-        # rather than in the source.
-        # One address or several (a TOML array): loopback plus the tailnet
+        # The status/proxy service (statusd.py). Loopback by default: the page
+        # has no login and drives agents that run without permission prompts,
+        # so it is reachable from this machine only until a config opens it.
+        # One address or several (a TOML array): loopback plus a private-network
         # address makes this machine a backend other fleets can read without
         # opening it to every network 0.0.0.0 would (runnerlib/backends.py).
-        "status_bind": "0.0.0.0",
+        "status_bind": "127.0.0.1",
         "status_port": 8181,
         # The names other machines reach this page by, for review-surface's
         # Host allowlist. Empty = worked out from the bind

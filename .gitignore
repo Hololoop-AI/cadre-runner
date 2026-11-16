@@ -8,3 +8,6 @@ __pycache__/
 # carries this host s paths, so shipping one person s copy hands every other
 # machine the wrong skills_source and data_dir.
 config.local.toml
+
+# Review pages agents write while working in this repo are local, not docs.
+.review-surface/*.html

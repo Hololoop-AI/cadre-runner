@@ -1215,6 +1215,8 @@ def cmd_messages(cfg, args):
 def main():
     ap = argparse.ArgumentParser(prog="pipeline", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    from runnerlib.version import version as _version
+    ap.add_argument("--version", action="version", version=f"cadre-runner {_version()}")
     # CADRE_CONFIG fallback matches preflight: without it, a harness that sets
     # the env var but not the flag silently runs against the repo's config.toml
     # and writes into the LIVE state dir (it happened twice).
