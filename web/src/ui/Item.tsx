@@ -260,7 +260,7 @@ function Actions({ it, onNewWork }: { it: Item; onNewWork: (parent: string) => v
   );
 }
 
-function stateBadge(it: Item) {
+export function stateBadge(it: Item) {
   if (it.state === WORKING) {
     const n = it.agents || 0;
     return <span className="badge work">{n ? `${n} agent${n !== 1 ? 's' : ''} running` : 'Agent working'}</span>;

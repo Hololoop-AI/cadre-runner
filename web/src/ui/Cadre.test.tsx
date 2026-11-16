@@ -96,23 +96,31 @@ afterEach(() => {
 });
 
 describe('a cadre app', () => {
-  it('shows only its own runs: those done for a card under the card, the rest as one-off work', async () => {
+  it('as a list, shows only its own runs, in one Work list: active cards and the runs on no card together, Needs you beside it', async () => {
+    window.localStorage.setItem('cadre.workMode', 'list');
     const asked = serving('/c/dev');
     await act(async () => { render(<App />); });
-    const work = screen.getByRole('region', { name: 'Work on the board' });
+    const work = screen.getByRole('region', { name: 'Work' });
     const card = work.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
-    expect(card.open).toBe(false); // closed: nothing on it came back unopened
+    expect(card.open).toBe(false);
     expect(card.querySelector('summary')!.textContent).toContain('Cadre slice 2');
-    expect(card.querySelector('summary')!.textContent).toContain('1 run · 1 your turn');
+    // a card's row says what a run's row says: its state, its project, when it last came back
+    const row = card.querySelector('summary')!;
+    expect(row.querySelector('.stbadge')!.textContent).toBe('Your turn');
+    expect(row.textContent).toContain('Doing · 1 run');
+    expect(row.querySelector('.proj')).toBeTruthy();
+    expect(row.querySelector('.when')!.textContent).not.toBe('');
     expect(within(card).getByText('t-card page')).toBeTruthy();
-    expect(work.querySelector('.wbacklog a')!.textContent).toBe('Backlog · 1');
+    expect(work.querySelector('.wbacklog')!.textContent).toBe('1 in backlog');
     expect(work.querySelector('details.wcard[data-card=bbbbbb]')).toBeNull(); // the Backlog is on the Kanban tab, not home
-    const list = document.getElementById('fleet')!;
-    expect(list.textContent).toContain('t-dev page');
-    expect(list.textContent).not.toContain('t-card page');
-    expect(list.textContent).not.toContain('t-kit page');
-    expect(list.textContent).not.toContain('t-loose page');
-    expect(screen.getByText('One-off work (on no card)')).toBeTruthy();
+    // the card and the run on no card share one list; the card's own run is not drawn again as a loose one
+    const rows = [...work.querySelectorAll('.onework > .card.items > details.item')];
+    expect(rows.some((r) => r === card)).toBe(true);
+    const loose = rows.filter((r) => !r.classList.contains('wcard')).map((r) => r.textContent || '');
+    expect(loose.some((x) => x.includes('t-dev page'))).toBe(true);
+    for (const gone of ['t-card page', 't-kit page', 't-loose page']) expect(loose.some((x) => x.includes(gone))).toBe(false);
+    expect(work.querySelector('.wsum')!.textContent).toBe('2 need you');
+    // Needs you and Running now stay beside the list
     const needs = screen.getByRole('complementary', { name: 'Needs you and running now' });
     expect(within(needs).getAllByRole('link').map((a) => a.textContent)).toEqual(['t-dev page', 't-card page']);
     expect(asked).toContain('/api/nav?cadre=dev');
@@ -153,43 +161,77 @@ describe('a cadre app', () => {
     expect(asked).toContain('/api/kanban');
   });
 
-  it('opens a card on its own only when a run on it came back and is not opened yet', async () => {
+  it('draws the work as cards by default, and opens one large above everything with its runs and Start work', async () => {
+    serving('/c/dev');
+    await act(async () => { render(<App />); });
+    const tile = document.querySelector('button.wtile[data-card=aaaaaa]') as HTMLButtonElement;
+    expect(tile.textContent).toContain('Cadre slice 2');
+    expect(tile.querySelector('.stbadge, .badge')!.textContent).toBe('Your turn');
+    expect(document.querySelector('button.wtile.loose')!.textContent).toContain('t-dev page'); // a run on no card is a card too, dashed
+    expect(document.querySelector('dialog.wlarge')).toBeNull();
+    await act(async () => { tile.click(); });
+    const large = document.querySelector('dialog.wlarge') as HTMLDialogElement;
+    expect(large.getAttribute('aria-label')).toBe('Cadre slice 2');
+    expect(within(large).getByText('t-card page')).toBeTruthy();
+    expect(within(large).getByText('Start work on this card')).toBeTruthy();
+    await act(async () => { within(large).getByRole('button', { name: 'Close' }).click(); });
+    expect(document.querySelector('dialog.wlarge')).toBeNull();
+    // the choice of list is kept
+    await act(async () => { screen.getByRole('button', { name: 'List' }).click(); });
+    expect(window.localStorage.getItem('cadre.workMode')).toBe('list');
+    expect(document.querySelector('button.wtile')).toBeNull();
+    expect(document.querySelector('details.wcard[data-card=aaaaaa]')).toBeTruthy();
+  });
+
+  it('keeps every card on the home closed, saying in its row what came back new', async () => {
+    window.localStorage.setItem('cadre.workMode', 'list');
     const fresh = { ...FLEET, statuses: { [`t-card`.padEnd(16, '0')]: { unseen: true } } } as unknown as Fleet;
     serving('/c/dev', fresh);
     await act(async () => { render(<App />); });
     const card = document.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
-    expect(card.open).toBe(true);
+    expect(card.open).toBe(false);
     expect(card.querySelector('summary')!.textContent).toContain('1 new');
   });
 
-  it("draws its header tabs and side column from the cadre's navigation, Settings among them", async () => {
+  it("draws the cadre's pages as a strip of icons beside the rail, Settings among them, and no batches or pinned column", async () => {
     serving('/c/dev');
     await act(async () => { render(<App />); });
-    const tabs = screen.getAllByRole('navigation', { name: 'Dev screens' })[0];
-    expect(within(tabs).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual(
+    const pages = document.querySelector('.pages-wide nav.pages-rail') as HTMLElement;
+    expect(pages.getAttribute('aria-label')).toBe('Dev pages');
+    expect(within(pages).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual(
       [['Home', '/c/dev'], ['Kanban', '/c/dev/kanban'], ['Blackboard', '/c/dev/blackboard'], ['Records', '/c/dev/records'], ['Agents', '/c/dev/agents'],
         ['Settings', '/c/dev/settings']]);
-    expect(within(tabs).getByText('Home').getAttribute('aria-current')).toBe('page');
-    const side = screen.getByRole('complementary', { name: 'Dev: batches and pinned pages' });
-    expect(within(side).getByText('Cadre design').getAttribute('href')).toBe('/view/abc');
-    expect(within(side).getByText(/Dev settings/).getAttribute('href')).toBe('/c/dev/settings');
+    expect(pages.querySelector('a.on')!.getAttribute('aria-current')).toBe('page');
+    expect(pages.querySelectorAll('svg.gsvg').length).toBe(6);
+    expect(pages.querySelector('a[href=\'/c/dev/settings\'] svg path')!.getAttribute('d')!.split('L').length).toBeGreaterThan(30); // a toothed gear
+    expect(screen.queryByText('Batches')).toBeNull();
+    expect(screen.queryByText('Pinned')).toBeNull();
   });
 
-  it('puts the rail, the screens and settings behind one menu button for a phone', async () => {
+  it('folds the pages strip away with the rail, in one click, and remembers it', async () => {
+    serving('/c/dev');
+    await act(async () => { render(<App />); });
+    await act(async () => { (document.querySelector('nav.groups button.gfold') as HTMLButtonElement).click(); });
+    expect(document.querySelector('nav.groups.shut')).toBeTruthy();
+    expect(document.querySelector('.pages-wide')).toBeNull();
+    expect(window.localStorage.getItem('cadre.railShut')).toBe('1');
+  });
+
+  it('puts the rail, the pages and settings behind one menu button for a phone', async () => {
     serving('/c/dev');
     await act(async () => { render(<App />); });
     const button = screen.getByRole('button', { name: /^Menu:/ });
     expect(document.getElementById('cdrawer')).toBeNull();
     await act(async () => { button.click(); });
     const drawer = document.getElementById('cdrawer')!;
-    expect(within(drawer).getByText('Settings').getAttribute('href')).toBe('/c/dev/settings');
+    expect(within(drawer).getByText('Settings').closest('a')!.getAttribute('href')).toBe('/c/dev/settings');
     expect(document.querySelector('nav.groups.open')).toBeTruthy();
   });
 
   it('keeps the shell on its other screens, with Settings reachable from each', async () => {
     serving('/c/kitchen/kanban');
     await act(async () => { render(<App />); });
-    expect(screen.getAllByRole('navigation', { name: 'Dev screens' }).length).toBeGreaterThan(0);
+    expect(document.querySelector('.pages-wide a[href=\'/c/dev/settings\']')).toBeTruthy();
     expect(screen.getByText(/This cadre has no kanban board/)).toBeTruthy();
   });
 

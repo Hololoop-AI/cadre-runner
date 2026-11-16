@@ -16,7 +16,7 @@ const LIVE_TEXT: Record<Live, [string, string]> = {
  * The header; `menu` (a phone's group button) and then `switcher` (the
  * machine select) sit after the title when there are any.
  */
-export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu, groupName = '', boardHref = '/kanban', boardLabel = 'board' }: {
+export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu, groupName = '', boardHref = '/kanban', boardLabel = 'board', links = true }: {
   weekUsd: number | undefined; live: Live; snapshot: string | undefined; onNewWork: () => void;
   switcher?: ReactNode; menu?: ReactNode;
   /** the chosen group, after the dot: "Cadre.dev"; empty for Home */
@@ -25,13 +25,15 @@ export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu, gro
   boardHref?: string;
   /** what that link says: board (the kanban board) or blackboard */
   boardLabel?: string;
+  /** board, cards and every run; a cadre's home leaves them to its pages rail and Holo */
+  links?: boolean;
 }) {
   const [text, title] = LIVE_TEXT[live];
   return (
     <header>
       <h1>Cadre<span className="dot">.</span>{groupName && <span className="group">{groupName}</span>}</h1>{menu}{switcher}<span className="sp"></span>
       {weekUsd != null && <a href="/costs">{`${usd(weekUsd)} in 7 days`}</a>}
-      <a href={boardHref}>{boardLabel}</a><a href="/cards">cards</a><a href="/runs">every run</a>
+      {links && <><a href={boardHref}>{boardLabel}</a><a href="/cards">cards</a><a href="/runs">every run</a></>}
       <span id="live" className={live === 'connecting' ? 'live' : `live ${live}`}
         title={live === 'connecting' ? `snapshot ${snapshot || '—'}` : title}>{text}</span>
       <button type="button" className="primary" id="newworkbtn" onClick={onNewWork}>+ New work</button>
