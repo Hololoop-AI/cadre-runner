@@ -18,6 +18,7 @@ from string import Template
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import claude_run, config as config_mod
+from runnerlib import cadres as cadres_mod
 from runnerlib import codestamp
 from runnerlib import conversations
 from runnerlib import engine_seam
@@ -824,7 +825,8 @@ def cmd_task(cfg, args):
     try:
         task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title,
                                         project=getattr(args, "project", None),
-                                        run=getattr(args, "run", None))
+                                        run=getattr(args, "run", None),
+                                        cadre=getattr(args, "cadre", None))
     except (ValueError, projects_mod.ProjectError) as e:
         sys.exit(f"task refused: {e}")
     print(task_id)
@@ -996,6 +998,28 @@ def cmd_cards(cfg, args):
         show(c)
 
 
+def cmd_cadres(cfg, args):
+    """Cadres (runnerlib/cadres.py): list them with their runs, give runs
+    launched before cadres existed one (migrate), or move a run (set)."""
+    projs = projects_mod.load(cfg.data_dir)
+    if args.action == "migrate":
+        print(f"gave {cadres_mod.migrate_dir(cfg.data_dir)} runs a cadre")
+        return
+    if args.action == "set":
+        if len(args.rest) != 2:
+            sys.exit("usage: pipeline.py cadres set <task id> <cadre>")
+        cadre = cadres_mod.resolve(projs, args.rest[1])
+        if cadre is None:
+            sys.exit(f"no cadre {args.rest[1]!r}")
+        cadres_mod.assign(cfg.data_dir, args.rest[0], cadre)
+        print(f"{args.rest[0]} -> {cadre}")
+        return
+    owned = cadres_mod.load(cfg.data_dir)
+    for c in [*cadres_mod.cadre_list(projs), {"id": cadres_mod.OTHER, "name": cadres_mod.OTHER_NAME}]:
+        n = sum(1 for v in owned.values() if v == c["id"])
+        print(f"{c['id']:24} {c['name']}  {n} runs")
+
+
 def cmd_kanban(cfg, args):
     """The kanban board the driver plans on (runnerlib/kanban.py): list it,
     or add, move, edit and remove cards. The fleet's Board screen shows each
@@ -1108,6 +1132,8 @@ def main():
                                      "directory, context and defaults")
     p.add_argument("--run", help="what to launch, kind:name from `pipeline.py library` "
                                  "(skill:investigating, workflow:naming-forge, agent:refactor)")
+    p.add_argument("--cadre", help="the cadre that owns this run (id or name, or other); "
+                                   "default: the parent task's, else the project's group")
     p.add_argument("--yes", action="store_true",
                    help="send a one-word ask anyway (refused by default: it is "
                         "almost always a command typed in the wrong place)")
@@ -1156,6 +1182,10 @@ def main():
                    help="review: the grader's grade, kept beside yours")
     p.add_argument("--reasoning", help="review: the grader's one-line reason")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("cadres", help="cadres: which owns each run (list, migrate, "
+                                      "set <task> <cadre>)")
+    p.add_argument("action", choices=["list", "migrate", "set"])
+    p.add_argument("rest", nargs="*", help="set: the task id, then the cadre")
     p = sub.add_parser("kanban", help="the kanban board: list it, or add, move, edit "
                                       "and remove cards (the fleet's Board screen)")
     p.add_argument("action", choices=["list", *kanban_mod.ACTIONS])
@@ -1219,7 +1249,7 @@ def main():
      "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "chat-reply": cmd_chat_reply,
-     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "cadres": cmd_cadres, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "serve": cmd_serve,
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)

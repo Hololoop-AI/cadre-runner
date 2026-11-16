@@ -19,6 +19,9 @@ A record:
     skills    extra skills linked into the working directory at launch
     launch    the default launch choice, `kind:name` (library.parse_run), or ""
     archived  hidden from the fleet; kept on disk
+    nav       a cadre's header tabs, screen ids in order (runnerlib/cadres.py
+              SCREENS); absent: cadres.DEFAULT_NAV
+    pinned    a cadre's pinned pages, [{label, href}], in its side column
 
 Crossover: work launched in a member may READ its siblings' directories (they
 reach the session as extra directories). "Read the siblings, write only here"
@@ -35,7 +38,7 @@ from .conversations import PROJECT_NAME
 from .registry import slugify
 
 FILE = "projects.json"
-FIELDS = ("name", "dirs", "group", "context", "skills", "launch", "archived")
+FIELDS = ("name", "dirs", "group", "context", "skills", "launch", "archived", "nav", "pinned")
 # What a turn reads as `$project` when it was not launched from a project.
 NO_PROJECT = "None. This task was not launched from a project."
 BRIEF_NAMES = ("brief.md", "README.md")

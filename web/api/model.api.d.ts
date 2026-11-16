@@ -114,6 +114,10 @@ export interface Fleet {
         since?: number;
         head?: string;
     };
+    /** task id -> the cadre that owns the run (runnerlib/cadres.py; OTHER: none) */
+    cadres?: Record<string, string>;
+    /** cadre id -> what its runs spent in the last 7 days */
+    cadre_week_usd?: Record<string, number>;
 }
 /** One installed skill, workflow, agent or flow (library.scan), as /api/library lists it. */
 export interface InstalledEntry {
@@ -370,6 +374,54 @@ export interface ViewInfo {
     title: string;
     /** the dialogue's task when it is one (the study box needs it), else null */
     task: string | null;
+}
+/** GET /api/nav?cadre=<id>: what the shell draws for one cadre (runnerlib/cadres.py nav). */
+export interface Nav {
+    cadre: {
+        id: string;
+        name: string;
+    };
+    /** the header tabs, in order; Settings is always one */
+    screens: NavLink[];
+    /** the side column: batches (none until the board has them) and pinned pages */
+    batches: NavLink[];
+    pinned: NavLink[];
+    /** the rail: every cadre, then Other */
+    cadres: {
+        id: string;
+        name: string;
+    }[];
+}
+/** One entry of a cadre's navigation: a header tab, a batch or a pinned page. */
+export interface NavLink {
+    id?: string;
+    label: string;
+    href: string;
+}
+// --- from cadres.ts
+/**
+ * Hololoop's cards: one per cadre, then Other when anything is in it.
+ * `member` is Home.member (item key -> its cadre and the groups above it,
+ * none for Other), so a cadre nested in another counts in both; done and
+ * hidden items are not counted. Waiting is counted as the cadre's own page
+ * does (view.ts layout): its quiet items fill what `limit` leaves after
+ * the working ones, and the rest fold into Idle.
+ */
+export declare function cadreCards(items: Item[], member: Record<string, string[]>, groups: Group[], fleet: Fleet, limit?: number): CadreCard[];
+/** The cadre that owns `it`: the server's record for its key, else the group rule's nearest group, else OTHER. */
+export declare function itemCadre(it: Pick<Item, 'key' | 'project' | 'tags'>, owned: Record<string, string>, projs: Record<string, Project>, groups: Group[]): string;
+/** The items waiting on the driver in one cadre (Needs you), newest first. */
+export declare function needsYou(items: Item[], inCadre: (it: Item) => boolean): Item[];
+/** What Hololoop's card for one cadre says. */
+export interface CadreCard {
+    id: string;
+    name: string;
+    /** items whose turn it is: a page is waiting on the driver (within the home limit, as its own page counts them) */
+    waiting: number;
+    /** items an agent is working on now */
+    running: number;
+    /** what its runs spent in the last 7 days */
+    weekUsd: number;
 }
 // --- from format.ts
 /** Python's string ordering, for sorted() over names */
@@ -687,7 +739,7 @@ export interface Home {
     tags: string[];
     /** the sidebar's groups (groups.ts); none means no sidebar */
     groups: Group[];
-    /** item key -> the group ids it is in (none: Other) */
+    /** item key -> the cadre that owns it (cadres.ts itemCadre), then the groups above it; none: Other */
     member: Record<string, string[]>;
     /** the collapsed rows and link graph find searches */
     find: {

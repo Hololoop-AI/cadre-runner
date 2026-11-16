@@ -1,19 +1,24 @@
-// The fleet home page, drawn to match statusd.render_home element for
-// element: header, Running now, the Work toolbar and list, New project, the
-// footer, and the New work dialog. The data is this machine's /api/fleet
-// (useFleet); the model makes it into what is drawn (buildHome, layout).
+// The fleet app. `/` is Hololoop: a card per cadre and no runs
+// (Hololoop.tsx). `/c/<id>` is that cadre's own app (Cadre.tsx), whose home
+// is its dashboard, drawn here: the board and the Work list lead in the main
+// column, Needs you and Running now sit beside them, all on one page. Its
+// list holds only the cadre's own runs. The data is this machine's
+// /api/fleet (useFleet); the model makes it into what is drawn (buildHome,
+// layout).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveGroup, effectiveView, groupBadges, groupTag, HOME_GROUP, inGroup, LABELS, limitChoices, loadSel, saveSel, serverView, tagChips, type Kanban, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveView, inGroup, LABELS, limitChoices, loadSel, needsYou, OTHER, s, saveSel, serverView, tagChips, viewHref, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
-import { GroupBar, GroupMenuButton, groupSuffix } from './Groups';
+import { groupSuffix } from './Groups';
 import { Header } from './Header';
+import { CadreScreen, CadreShell, cadreHref, useChrome } from './Cadre';
+import { Hololoop } from './Hololoop';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
 import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
-import { useFleet } from './useFleet';
+import { useFleet, type FleetState } from './useFleet';
 import { CostsScreen } from './Costs';
 import { ActiveCards, KanbanScreen, type CardWork } from './Kanban';
 import { LibraryScreen } from './Library';
@@ -31,6 +36,9 @@ import { WorkList } from './WorkList';
 /** Forms inside the Work list that post without leaving the app. */
 const LIST_POSTS = ['/items', '/tasks', '/repair', '/kanban'];
 
+/** How many of Needs you the side column lists; the rest are in the Work list. */
+const NEEDS_SHOWN = 8;
+
 /** No groups yet: one array, so memos keyed on it hold while the fleet loads. */
 const NO_GROUPS: never[] = [];
 
@@ -44,13 +52,14 @@ export function App() {
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
   useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
-  // the Python pages give the body a class on home only
+  // the Python pages give the body a class on home only; Hololoop and a cadre are homes
   useEffect(() => {
-    document.body.className = here.screen === 'home' ? 'home' : '';
+    document.body.className = here.screen === 'home' ? 'home' : here.screen === 'cadre' ? 'home cadre' : '';
   }, [here]);
   return (
     <ServerProvider base={machines.base}>
-      {here.screen === 'home' ? <Home key={machines.base} machines={machines} />
+      {here.screen === 'home' ? <Hololoop key={machines.base} machines={machines} />
+        : here.screen === 'cadre' ? <CadreApp key={machines.base} machines={machines} cadre={here.cadre} tab={here.tab} />
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
           : here.screen === 'costs' ? <CostsScreen key={machines.base} />
             : here.screen === 'runs' ? <RunsScreen key={machines.base} />
@@ -71,9 +80,22 @@ function ScreenForms() {
   return null;
 }
 
-function Home({ machines }: { machines: Machines }) {
+/** A cadre's app: the shell, and inside it the screen its tab names. */
+function CadreApp({ machines, cadre, tab }: { machines: Machines; cadre: string; tab: string }) {
   const server = useServer();
-  const { fleet, now, live, error, refetch } = useFleet(server);
+  const fleet = useFleet(server);
+  return (
+    <CadreShell id={cadre} tab={tab} fleet={fleet.fleet}>
+      {tab === 'home' ? <Home machines={machines} cadre={cadre} fleetState={fleet} /> : <CadreScreen id={cadre} tab={tab} />}
+    </CadreShell>
+  );
+}
+
+/** A cadre's home: its dashboard, the board leading, Needs you and Running now beside it. */
+function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: string; fleetState: FleetState }) {
+  const server = useServer();
+  const chrome = useChrome();
+  const { fleet, now, live, error, refetch } = fleetState;
   // The page's query, which the server draws from. It moves on a "reload".
   const [search, setSearch] = useState(location.search);
   const view = useMemo(() => serverView(search), [search]);
@@ -107,17 +129,16 @@ function Home({ machines }: { machines: Machines }) {
   const projects = useProjectOptions(home, reloads);
   const { proj, sort, limit } = effectiveView(sel, view, projects);
   const groups = home?.groups ?? NO_GROUPS;
-  const group = effectiveGroup(sel.group, groups);
-  const [groupsOpen, setGroupsOpen] = useState(false); // a phone's groups, opened from the header
-  const grouped = useMemo(() => (home && group ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
+  const group = cadre; // a cadre's app holds only its own runs
+  const grouped = useMemo(() => (home ? (it: { key: string }) => inGroup(home.member[it.key] || [], group) : undefined),
     [home, group]);
-  const badges = useMemo(() => (home ? groupBadges(home.items, home.member, groups) : {}), [home, groups]);
-  // The group the board belongs to (its `board`) shows its active cards. The
+  useEffect(() => { document.title = `${chrome?.name || 'Cadre'} — home`; }, [chrome?.name]);
+  // The cadre the board belongs to (its `board`) shows its active cards. The
   // fleet re-reads on every stream change, and a board change moves the
   // fleet's version, so the board is re-read with it; a read that lost the
   // race to a newer one, or to leaving the group, is dropped.
   const [board, setBoard] = useState<Kanban | null>(null);
-  const picked = group !== HOME_GROUP;
+  const picked = group !== OTHER;
   useEffect(() => {
     if (!picked) return setBoard(null);
     let stale = false;
@@ -128,6 +149,9 @@ function Home({ machines }: { machines: Machines }) {
     [home]);
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped });
   const found = useFind(q, home);
+  // Needs you: the cadre's own items whose turn it is under the cadre's own
+  // limit, whatever the chips and find show (layout() places every in-scope item)
+  const waiting = laid ? needsYou([...laid.placed.list, ...laid.placed.idle, ...laid.placed.off], () => true) : [];
 
   const onToggle = useCallback((key: string, isOpen: boolean) => setOpen((cur) => {
     if (cur.has(key) === isOpen) return cur;
@@ -173,20 +197,17 @@ function Home({ machines }: { machines: Machines }) {
 
   return (
     <>
-      {home && <GroupBar groups={groups} group={group} badges={badges}
-        shut={!!sel.groupsShut} open={groupsOpen} onPick={(id) => { keep({ group: id }); setGroupsOpen(false); }}
-        onShut={(shut) => keep({ groupsShut: shut })} />}
-      <div className="wrap">
-        <Header weekUsd={fleet?.week_usd} live={live} snapshot={fleet?.snap?.iso}
+      <div className="wrap cdash">
+        <Header weekUsd={fleet ? Number(fleet.cadre_week_usd?.[group]) || 0 : undefined} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
-          groupName={groupSuffix(group, groups)}
-          menu={<GroupMenuButton groups={groups} group={group} open={groupsOpen} onToggle={() => setGroupsOpen((o) => !o)} />} />
+          groupName={groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
+          boardHref={cadreHref(group, 'board')} />
+        {chrome?.tabs}
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
-        <div id="fleet-running">
-          {fleet && <RunningNow cards={fleet.running || []} slots={fleet.slots || 0} now={now} home={nw.home} />}
-        </div>
-        {board && board.board === group && <ActiveCards board={board} work={cardWork} />}
+        <div className="cgrid">
+        <div className="cmain">
+        {board && board.board === group && <ActiveCards board={board} work={cardWork} href={cadreHref(group, 'board')} />}
         <h2 className="sect">Work</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}
@@ -206,13 +227,30 @@ function Home({ machines }: { machines: Machines }) {
           )}
         </div>
         {fleet && <NewProjectForm key={reloads} projs={fleet.projs || {}} />}
+        </div>
+        <aside className="cnext" aria-label="Needs you and running now">
+          <section className="needs">
+            <h2 className="sect">Needs you <span className="kn">{waiting.length}</span></h2>
+            {!waiting.length ? <p className="meta">Nothing is waiting on you here.</p> : (
+              <ul>{waiting.slice(0, NEEDS_SHOWN).map((it) => (
+                <li key={it.key}><a href={it.head?.path ? viewHref(it.head.path) : `/tree/${encodeURIComponent(it.key)}`}>{it.title}</a></li>
+              ))}</ul>
+            )}
+            {waiting.length > NEEDS_SHOWN && <p className="meta">{`and ${waiting.length - NEEDS_SHOWN} more under Your turn in Work`}</p>}
+          </section>
+          <div id="fleet-running">
+            {fleet && <RunningNow cards={(fleet.running || []).filter((c) => inGroup(home?.member[s(c.item || c.task)] || [], group))}
+              slots={fleet.slots || 0} now={now} home={nw.home} />}
+          </div>
+        </aside>
+        </div>
         <footer>
           <a href="/library">installed skills, agents and workflows</a> · <a href="/tree">which session launched which</a> · <a href="/costs">what each run cost</a>
         </footer>
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}
-        tags={groupTag(group, groups)}
+        cadre={group === OTHER ? 'other' : group}
         onClose={() => setWork((w) => ({ ...w, open: false }))}
         error={workError}
         onSubmit={(fm) => {

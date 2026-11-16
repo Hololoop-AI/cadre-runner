@@ -46,6 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runnerlib import activity as activity_mod
+from runnerlib import cadres as cadres_mod
 from runnerlib import cards as cards_mod
 from runnerlib import codestamp
 from runnerlib import config as config_mod
@@ -155,7 +156,10 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # The fleet's screens, all drawn by the React app (web/src/ui/router.ts routes
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
-REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$")
+REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$"
+                         r"|^/c/[^/]+(/(board|agents|settings))?$")
+# A cadre's navigation (runnerlib/cadres.py nav): GET /api/nav?cadre=<id>.
+NAV_API_PATH = "/api/nav"
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -1667,6 +1671,10 @@ def fleet_payload() -> dict:
             "endings": bare_endings(turns, _session_store(),
                                     {c["task"] for c in running if not c["waiting"]}),
             "items": items_mod.load(DATA_DIR),
+            # which cadre owns each run, and what each spent this week
+            "cadres": (cmap := cadres_mod.load(DATA_DIR)),
+            "cadre_list": cadres_mod.cadre_list(projs),
+            "cadre_week_usd": cadres_mod.week_usd(turns, cmap, projs),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
                                 "head": _CODE.head}}
 
@@ -1977,11 +1985,16 @@ class Handler(BaseHTTPRequestHandler):
     def _backends(self) -> list[dict]:
         return backends_mod.with_self(BACKENDS, self.server.server_address)
 
-    def _serve_api_fleet(self, version_only: bool):
+    def _serve_api_fleet(self, version_only: bool, cadre: str = ""):
         if version_only:
             self._send_json(fleet_version())
             return
         body, gz = fleet_payload_bytes()
+        if cadre:
+            # one cadre's runs only (cadres.payload_for), for readers other
+            # than the app, which filters the whole payload itself
+            self._send_json(cadres_mod.payload_for(json.loads(body), cadre))
+            return
         self._send_bytes(body, "application/json", gz=gz, cors=True)
 
     def _cors_origin(self) -> str:
@@ -2356,7 +2369,7 @@ class Handler(BaseHTTPRequestHandler):
         cwd = (form.get("cwd") or [""])[0].strip() or None
         # The New work dialog's extras; passed only when given, so a bare
         # text+cwd post calls submit_task exactly as it always did.
-        extra = {k: v for k in ("parent", "run")
+        extra = {k: v for k in ("parent", "run", "cadre")
                  if (v := (form.get(k) or [""])[0].strip())}
         tags = [t.strip() for t in (form.get("tags") or [""])[0].split(",") if t.strip()]
         if not text:
@@ -2399,7 +2412,7 @@ class Handler(BaseHTTPRequestHandler):
         path, _, raw_query = self.path.partition("?")
         query = urllib.parse.parse_qs(raw_query)
         if self.command in ("GET", "HEAD") and REACT_ROUTE.match(path):
-            self._serve_app("", with_fleet=path in ("", HOME_PATH))
+            self._serve_app("", with_fleet=path in ("", HOME_PATH) or path.startswith("/c/"))
             return
         if path == TASKS_PATH and self.command == "POST":
             self._new_task()
@@ -2429,7 +2442,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in (backends_mod.FLEET_PATH, backends_mod.VERSION_PATH) \
                 and self.command in ("GET", "HEAD"):
-            self._serve_api_fleet(path == backends_mod.VERSION_PATH)
+            self._serve_api_fleet(path == backends_mod.VERSION_PATH,
+                                  (query.get("cadre") or [""])[0].strip())
+            return
+        if path == NAV_API_PATH and self.command in ("GET", "HEAD"):
+            projs = load_projects()
+            cadre = cadres_mod.resolve(projs, (query.get("cadre") or [""])[0])
+            if cadre is None:
+                self.send_error(404, "no such cadre")
+            else:
+                self._send_json(cadres_mod.nav(projs, cadre))
             return
         if path.startswith(VIEW_API_PATH) and self.command in ("GET", "HEAD"):
             key = urllib.parse.unquote(path[len(VIEW_API_PATH):])
@@ -2502,6 +2524,12 @@ def start_servers(bind=None, port=None) -> list:
     thread: one process is both the API and the thing that starts sessions,
     so a request is acted on in the same process that took it."""
     servers = [ThreadingHTTPServer((addr, port or PORT), Handler) for addr in (bind or BIND)]
+    try:                    # runs launched before cadres owned them get one, once
+        filled = cadres_mod.migrate_dir(DATA_DIR)
+        if filled:
+            print(f"statusd: gave {filled} earlier runs a cadre", file=sys.stderr)
+    except Exception as e:  # bookkeeping must not keep the API down
+        print(f"statusd: cadre migration failed: {e}", file=sys.stderr)
     threading.Thread(target=_warm_payload, args=(threading.Event(),), daemon=True,
                      name="fleet payload").start()
     theme = install_surface_theme()

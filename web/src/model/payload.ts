@@ -196,6 +196,29 @@ export interface Fleet {
   endings?: Record<string, Ending>;
   items?: Record<string, ItemRecord>;
   fleet_page_code?: { stale?: boolean; since?: number; head?: string };
+  /** task id -> the cadre that owns the run (runnerlib/cadres.py; OTHER: none) */
+  cadres?: Record<string, string>;
+  /** cadre id -> what its runs spent in the last 7 days */
+  cadre_week_usd?: Record<string, number>;
+}
+
+/** One entry of a cadre's navigation: a header tab, a batch or a pinned page. */
+export interface NavLink {
+  id?: string;
+  label: string;
+  href: string;
+}
+
+/** GET /api/nav?cadre=<id>: what the shell draws for one cadre (runnerlib/cadres.py nav). */
+export interface Nav {
+  cadre: { id: string; name: string };
+  /** the header tabs, in order; Settings is always one */
+  screens: NavLink[];
+  /** the side column: batches (none until the board has them) and pinned pages */
+  batches: NavLink[];
+  pinned: NavLink[];
+  /** the rail: every cadre, then Other */
+  cadres: { id: string; name: string }[];
 }
 
 /** One machine the app can switch to: its name and origin ('' = where the app was loaded from). */

@@ -36,7 +36,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from . import engine_seam, library, projects, seed_nodes, wake
+from . import cadres, engine_seam, library, projects, seed_nodes, wake
 from .blackboard import Board
 from .nodes import Nodes, version_id
 from .registry import slugify
@@ -154,7 +154,7 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 
 
 def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
-                node: str = NODE, parent=None) -> str:
+                node: str = NODE, parent=None, cadre=None) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
@@ -174,6 +174,11 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
 
     `parent` files the task under another task's item on the home page — the
     New work dialog's "part of" field. Given, it wins over CADRE_TASK.
+
+    `cadre` (id or name) is the cadre that owns the run (runnerlib/cadres.py):
+    New work passes the rail entry the driver is in. Without one the task
+    joins its parent's cadre, else the group rule's. An unknown cadre is
+    refused here, before anything is written.
     """
     if node != NODE and node not in NODES:
         raise ValueError(f"no dialogue node {node!r} — one of {', '.join(NODES)}")
@@ -216,8 +221,11 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     # is how the fleet draws an orchestrator's tree (session_tree.py). A
     # parent the caller names (the driver, picking an item) wins.
     parent = (parent or "").strip() or os.environ.get("CADRE_TASK")
+    owner = cadres.at_launch(cfg.data_dir, projs, cadre=cadre, parent=parent,
+                             project=proj["id"] if proj else None)
 
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
+    cadres.assign(cfg.data_dir, task_id, owner)
     seed(cfg.data_dir, cfg)
     board = Board(engine_seam.board_path(cfg))
     try:
@@ -226,7 +234,7 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
                      **({} if node == NODE else {"node": node}),
                      "task": task_id, "story": task_id,
                      "title": title, "task_text": text, "cwd": cwd,
-                     "iteration": "1",
+                     "iteration": "1", "cadre": owner,
                      **({"project": proj["id"]} if proj else {}),
                      **({"parent": parent} if parent else {}),
                      **picked})

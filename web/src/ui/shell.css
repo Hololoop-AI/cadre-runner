@@ -1,0 +1,82 @@
+/* A cadre's shell (Cadre.tsx) and Hololoop's cards (Hololoop.tsx). React
+   only, so not part of the generated fleet.css; colours are the theme's
+   variables. Wide: the rail (groups.css), then the side column of batches
+   and pinned pages, which folds, then the screen with its tabs under the
+   header. Phone: one menu button opens the rail, the tabs and the side
+   column; nothing else of the shell shows. */
+
+/* the tabs: the cadre's screens, always in view while you are in it */
+nav.ctabs{display:flex;gap:4px;flex-wrap:wrap;margin:-4px 0 16px;border-bottom:1px solid var(--border)}
+nav.ctabs a{padding:6px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--muted);
+ font-size:13px;text-decoration:none}
+nav.ctabs a:hover{color:var(--fg)}
+nav.ctabs a.on{color:var(--fg);border-bottom-color:var(--accent)}
+
+/* the side column's lists, wide and in the phone's menu */
+.clists h2{margin:0 0 10px;font:600 15px/1.2 var(--serif);color:var(--fg)}
+.clists h3,.cdrawer h3{margin:14px 0 6px;font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:var(--label)}
+.clists ul,.cdrawer ul{list-style:none;margin:0;padding:0}
+.clists li a,.cdrawer li a{display:block;padding:3px 0;color:var(--fg);font-size:13px;text-decoration:none}
+.clists li a:hover,.cdrawer li a:hover{color:var(--accent)}
+.clists .meta,.cdrawer .meta{font:12px/1.45 var(--sans);color:var(--muted);margin:0}
+.cdrawer .cfleet{display:flex;flex-wrap:wrap;gap:4px 14px}
+.cdrawer .cfleet a{color:var(--muted);font-size:13px;text-decoration:none}
+.cset{margin:18px 0 0}
+.cset a{color:var(--accent);font-size:13px;text-decoration:none}
+
+/* the dashboard: the board and the work lead, Needs you and Running now beside */
+body.home.cadre .wrap{max-width:1480px}
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start}
+.cnext{position:sticky;top:12px;display:flex;flex-direction:column;gap:14px}
+.cnext .needs{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+.cnext .needs h2{margin-top:0}
+.cnext .needs .kn{font-family:var(--mono);color:var(--muted);font-size:.8em}
+.cnext .needs ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.cnext .needs a{color:var(--fg);text-decoration:none;font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cnext .needs a:hover{color:var(--accent)}
+.cnext #fleet-running .cards,.cnext #fleet-running .grid{grid-template-columns:1fr}
+@media (max-width:1100px){.cgrid{grid-template-columns:minmax(0,1fr)}.cnext{position:static}}
+
+/* the phone's one menu button */
+body.home header button.cmenu{padding:3px 11px;border:1px solid var(--border);border-radius:999px;
+ background:var(--card-2);color:var(--fg);font-size:15px;line-height:20px}
+.cdrawer{margin:0 0 14px;padding:10px 12px;background:var(--sunk);border:1px solid var(--border);border-radius:12px}
+.cdrawer h3:first-child{margin-top:0}
+.cdrawer nav.ctabs{display:flex;flex-direction:column;border:0;margin:0}
+.cdrawer nav.ctabs a{border:0;border-left:2px solid transparent;padding:6px 10px;font-size:14px}
+.cdrawer nav.ctabs a.on{border-left-color:var(--accent)}
+
+@media (min-width:641px){
+ body.home header button.cmenu{display:none}
+ .cdrawer{display:none}
+ .cshell{display:grid;grid-template-columns:200px minmax(0,1fr)}
+ .cshell.shut{grid-template-columns:22px minmax(0,1fr)}
+ .cside{position:sticky;top:0;height:100vh;overflow-y:auto;box-sizing:border-box;padding:14px 12px 14px 10px;
+  background:color-mix(in srgb,var(--sunk) 60%,var(--bg));border-right:1px solid var(--border)}
+ .cside.shut{padding:8px 0}
+ body.home .cside button.cfold{float:right;padding:0 4px;border:0;background:transparent;color:var(--muted);font-size:15px;line-height:18px}
+ body.home .cside.shut button.cfold{float:none;display:block;margin:0 auto}
+ body.home .cside button.cfold:hover{color:var(--fg)}
+ .cmainwrap{min-width:0}
+}
+@media (max-width:640px){
+ .cside{display:none}
+ /* the phone's header: title, menu, New work; the fleet-wide links move into the menu */
+ body.home.cadre header a:not(:first-of-type),body.home.cadre header .live{display:none}
+ .cmainwrap > .wrap > nav.ctabs{display:none}
+ body.home header:has(button.cmenu) h1{flex-basis:auto}
+ body.home header button.cmenu{margin-right:auto}
+}
+
+/* Hololoop: a card per cadre */
+ul.cadres{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+a.ccard{display:grid;grid-template-columns:34px 1fr;grid-template-rows:auto auto auto auto;column-gap:10px;
+ padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:12px;color:var(--fg);text-decoration:none}
+a.ccard:hover{border-color:var(--accent)}
+a.ccard .gi{grid-row:1 / span 4;width:34px;height:34px;color:var(--label)}
+a.ccard:hover .gi{color:var(--accent);filter:drop-shadow(0 0 3px currentColor)}
+a.ccard .gi svg{width:100%;height:100%;overflow:visible}
+a.ccard .cn{font:600 16px/1.3 var(--serif)}
+a.ccard .cw,a.ccard .cr,a.ccard .cu{font-size:12px;color:var(--muted)}
+a.ccard .cw.on{color:var(--ok)}
+a.ccard .cu{font-family:var(--mono)}

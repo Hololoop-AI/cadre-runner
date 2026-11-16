@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './ui';
 import './ui/fleet.css';
+import './ui/scrollbars.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

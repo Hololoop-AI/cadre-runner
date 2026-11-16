@@ -542,6 +542,37 @@
         }
       }
     },
+    "/api/nav": {
+      "get": {
+        "x-tier": "app",
+        "summary": "A cadre's navigation (runnerlib/cadres.py nav): the rail, its screens as header tabs, and its side column (batches, pinned pages). Review pages can draw the same list as an expandable menu.",
+        "parameters": [
+          {
+            "name": "cadre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the cadre's navigation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Nav"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such cadre"
+          }
+        }
+      }
+    },
     "/kanban": {
       "post": {
         "x-tier": "app",
@@ -795,6 +826,31 @@
                 ]
               }
             }
+          },
+          "cadres": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "task id -> the cadre that owns the run (runnerlib/cadres.py; '~other' is no cadre)"
+          },
+          "cadre_list": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            },
+            "description": "the cadres on the rail, in order (cadres.cadre_list)"
+          },
+          "cadre_week_usd": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "cadre id -> what its runs spent in the last 7 days"
+          },
+          "cadre": {
+            "type": "string",
+            "description": "present only on /api/fleet?cadre=<id>: the cadre the payload was cut to"
           }
         }
       },
@@ -1082,6 +1138,26 @@
           },
           "launch": {
             "type": "string"
+          },
+          "nav": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "href": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -1533,6 +1609,10 @@
           "tags": {
             "type": "string",
             "description": "comma separated"
+          },
+          "cadre": {
+            "type": "string",
+            "description": "the cadre that owns the run (id or name); default: the parent's, else the group rule"
           }
         }
       },
@@ -2301,6 +2381,87 @@
           },
           "before": {
             "type": "string"
+          }
+        }
+      },
+      "CadreRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NavLink": {
+        "x-ts": "NavLink",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "href"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string"
+          }
+        }
+      },
+      "Nav": {
+        "x-ts": "Nav",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cadre",
+          "screens",
+          "batches",
+          "pinned",
+          "cadres"
+        ],
+        "properties": {
+          "cadre": {
+            "$ref": "#/components/schemas/CadreRef"
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the header tabs, in order; Settings always among them"
+          },
+          "batches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the side column's batches (empty until the board has them)"
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavLink"
+            },
+            "description": "the side column's pinned pages (the project record's pinned)"
+          },
+          "cadres": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreRef"
+            },
+            "description": "the rail: every cadre, then Other"
           }
         }
       }
