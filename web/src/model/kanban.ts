@@ -149,3 +149,16 @@ export function runPages(task: string, pages: Surface[], kids: Record<string, st
   }
   return pages.filter((sf) => mine.has(str(sf.task))).sort((x, y) => Number(y.opened || 0) - Number(x.opened || 0));
 }
+
+/**
+ * The session tree with every session in `cut` (and so everything under it)
+ * left out. A card draws a run as the tree under it, and a run is often an
+ * orchestrator whose sessions are other cards' runs: those are drawn on
+ * their own cards, not again here.
+ */
+export function pruneKids(kids: Record<string, string[]>, cut: ReadonlySet<string>): Record<string, string[]> {
+  if (!cut.size) return kids;
+  const out: Record<string, string[]> = {};
+  for (const [t, cs] of Object.entries(kids)) out[t] = cs.filter((c) => !cut.has(c));
+  return out;
+}

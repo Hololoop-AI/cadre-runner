@@ -688,6 +688,13 @@ export declare const DRIVER = "driver";
  */
 export declare function kanbanMove(board: Kanban, card: string, column: string, before: string): Kanban;
 /**
+ * The session tree with every session in `cut` (and so everything under it)
+ * left out. A card draws a run as the tree under it, and a run is often an
+ * orchestrator whose sessions are other cards' runs: those are drawn on
+ * their own cards, not again here.
+ */
+export declare function pruneKids(kids: Record<string, string[]>, cut: ReadonlySet<string>): Record<string, string[]>;
+/**
  * The pages a run's graph draws: those of `task` and of every session it
  * launched, newest first, from `pages` (the home's items, so an archived
  * page stays out as it does on the Work list).

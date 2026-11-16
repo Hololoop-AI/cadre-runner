@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  activeCards, byColumn, cardRuns, cardTally, columnLabel, runPages,
+  activeCards, byColumn, cardRuns, cardTally, columnLabel, pruneKids, runPages, runsOnCards,
   type CardTally, type Fleet, type Home, type Kanban, type KanbanCard, type Surface,
 } from '../model';
 import { DirField } from './DirField';
@@ -68,8 +68,10 @@ function CardStart({ card, cadre, folder, empty, onChanged }: {
  * then Start work on this card (folded, as + Tag is; open on a card with
  * no runs yet). A card with no runs is the same drop-down, empty.
  */
-export function CardBlock({ card, fleet, home, pages, cadre, folder, open, onChanged }: {
+export function CardBlock({ card, fleet, home, pages, onCards, cadre, folder, open, onChanged }: {
   card: KanbanCard; fleet: Fleet; home: Home; pages: Surface[]; cadre: string; folder: string;
+  /** every run on any card (runsOnCards): a run's graph stops at another of them */
+  onCards: ReadonlySet<string>;
   open: boolean; onChanged: (msg: string) => void;
 }) {
   const runs = cardRuns(card, fleet);
@@ -85,11 +87,15 @@ export function CardBlock({ card, fleet, home, pages, cadre, folder, open, onCha
       <div className="inside">
         {card.note && <p className="meta wnote">{card.note.split('\n')[0]}</p>}
         <div className="grp">{runs.length ? 'Runs for this card, as the tree that made them' : 'Nothing has run for this card yet'}</div>
-        {runs.map((r) => (
-          <div key={r.key} className="pages wrun" data-run={r.key}>
-            <ItemGraph it={{ key: r.key, pages: runPages(r.key, pages, home.ctx.kids) }} ctx={home.ctx} />
-          </div>
-        ))}
+        {runs.map((r) => {
+          // the run's own tree, less the sessions that are runs on a card of their own
+          const kids = pruneKids(home.ctx.kids, new Set([...onCards].filter((k) => k !== r.key)));
+          return (
+            <div key={r.key} className="pages wrun" data-run={r.key}>
+              <ItemGraph it={{ key: r.key, pages: runPages(r.key, pages, kids) }} ctx={{ ...home.ctx, kids }} />
+            </div>
+          );
+        })}
         <CardStart card={card} cadre={cadre} folder={folder} empty={!runs.length} onChanged={onChanged} />
       </div>
     </details>
@@ -109,8 +115,9 @@ export function CardWork({ board, fleet, home, kanbanHref, cadre, folder, onChan
 }) {
   const server = useServer();
   const pages = useMemo(() => home.items.flatMap((it) => it.pages), [home]);
+  const onCards = useMemo(() => runsOnCards(board), [board]);
   const block = (c: KanbanCard, open: boolean) => (
-    <CardBlock key={c.id} card={c} fleet={fleet} home={home} pages={pages} cadre={cadre} folder={folder} open={open} onChanged={onChanged} />
+    <CardBlock key={c.id} card={c} fleet={fleet} home={home} pages={pages} onCards={onCards} cadre={cadre} folder={folder} open={open} onChanged={onChanged} />
   );
   const [idea, setIdea] = useState('');
   const cols = byColumn(board);

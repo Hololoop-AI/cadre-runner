@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, kanbanMove, runPages, runsOnCards, type Fleet, type Kanban } from '.';
+import { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, kanbanMove, pruneKids, runPages, runsOnCards, type Fleet, type Kanban } from '.';
 
 const card = (id: string, column: string) => ({ id, title: id.toUpperCase(), note: '', column, item: '', runs: [] as string[], by: 'driver', created_at: 1, moved_at: 1 });
 const BOARD: Kanban = {
@@ -68,6 +68,11 @@ describe("a card's runs", () => {
   it('draw a run as the pages of its own task and every session it launched', () => {
     const pages = [sf('a', 1, 'A'), sf('b', 3, 'B'), sf('c', 2, 'C'), sf('x', 4, 'X')];
     expect(runPages('a', pages, { a: ['b'], b: ['c'] }).map((p) => p.task)).toEqual(['b', 'c', 'a']);
+  });
+  it('stop at a session that is a run on a card of its own, so no run is drawn twice', () => {
+    const kids = pruneKids({ a: ['b', 'd'], b: ['c'] }, new Set(['b']));
+    const pages = [sf('a', 1, 'A'), sf('b', 3, 'B'), sf('c', 2, 'C'), sf('d', 4, 'D')];
+    expect(runPages('a', pages, kids).map((p) => p.task)).toEqual(['d', 'a']);
   });
   it('tally what waits on you, what an agent is on and what is done', () => {
     expect(cardTally(cardRuns(c, fleet))).toEqual({ runs: 3, yourTurn: 1, working: 1, done: 1 });
