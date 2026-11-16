@@ -192,8 +192,11 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
         raise ValueError("a task needs text — what should the session do?")
     title = (title or text.splitlines()[0]).strip()[:80]
     card = (card or "").strip()
-    if card and not any(c["id"] == card for c in kanban.load(cfg.data_dir)["cards"]):
+    held = next((c for c in kanban.load(cfg.data_dir)["cards"] if c["id"] == card), None) if card else None
+    if card and held is None:
         raise ValueError(f"no card {card!r} on the kanban board — `pipeline.py kanban list`")
+    if held:
+        text += card_context(cfg, held)
     projs = projects.load(cfg.data_dir)
     proj = None
     if project:
@@ -263,6 +266,23 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
             pass  # the card went between the check and now; the run still runs
     wake.notify(cfg, "task")
     return task_id
+
+
+def card_context(cfg, card: dict) -> str:
+    """What a run started on a card is told about the card: its title and
+    note, and the pages of the work already done for it, to read first. A new
+    run starts its own tree (no parent), so this is how it links back to the
+    work before it without growing that work's tree."""
+    lines = [f"\n\n---\nThis run is for the kanban card “{card['title']}”."]
+    if card.get("note"):
+        lines.append(f"The card's note: {card['note'].strip()}")
+    pages = [p for p in (Path(cfg.data_dir) / "surfaces" / f"task-{r}.html"
+                         for r in [*card.get("runs", []), card.get("item", "")] if r and not r.startswith("page:"))
+             if p.is_file()]
+    if pages:
+        lines.append("Work already done for this card — read these pages first for context:")
+        lines += [f"- {p}" for p in dict.fromkeys(pages)]
+    return "\n".join(lines)
 
 
 def submit_study(cfg, topic: str, from_task=None, cwd=None, page=None,

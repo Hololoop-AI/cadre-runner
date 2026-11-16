@@ -72,6 +72,21 @@ def test_a_run_launched_for_a_card_is_attached_to_it(fleet):
     assert len(cadres.load(fleet)) == 1, "a refused card writes nothing"
 
 
+def test_a_run_started_on_a_card_is_told_the_card_and_its_earlier_pages(fleet):
+    from runnerlib import kanban
+    cfg = FakeCfg(fleet)
+    _, card = kanban.apply(fleet, "add", title="Study cadre", note="owns learning", column="doing")
+    first = tasks.submit_task(cfg, "design it", cwd=fleet / "w" / "scratch", card=card["id"])
+    page = fleet / "surfaces" / f"task-{first}.html"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("<p>round one</p>")
+    second = tasks.submit_task(cfg, "build it", cwd=fleet / "w" / "scratch", card=card["id"])
+    told = _event(cfg, second)["task_text"]
+    assert told.startswith("build it") and "“Study cadre”" in told and "owns learning" in told
+    assert str(page) in told, "the earlier run's page is linked for context"
+    assert "parent" not in _event(cfg, second), "it starts its own tree"
+
+
 def test_starting_work_on_a_waiting_card_moves_it_to_doing(fleet):
     from runnerlib import kanban
     cfg = FakeCfg(fleet)

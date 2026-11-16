@@ -68,14 +68,14 @@ class NoStream {
   onerror: (() => void) | null = null;
 }
 
-function serving(path: string) {
+function serving(path: string, fleet: Fleet = FLEET) {
   window.history.pushState(null, '', path);
   const asked: string[] = [];
   vi.stubGlobal('EventSource', NoStream);
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const u = new URL(url);
     asked.push(u.pathname + u.search);
-    const body = u.pathname === '/api/fleet' ? FLEET
+    const body = u.pathname === '/api/fleet' ? fleet
       : u.pathname === '/api/nav' ? (u.searchParams.get('cadre') === 'holo' ? HOLO_NAV : NAV)
         : u.pathname === '/api/records' ? { records: [{ id: 'r1', cadre: 'dev', type: 'adr', name: 'cadres-own-runs.html', path: '/d/r1.html',
           bytes: 9, sha256: 'x', note: 'why', by: 'driver', created_at: NOW - 60, href: '/open?file=/d/r1.html' }] }
@@ -101,7 +101,7 @@ describe('a cadre app', () => {
     await act(async () => { render(<App />); });
     const work = screen.getByRole('region', { name: 'Work on the board' });
     const card = work.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
-    expect(card.open).toBe(true);
+    expect(card.open).toBe(false); // closed: nothing on it came back unopened
     expect(card.querySelector('summary')!.textContent).toContain('Cadre slice 2');
     expect(card.querySelector('summary')!.textContent).toContain('1 run · 1 your turn');
     expect(within(card).getByText('t-card page')).toBeTruthy();
@@ -151,6 +151,15 @@ describe('a cadre app', () => {
     const sent = new URLSearchParams(body);
     expect([path, sent.get('text'), sent.get('card'), sent.get('cadre')]).toEqual(['/tasks', 'Draft the light theme', 'bbbbbb', 'dev']);
     expect(asked).toContain('/api/kanban');
+  });
+
+  it('opens a card on its own only when a run on it came back and is not opened yet', async () => {
+    const fresh = { ...FLEET, statuses: { [`t-card`.padEnd(16, '0')]: { unseen: true } } } as unknown as Fleet;
+    serving('/c/dev', fresh);
+    await act(async () => { render(<App />); });
+    const card = document.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
+    expect(card.open).toBe(true);
+    expect(card.querySelector('summary')!.textContent).toContain('1 new');
   });
 
   it("draws its header tabs and side column from the cadre's navigation, Settings among them", async () => {

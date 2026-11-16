@@ -675,7 +675,7 @@ export declare function cardItemHref(item: string): string;
  */
 export declare function cardRuns(card: KanbanCard, fleet: Fleet): CardRun[];
 /** The card's tally from its runs' states (items.ts State). */
-export declare function cardTally(runs: Pick<CardRun, 'state' | 'working'>[]): CardTally;
+export declare function cardTally(runs: (Pick<CardRun, 'state' | 'working'> & Partial<Pick<CardRun, 'fresh'>>)[]): CardTally;
 /** kanban.label: "doing" reads as "Doing" */
 export declare function columnLabel(column: string): string;
 /** kanban.DRIVER: who `by` names when the driver added a card */
@@ -711,6 +711,8 @@ export interface CardRun {
     /** where it stands: an agent on it, a page waiting on you, done, or quiet */
     state: 'working' | 'your-turn' | 'done' | 'idle';
     working: boolean;
+    /** its newest page came back and you have not opened it yet */
+    fresh: boolean;
     /** when it last came back to you (0: never) */
     returned: number;
     touched: number;
@@ -721,6 +723,8 @@ export interface CardTally {
     yourTurn: number;
     working: number;
     done: number;
+    /** runs whose newest page came back and is not opened yet */
+    fresh: number;
 }
 // --- from projects.ts
 /** projects.live: not archived, by name */

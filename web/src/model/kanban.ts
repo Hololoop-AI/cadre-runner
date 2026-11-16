@@ -2,6 +2,7 @@
 // screen can draw a drag at once, before the server's answer comes back.
 
 import { s as str, taskLabel, treeHref, viewHref } from './format';
+import { statusOf } from './conversations';
 import { answered } from './items';
 import type { Fleet, Kanban, KanbanCard, Surface } from './payload';
 
@@ -76,6 +77,8 @@ export interface CardTally {
   yourTurn: number;
   working: number;
   done: number;
+  /** runs whose newest page came back and is not opened yet */
+  fresh: number;
 }
 
 /** One run done for a card, drawn by its own task (it may sit deep inside another item's tree). */
@@ -87,6 +90,8 @@ export interface CardRun {
   /** where it stands: an agent on it, a page waiting on you, done, or quiet */
   state: 'working' | 'your-turn' | 'done' | 'idle';
   working: boolean;
+  /** its newest page came back and you have not opened it yet */
+  fresh: boolean;
   /** when it last came back to you (0: never) */
   returned: number;
   touched: number;
@@ -114,7 +119,7 @@ export function cardRuns(card: KanbanCard, fleet: Fleet): CardRun[] {
     const returned = Number(fleet.returned?.[key] || 0);
     const state = done ? 'done' : working ? 'working' : head && !answered(head, statuses) ? 'your-turn' : 'idle';
     out.push({
-      key, state, working, returned,
+      key, state, working, returned, fresh: !!head && statusOf(head, statuses).unseen === true,
       title: str(head?.title) || str(node?.title) || taskLabel(key),
       href: head?.path ? viewHref(head.path) : treeHref(key),
       touched: Math.max(returned, Number(head?.opened || 0), Number(node?.since || 0)),
@@ -124,8 +129,9 @@ export function cardRuns(card: KanbanCard, fleet: Fleet): CardRun[] {
 }
 
 /** The card's tally from its runs' states (items.ts State). */
-export function cardTally(runs: Pick<CardRun, 'state' | 'working'>[]): CardTally {
+export function cardTally(runs: (Pick<CardRun, 'state' | 'working'> & Partial<Pick<CardRun, 'fresh'>>)[]): CardTally {
   return {
+    fresh: runs.filter((r) => r.fresh).length,
     runs: runs.length,
     yourTurn: runs.filter((r) => r.state === 'your-turn').length,
     working: runs.filter((r) => r.working).length,

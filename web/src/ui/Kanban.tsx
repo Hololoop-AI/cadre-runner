@@ -171,7 +171,7 @@ function CardFace({ card, prev, next, onEdit, onChange, work, opened }: {
   return (
     <>
       <button type="button" className="ktitle" title="edit" onClick={onEdit}>{card.title}</button>
-      {card.note && <p className="knote">{card.note}</p>}
+      {card.note && <p className="knote" title={card.note}>{card.note}</p>}
       {work && (
         <button type="button" className={opened ? 'kwork on' : 'kwork'} aria-expanded={opened}
           title="open this card above the board: its runs, and Start work on this card" onClick={() => work.onOpen(card)}>
