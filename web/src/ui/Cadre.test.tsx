@@ -208,6 +208,14 @@ describe('a cadre app', () => {
     expect(screen.queryByText('Pinned')).toBeNull();
   });
 
+  it('still draws the rail, Home and Other, on a machine with no cadres yet', async () => {
+    serving('/', { ...FLEET, projs: {}, cadres: {} } as unknown as Fleet);
+    await act(async () => { render(<App />); });
+    const rail = document.querySelector('nav.groups') as HTMLElement;
+    expect(within(rail).getAllByRole('button').map((b) => b.querySelector('.gn')?.textContent ?? 'fold')).toEqual(['fold', 'Home', 'Other']);
+    expect(rail.querySelectorAll('svg.gsvg').length).toBe(2);
+  });
+
   it('folds the pages strip away with the rail, in one click, and remembers it', async () => {
     serving('/c/dev');
     await act(async () => { render(<App />); });

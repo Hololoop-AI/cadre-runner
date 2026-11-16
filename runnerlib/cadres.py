@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import costs as costs_mod
-from . import projects
+from . import kanban, projects
 
 FILE = "cadres.json"
 LOCK = "cadres.lock"
@@ -65,6 +65,66 @@ SCREENS = {
     "agents": "Agents",
     "settings": "Settings",
 }
+
+
+# ------------------------------------------------------------- shipped cadres
+
+# The cadres Cadre ships with, as whole cadres minus their folders
+# (config/cadres.json). Holo is not one: it is built in (HOLO above).
+DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "config" / "cadres.json"
+# Which shipped cadres this machine has been given, so each arrives once.
+SEEDED = "cadres-seeded.json"
+# What a shipped cadre may carry: a project record's fields that are not
+# this machine's (no folders, group, archived flag or context store path).
+SHIPPED_FIELDS = ("name", "skills", "launch", "nav", "pinned")
+
+
+def shipped(path=None) -> list[dict]:
+    """The shipped cadres, in file order; [] if the file is missing or bad."""
+    try:
+        data = json.loads(Path(path or DEFAULTS_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [c for c in data.get("cadres") or () if isinstance(c, dict) and c.get("id") and c.get("name")]
+
+
+def seed_defaults(data_dir, path=None) -> list[str]:
+    """Give this machine each shipped cadre it has never had, once.
+
+    A cadre whose id is new here becomes a folderless project with the
+    shipped config; one that already exists (made by hand, or seeded before)
+    is left exactly as it is, since the machine's own edits win. `kanban`
+    hands the kanban board to the cadre when no cadre owns it yet. Every
+    shipped id is then remembered in `cadres-seeded.json`, so archiving or
+    deleting a default sticks and a cadre added to the file later still
+    reaches an existing install. Returns the ids it created."""
+    data_dir = Path(data_dir)
+    seen_path = data_dir / SEEDED
+    try:
+        seen = set(json.loads(seen_path.read_text(encoding="utf-8")).get("seeded") or ())
+    except (OSError, ValueError, AttributeError):
+        seen = set()
+    fresh = [c for c in shipped(path) if c["id"] not in seen]
+    if not fresh:
+        return []
+    projs = projects.load(data_dir)
+    made = []
+    for c in fresh:
+        if c["id"] not in projs:
+            rec = projects.create(data_dir, c["name"])
+            extra = {k: c[k] for k in SHIPPED_FIELDS if k in c and k != "name"}
+            if extra:
+                projects.update(data_dir, rec["id"], **extra)
+            made.append(rec["id"])
+        if c.get("kanban") and not kanban.load(data_dir).get("board"):
+            kanban.own(data_dir, c["id"])
+        seen.add(c["id"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=".cadres-seeded-", suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"seeded": sorted(seen)}, f, indent=2)
+    os.replace(tmp, seen_path)
+    return made
 
 
 # --------------------------------------------------------------------- which cadres

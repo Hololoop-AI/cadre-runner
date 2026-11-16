@@ -1,8 +1,9 @@
 // The groups sidebar (model/groups.ts): Home (everything), each group, then
 // Other, down the left edge the way Discord lists servers, each as a neon
 // icon (GroupIcon.tsx). Choosing one filters the Work list. React only, so
-// its look lives in groups.css, not the generated fleet.css; with no group
-// defined it draws nothing.
+// its look lives in groups.css, not the generated fleet.css. With no group
+// defined it still draws Home and Other: it is the way between cadres, and
+// the page strip beside it and the page's left margin assume it is there.
 //
 // On a wide screen its top button folds it to a thin rail and back; the
 // browser keeps that with the view (Sel). On a phone it is hidden: the
@@ -31,7 +32,6 @@ export function GroupBar({ groups, group, badges, shut, open, onPick, onShut }: 
   open: boolean;
   onPick: (id: string) => void; onShut: (shut: boolean) => void;
 }) {
-  if (!groups.length) return null;
   const entries: Group[] = [EVERYTHING, ...groups, NO_GROUP];
   return (
     <nav className={['groups', shut && 'shut', open && 'open'].filter(Boolean).join(' ')} aria-label="Groups of work">

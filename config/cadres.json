@@ -1,0 +1,8 @@
+{
+  "_about": "The cadres Cadre ships with. Each is a whole cadre minus its folders: a machine adds those itself (pipeline.py project set <project> --dir <folder> --group <cadre>). On each daemon start, runnerlib/cadres.py seed_defaults adds any cadre listed here that this machine has never been given, once; archive one and it stays archived. Fields are a project record's (runnerlib/projects.py) without dirs, group, archived or context, plus kanban: true, which hands this machine's kanban board to the cadre if no cadre owns it yet.",
+  "cadres": [
+    {"id": "dev", "name": "Dev", "kanban": true},
+    {"id": "kitchen", "name": "Kitchen"},
+    {"id": "personal", "name": "Personal"}
+  ]
+}
