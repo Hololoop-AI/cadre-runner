@@ -125,10 +125,11 @@ def seed_defaults(data_dir, path=None) -> list[str]:
                 kanban.own(data_dir, c["id"])
             seen.add(c["id"])
             changed = True
-        rec = projects.load(data_dir).get(c["id"])
-        if new_skills and rec and not rec.get("archived"):
-            have = list(rec.get("skills") or [])
-            projects.update(data_dir, c["id"], skills=have + [s for s in new_skills if s not in have])
+        if new_skills:
+            rec = projects.load(data_dir).get(c["id"])
+            if rec and not rec.get("archived"):
+                have = list(rec.get("skills") or [])
+                projects.update(data_dir, c["id"], skills=have + [s for s in new_skills if s not in have])
         remembered = list(dict.fromkeys([*given.get(c["id"], []), *(c.get("skills") or [])]))
         if remembered != given.get(c["id"], []):
             given[c["id"]] = remembered

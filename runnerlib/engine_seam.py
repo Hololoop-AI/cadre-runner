@@ -300,10 +300,6 @@ def run_task_spawn(cfg, reg, board: Board, log, run_turn, spec: dict, payload: d
                                                          extra=skills)
         if linked:
             log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
-        # A project's or cadre's skill may be installed for every session
-        # (~/.claude/skills) instead; only one found nowhere is worth saying.
-        missing += [s for s in skills if not any(
-            (d / ".claude" / "skills" / s).exists() for d in (Path(cwd), Path.home()))]
         if missing:
             log(f"engine: skills not found for {cwd}: {', '.join(missing)} — looked in "
                 f"{claude_run.REPO_SKILLS} and {cfg.skills_source}")
