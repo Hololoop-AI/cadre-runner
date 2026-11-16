@@ -39,15 +39,35 @@
  background:color-mix(in srgb,var(--accent) 13%,transparent)}
 @media (max-width:760px){.kanban button.ghost,.kanban button.primary{padding:5px 14px}}
 
-/* The home page's small board (ActiveCards): one line per active card. */
-.kactive h2.sect a{margin-left:.6rem;font-weight:400;letter-spacing:0;text-transform:none;color:var(--accent);text-decoration:none}
-.kactive h2.sect a:hover{text-decoration:underline}
-.kactive ul{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:4px}
-.kactive li{display:flex;align-items:baseline;gap:.6rem;padding:6px 10px;background:var(--card);border:1px solid var(--border);
- border-radius:8px;font-size:.88rem;min-width:0}
-.kactive .kc{flex:none;width:3.4rem;font-family:var(--mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--label)}
-.kactive .kt{flex:1;min-width:0;overflow-wrap:anywhere}
-.kactive li a{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);text-decoration:none}
-.kactive li a:hover{text-decoration:underline}
-.kactive .ks{flex:none;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
-@media (max-width:760px){.kactive li{flex-wrap:wrap}.kactive li a{max-width:100%}}
+.kanban .kruns{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+
+/* the board owner's home: each active card folds open to the runs done for it */
+.cwork{margin:0 0 18px}
+.cwork h2.sect a{margin-left:.6rem;font-weight:400;letter-spacing:0;text-transform:none;color:var(--accent);text-decoration:none}
+.cwork h2.sect a:hover{text-decoration:underline}
+details.wcard{margin:0 0 6px;background:var(--card);border:1px solid var(--border);border-radius:10px}
+details.wcard[open]{border-color:color-mix(in srgb,var(--accent) 35%,var(--border))}
+details.wcard > summary{display:flex;align-items:baseline;gap:.6rem;padding:8px 12px;cursor:pointer;list-style:none}
+details.wcard > summary::-webkit-details-marker{display:none}
+details.wcard > summary::before{content:'▸';color:var(--muted);flex:none}
+details.wcard[open] > summary::before{content:'▾'}
+.wcard .kc{flex:none;width:3.4rem;font-family:var(--mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--label)}
+.wcard .kt{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.wcard .wtally{flex:none;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.wcard .wtally.on{color:var(--ok)}
+.wcard .wnote{margin:0 12px 6px 2.4rem}
+.wcard .meta{margin-left:2.4rem}
+ul.wruns{list-style:none;margin:0 12px 6px 2.4rem;padding:0;display:flex;flex-direction:column;gap:3px}
+ul.wruns li{display:flex;align-items:baseline;gap:.6rem;padding:4px 8px;border-left:2px solid var(--border)}
+ul.wruns li.you{border-left-color:var(--ok)}
+ul.wruns li a{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--fg);text-decoration:none}
+ul.wruns li a:hover{color:var(--accent)}
+ul.wruns .when{flex:none;font-size:.75rem;color:var(--muted)}
+.wcard .wact{margin:4px 12px 10px 2.4rem}
+details.wbacklog{margin:8px 0 4px;color:var(--muted)}
+details.wbacklog summary{cursor:pointer;font-size:.85rem}
+details.wbacklog ul{margin:4px 0 0;padding-left:1.4rem;font-size:.88rem}
+form.widea{display:flex;gap:6px;margin:6px 0 0}
+form.widea input{flex:1;min-width:0}
+@media (max-width:640px){details.wcard > summary{flex-wrap:wrap}.wcard .wtally{flex-basis:100%;padding-left:1.4rem}
+ ul.wruns,.wcard .wact,.wcard .meta,.wcard .wnote{margin-left:12px}ul.wruns li{flex-wrap:wrap}}

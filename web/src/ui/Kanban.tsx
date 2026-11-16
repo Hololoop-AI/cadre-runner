@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import type { Live } from '../api';
-import { activeCards, byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove, taskLabel, type Kanban, type KanbanCard } from '../model';
+import { byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove, taskLabel, type Kanban, type KanbanCard } from '../model';
 import './kanban.css';
 import { Pending, Screen } from './Screen';
 import { useServer } from './server';
@@ -79,38 +79,6 @@ export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
   );
 }
 
-/** A card's attached work as the home page knows it: its title and where it stands. */
-export type CardWork = Record<string, { title: string; state: string }>;
-
-/**
- * The home page's small board: only the cards being worked on (Ready and
- * Doing), each linked to the work attached to it, so that work is one click
- * away. A card leaves it once it is done. Read-only; the Board moves cards.
- */
-export function ActiveCards({ board, work, href = '/kanban' }: { board: Kanban; work: CardWork; href?: string }) {
-  const cards = activeCards(board);
-  return (
-    <section className="kactive">
-      <h2 className="sect">Board <a href={href}>open the board →</a></h2>
-      {!cards.length ? <p className="meta">{`Nothing in ${board.columns.slice(1, -1).map(columnLabel).join(' or ')}.`}</p> : (
-        <ul>
-          {cards.map((c) => {
-            const w = c.item ? work[c.item] : undefined;
-            return (
-              <li key={c.id}>
-                <span className="kc">{columnLabel(c.column)}</span>
-                <span className="kt">{c.title}</span>
-                {c.item && <a href={cardItemHref(c.item)}>{w?.title || itemLabel(c.item)}</a>}
-                {w && <span className="ks">{w.state}</span>}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 /** The columns side by side (stacked on a phone), each with its add box and cards. */
 export function Board({ board, onChange }: { board: Kanban; onChange: (c: BoardChange) => void }) {
   const [dragged, setDragged] = useState('');
@@ -170,6 +138,7 @@ function CardFace({ card, prev, next, onEdit, onChange }: {
       {card.note && <p className="knote">{card.note}</p>}
       <div className="kfoot">
         {card.item && <a href={cardItemHref(card.item)}>{itemLabel(card.item)}</a>}
+        {card.runs.length > 0 && <span className="kruns">{`${card.runs.length} run${card.runs.length === 1 ? '' : 's'}`}</span>}
         {card.by !== DRIVER && <span className="kby" title={card.by}>{`by ${taskLabel(card.by)}`}</span>}
         <span className="sp"></span>
         <button type="button" className="ghost" disabled={!prev} aria-label={prev ? `Move to ${columnLabel(prev)}` : 'Move left'}

@@ -8,7 +8,7 @@ import { num, relTime, s } from './format';
 import { assignStates, bareByTask, fleetItems, itemFacts, order, IDLE, type Item } from './items';
 import type { Ending, Fleet, LinkRecord, PageInfo, Pageless, SessionStatus, Surface } from './payload';
 import { itemCadre } from './cadres';
-import { fleetGroups, itemGroups, OTHER, type Group } from './groups';
+import { fleetGroups, HOLO, itemGroups, OTHER, type Group } from './groups';
 import { liveProjects } from './projects';
 import { clean, kidsOf, type Tree } from './tree';
 import { visible, type ServerView } from './view';
@@ -92,7 +92,7 @@ export function buildHome(fleet: Fleet, view: ServerView, now: number, origin: s
   const owned = fleet.cadres || {};
   for (const it of items) {
     const c = itemCadre(it, owned, projs, groups);
-    member[it.key] = c === OTHER ? [] : itemGroups({ project: c, tags: [] }, projs, groups);
+    member[it.key] = c === OTHER ? [] : c === HOLO ? [HOLO] : itemGroups({ project: c, tags: [] }, projs, groups);
   }
   // statusd.parent_choices: fleet_items without statuses, so newest by when a page opened
   const parents = fleetItems({ surfaces, tree, projs, pageless, archived: gone })

@@ -27,6 +27,8 @@ export const HOME_GROUP = '';
 
 /** The sidebar entry for items in no group. */
 export const OTHER = '~other';
+/** Hololoop, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
+export const HOLO = '~hololoop';
 
 /** One sidebar entry: a group's id and name (OTHER for the rest). */
 export interface Group {

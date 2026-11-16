@@ -31,6 +31,8 @@ export interface KanbanCard {
     column: string;
     /** the fleet item it was pulled from, '' for none */
     item: string;
+    /** task ids of the runs done for it (launched from it, or attached) */
+    runs: string[];
     /** who added it: an agent's task id, or 'driver' */
     by: string;
     created_at: number;
@@ -432,6 +434,25 @@ export interface BlackboardEvent {
     correlation_id: string | null;
     visible_after: number | null;
 }
+/** One of a cadre's records (runnerlib/records.py): an HTML page it keeps. */
+export interface CadreRecord {
+    id: string;
+    cadre: string;
+    type: string;
+    name: string;
+    path: string;
+    bytes: number;
+    sha256: string;
+    note: string;
+    by: string;
+    created_at: number;
+    /** opens it as a review page: /open?file=<path> */
+    href: string;
+}
+/** GET /api/records?cadre=<id>: a cadre's records, newest first. */
+export interface CadreRecords {
+    records: CadreRecord[];
+}
 // --- from cadres.ts
 /**
  * Hololoop's cards: one per cadre, then Other when anything is in it.
@@ -616,6 +637,8 @@ export declare function fleetGroups(projs: Record<string, Project>): Group[];
 export declare function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number>;
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
 export declare function groupTag(group: string, groups: Group[]): string;
+/** Hololoop, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
+export declare const HOLO = "~hololoop";
 /** The sidebar entry for every item: the whole fleet, which the sidebar calls Home. */
 export declare const HOME_GROUP = "";
 /** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` (HOME_GROUP: everything). */
@@ -644,6 +667,15 @@ export declare function activeCards(board: Kanban): KanbanCard[];
 export declare function byColumn(board: Kanban): Map<string, KanbanCard[]>;
 /** Where a card's fleet item opens: a task's session tree, a lone page's page. */
 export declare function cardItemHref(item: string): string;
+/**
+ * The runs done for `card` (its runs, then the item it was pulled from), each
+ * read from the fleet by its own task: its newest page, whether an agent is
+ * on it, whether that page waits on you, and whether it was marked done.
+ * Newest touched first. A run this machine knows nothing of is left out.
+ */
+export declare function cardRuns(card: KanbanCard, fleet: Fleet): CardRun[];
+/** The card's tally from its runs' states (items.ts State). */
+export declare function cardTally(runs: Pick<CardRun, 'state' | 'working'>[]): CardTally;
 /** kanban.label: "doing" reads as "Doing" */
 export declare function columnLabel(column: string): string;
 /** kanban.DRIVER: who `by` names when the driver added a card */
@@ -655,6 +687,28 @@ export declare const DRIVER = "driver";
  * returns the board as it was.
  */
 export declare function kanbanMove(board: Kanban, card: string, column: string, before: string): Kanban;
+/** The keys of every run held by a card on `board` (its runs, and the item it was pulled from). */
+export declare function runsOnCards(board: Kanban | null): Set<string>;
+/** One run done for a card, drawn by its own task (it may sit deep inside another item's tree). */
+export interface CardRun {
+    key: string;
+    title: string;
+    /** its newest page, else its place in the session tree */
+    href: string;
+    /** where it stands: an agent on it, a page waiting on you, done, or quiet */
+    state: 'working' | 'your-turn' | 'done' | 'idle';
+    working: boolean;
+    /** when it last came back to you (0: never) */
+    returned: number;
+    touched: number;
+}
+/** What a card's work adds up to: how many runs, how many wait on you, how many an agent is on, how many are done. */
+export interface CardTally {
+    runs: number;
+    yourTurn: number;
+    working: number;
+    done: number;
+}
 // --- from projects.ts
 /** projects.live: not archived, by name */
 export declare function liveProjects(projs: Record<string, Project>): Project[];

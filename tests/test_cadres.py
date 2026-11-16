@@ -61,6 +61,17 @@ def test_without_one_the_project_group_gives_it_and_children_follow_the_parent(f
     assert (owned[dev], owned[loose], owned[kid]) == ("dev", cadres.OTHER, "dev")
 
 
+def test_a_run_launched_for_a_card_is_attached_to_it(fleet):
+    from runnerlib import kanban
+    cfg = FakeCfg(fleet)
+    _, card = kanban.apply(fleet, "add", title="Cadre slice 2", column="doing")
+    tid = tasks.submit_task(cfg, "build batches", cwd=fleet / "w" / "scratch", cadre="dev", card=card["id"])
+    assert kanban.load(fleet)["cards"][0]["runs"] == [tid]
+    with pytest.raises(ValueError, match="no card 'nope'"):
+        tasks.submit_task(cfg, "x y", cwd=fleet / "w" / "scratch", card="nope")
+    assert len(cadres.load(fleet)) == 1, "a refused card writes nothing"
+
+
 def test_an_unknown_cadre_is_refused_before_anything_is_written(fleet):
     cfg = FakeCfg(fleet)
     with pytest.raises(ValueError, match="no cadre 'garden'"):
@@ -135,11 +146,14 @@ def test_week_cost_is_per_cadre_and_only_seven_days():
 def test_nav_lists_the_screens_always_with_settings(fleet):
     projs = projects.load(fleet)
     nav = cadres.nav(projs, "dev", board="dev")
-    assert [s["label"] for s in nav["screens"]] == ["Home", "Kanban", "Blackboard", "Agents", "Settings"]
+    assert [s["label"] for s in nav["screens"]] == ["Home", "Kanban", "Blackboard", "Records", "Agents", "Settings"]
     assert nav["screens"][0]["href"] == "/c/dev" and nav["screens"][-1]["href"] == "/c/dev/settings"
     assert [c["id"] for c in nav["cadres"]] == ["dev", "kitchen", cadres.OTHER]
-    # a cadre that does not own the kanban board has neither system screen
-    assert [s["id"] for s in cadres.nav(projs, "kitchen", board="dev")["screens"]] == ["home", "agents", "settings"]
+    # every cadre has a Blackboard and Records; only the board's owner has Kanban
+    assert [s["id"] for s in cadres.nav(projs, "kitchen", board="dev")["screens"]] == \
+        ["home", "blackboard", "records", "agents", "settings"]
+    # no owner given on this machine: nobody has a Kanban tab
+    assert "kanban" not in [s["id"] for s in cadres.nav(projs, "dev", board="")["screens"]]
     projects.update(fleet, "dev", nav=["home", "kanban"], pinned=[{"label": "Design", "href": "/view/abc"}])
     nav = cadres.nav(projects.load(fleet), "dev", board="dev")
     assert [s["id"] for s in nav["screens"]] == ["home", "kanban", "settings"]
@@ -179,6 +193,38 @@ def test_the_server_answers_nav_and_a_cadres_fleet(fleet, monkeypatch):
         with urllib.request.urlopen(url + "/api/fleet?cadre=kitchen", timeout=5) as r:
             body = json.loads(r.read())
         assert body["cadre"] == "kitchen" and [x["task"] for x in body["running"]] == ["t-kit"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_hololoop_is_a_cadre_with_runs_of_its_own(fleet):
+    projs = projects.load(fleet)
+    assert cadres.resolve(projs, "Hololoop") == cadres.HOLO
+    assert cadres.at_launch(fleet, projs, cadre="hololoop") == cadres.HOLO
+    nav = cadres.nav(projs, cadres.HOLO)
+    assert nav["cadre"] == {"id": cadres.HOLO, "name": "Hololoop"}
+    assert nav["screens"][0]["href"] == "/" and "blackboard" in [s["id"] for s in nav["screens"]]
+    full = {"cadres": {"t-meta": cadres.HOLO, "t-dev": "dev"},
+            "running": [{"task": "t-meta"}, {"task": "t-dev"}], "snap": {"surfaces": []}}
+    assert [r["task"] for r in cadres.payload_for(full, cadres.HOLO)["running"]] == ["t-meta"]
+
+
+def test_the_server_lists_a_cadres_records_as_pages_to_open(fleet, monkeypatch):
+    import statusd
+    from runnerlib import records
+    monkeypatch.setattr(statusd, "DATA_DIR", fleet)
+    rec = records.add(fleet, data=b"<!doctype html><h1>Pantry</h1>", name="pantry", cadre="kitchen", rtype="pantry")
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), statusd.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+        with urllib.request.urlopen(url + "/api/records?cadre=Kitchen", timeout=5) as r:
+            got = json.loads(r.read())["records"]
+        assert [x["id"] for x in got] == [rec["id"]]
+        assert got[0]["href"] == "/open?file=" + rec["path"]
+        with urllib.request.urlopen(url + "/api/records?cadre=dev", timeout=5) as r:
+            assert json.loads(r.read()) == {"records": []}
     finally:
         srv.shutdown()
         srv.server_close()

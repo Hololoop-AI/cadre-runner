@@ -30,12 +30,13 @@ import statusd
 CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
-GETS = ["/api/blackboard", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
+GETS = ["/api/blackboard", "/api/records", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
         "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}",
         "/api/view/{key}", "/api/kanban", "/api/nav"]
 # what a path parameter is filled with when a case is requested
 EXAMPLES = {"/api/project/{id}": "/api/project/research", "/api/page/{key}": "/api/page/aaaa",
-            "/api/view/{key}": "/api/view/aaaa", "/api/nav": "/api/nav?cadre=other"}
+            "/api/view/{key}": "/api/view/aaaa", "/api/nav": "/api/nav?cadre=other",
+            "/api/records": "/api/records?cadre=other"}
 POSTS = {"/tasks": "text=&cwd=/tmp",
          "/items": "item=task-a&action=tag&tag=cadre",
          "/repair": "action=move&key=nosuchkey&project=cadre",

@@ -827,7 +827,8 @@ def cmd_task(cfg, args):
         task_id = tasks_mod.submit_task(cfg, args.text, cwd=args.cwd, title=args.title,
                                         project=getattr(args, "project", None),
                                         run=getattr(args, "run", None),
-                                        cadre=getattr(args, "cadre", None))
+                                        cadre=getattr(args, "cadre", None),
+                                        card=getattr(args, "card", None))
     except (ValueError, projects_mod.ProjectError) as e:
         sys.exit(f"task refused: {e}")
     print(task_id)
@@ -1016,7 +1017,8 @@ def cmd_cadres(cfg, args):
         print(f"{args.rest[0]} -> {cadre}")
         return
     owned = cadres_mod.load(cfg.data_dir)
-    for c in [*cadres_mod.cadre_list(projs), {"id": cadres_mod.OTHER, "name": cadres_mod.OTHER_NAME}]:
+    for c in [{"id": cadres_mod.HOLO, "name": cadres_mod.HOLO_NAME}, *cadres_mod.cadre_list(projs),
+              {"id": cadres_mod.OTHER, "name": cadres_mod.OTHER_NAME}]:
         n = sum(1 for v in owned.values() if v == c["id"])
         print(f"{c['id']:24} {c['name']}  {n} runs")
 
@@ -1074,9 +1076,25 @@ def cmd_kanban(cfg, args):
         board = kanban_mod.load(cfg.data_dir)
         print(json.dumps(board, indent=2) if args.json else kanban_mod.listing(board))
         return
+    if args.action == "own":
+        projs = projects_mod.load(cfg.data_dir)
+        cadre = cadres_mod.resolve(projs, args.ref)
+        if cadre is None:
+            sys.exit(f"kanban own: no cadre {args.ref!r} — `pipeline.py cadres list`")
+        print(kanban_mod.own(cfg.data_dir, cadre))
+        return
     if not args.ref:
         sys.exit(f"kanban {args.action}: "
                  + ("give the card a title" if args.action == "add" else "name the card by its id"))
+    if args.action in ("attach", "detach"):
+        if not args.run:
+            sys.exit(f"kanban {args.action}: name the run with --run <task id>")
+        try:
+            msg, _ = kanban_mod.apply(cfg.data_dir, args.action, card=args.ref, item=args.run)
+        except ValueError as e:
+            sys.exit(f"kanban {args.action} refused: {e}")
+        print(msg)
+        return
     if args.action == "move" and not args.column:
         sys.exit("kanban move: name the column it goes to")
     if args.action != "move" and args.column:
@@ -1180,6 +1198,8 @@ def main():
                                  "(skill:investigating, workflow:naming-forge, agent:refactor)")
     p.add_argument("--cadre", help="the cadre that owns this run (id or name, or other); "
                                    "default: the parent task's, else the project's group")
+    p.add_argument("--card", help="the kanban card this run is done for (its id): the card "
+                                  "shows the run until the card is done")
     p.add_argument("--yes", action="store_true",
                    help="send a one-word ask anyway (refused by default: it is "
                         "almost always a command typed in the wrong place)")
@@ -1247,9 +1267,10 @@ def main():
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("kanban", help="the kanban board: list it, or add, move, edit "
                                       "and remove cards (the fleet's Board screen)")
-    p.add_argument("action", choices=["list", *kanban_mod.ACTIONS])
+    p.add_argument("action", choices=["list", "own", *kanban_mod.ACTIONS])
     p.add_argument("ref", nargs="?", default="",
-                   help="add: the card's title; move, edit, remove: the card's id")
+                   help="add: the card's title; move, edit, remove, attach, detach: the "
+                        "card's id; own: the cadre the board belongs to")
     p.add_argument("column", nargs="?", default="",
                    help="move: the column it goes to (" + ", ".join(kanban_mod.COLUMNS) + ")")
     p.add_argument("--column", dest="add_column", choices=list(kanban_mod.COLUMNS),
@@ -1258,6 +1279,7 @@ def main():
     p.add_argument("--title", help="edit: the new title")
     p.add_argument("--note", help="add, edit: the card's note")
     p.add_argument("--item", help="add: the fleet item it came from (a task id, or page:<key>)")
+    p.add_argument("--run", help="attach, detach: the run (a task id) done for the card")
     p.add_argument("--json", action="store_true", help="list: the board as JSON")
     p = sub.add_parser("library", help="list the agents, skills and workflows installed here")
     p.add_argument("--kind", choices=list(library_mod.KINDS))

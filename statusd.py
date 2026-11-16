@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runnerlib import activity as activity_mod
 from runnerlib import blackboard as blackboard_mod
 from runnerlib import cadres as cadres_mod
+from runnerlib import records as records_mod
 from runnerlib import cards as cards_mod
 from runnerlib import codestamp
 from runnerlib import config as config_mod
@@ -158,12 +159,15 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
 REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$"
-                         r"|^/c/[^/]+(/(kanban|blackboard|agents|settings))?$")
+                         r"|^/c/[^/]+(/(kanban|blackboard|records|agents|settings))?$")
 # A cadre's navigation (runnerlib/cadres.py nav): GET /api/nav?cadre=<id>.
 NAV_API_PATH = "/api/nav"
 # The newest events on the blackboard (runnerlib/blackboard.py recent), read
 # only: GET /api/blackboard?limit=<n>. The Blackboard tab draws them.
 BLACKBOARD_API_PATH = "/api/blackboard"
+# A cadre's records (runnerlib/records.py): GET /api/records?cadre=<id>. Each
+# opens as a review page through the page server's /open?file=.
+RECORDS_API_PATH = "/api/records"
 # What the React app's New work dialog reads beside /api/fleet (newwork_payload).
 NEWWORK_API_PATH = "/api/newwork"
 # The machines the React app's server switcher offers (backends_payload).
@@ -2373,7 +2377,7 @@ class Handler(BaseHTTPRequestHandler):
         cwd = (form.get("cwd") or [""])[0].strip() or None
         # The New work dialog's extras; passed only when given, so a bare
         # text+cwd post calls submit_task exactly as it always did.
-        extra = {k: v for k in ("parent", "run", "cadre")
+        extra = {k: v for k in ("parent", "run", "cadre", "card")
                  if (v := (form.get(k) or [""])[0].strip())}
         tags = [t.strip() for t in (form.get("tags") or [""])[0].split(",") if t.strip()]
         if not text:
@@ -2457,6 +2461,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(cadres_mod.nav(projs, cadre,
                                                board=kanban_mod.load(DATA_DIR)["board"]))
+            return
+        if path == RECORDS_API_PATH and self.command in ("GET", "HEAD"):
+            cadre = cadres_mod.resolve(load_projects(), (query.get("cadre") or [""])[0])
+            if cadre is None:
+                self.send_error(404, "no such cadre")
+            else:
+                self._send_json({"records": [
+                    {**r, "href": "/open?file=" + urllib.parse.quote(r["path"], safe="/")}
+                    for r in records_mod.query(DATA_DIR, cadre=cadre)]})
             return
         if path == BLACKBOARD_API_PATH and self.command in ("GET", "HEAD"):
             try:

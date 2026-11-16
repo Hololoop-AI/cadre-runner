@@ -2,13 +2,17 @@
 
 One board, in `<data_dir>/kanban.json`:
 
-    {"board": "dev", "columns": ["backlog", "ready", "doing", "done"],
-     "cards": [{"id", "title", "note", "column", "item", "by", "created_at", "moved_at"}]}
+    {"board": "<cadre id>", "columns": ["backlog", "ready", "doing", "done"],
+     "cards": [{"id", "title", "note", "column", "item", "runs", "by",
+                "created_at", "moved_at"}]}
 
 A card's place in its column is its order in `cards`. `item` is the fleet
-item key it was pulled from ("" for none); `by` is who added it: the task id
-of the agent that did, else "driver". `board` names whose board this is, so
-it can move into that cadre's own data later without being split apart.
+item key it was pulled from ("" for none); `runs` are the task ids of the
+work done for it (a run launched from the card, `pipeline.py task --card`,
+or attached afterwards), so the card shows its own work until it is done; `by` is who added it: the task id
+of the agent that did, else "driver". `board` names the cadre whose board this is. It is data, never code: an
+empty board belongs to no cadre until `pipeline.py kanban own <cadre>`
+gives it one.
 
 The driver writes it from the fleet's Board screen (statusd POST /kanban) and
 agents through `pipeline.py kanban`: two processes, so every write holds an
@@ -30,9 +34,10 @@ from pathlib import Path
 
 FILE = "kanban.json"
 LOCK = "kanban.lock"
-BOARD = "dev"
+BOARD = ""  # no owner until one is given: each machine names its own
 COLUMNS = ("backlog", "ready", "doing", "done")
-ACTIONS = ("add", "move", "edit", "remove")
+ACTIONS = ("add", "move", "edit", "remove", "attach", "detach")
+RUNS_MAX = 200
 DRIVER = "driver"
 TITLE_MAX = 200
 REF_MAX = 200  # an item key or a task id
@@ -76,8 +81,20 @@ def _clean(c) -> dict | None:
     if not (isinstance(cid, str) and ID.match(cid) and title and column in COLUMNS):
         return None
     return {"id": cid, "title": title, "note": str(c.get("note") or ""), "column": column,
-            "item": _text(c.get("item"))[:REF_MAX], "by": _text(c.get("by"))[:REF_MAX] or DRIVER,
+            "item": _text(c.get("item"))[:REF_MAX],
+            "runs": _runs(c.get("runs")),
+            "by": _text(c.get("by"))[:REF_MAX] or DRIVER,
             "created_at": _epoch(c.get("created_at")), "moved_at": _epoch(c.get("moved_at"))}
+
+
+def _runs(v) -> list:
+    """A card's task ids: words, each once, in the order they were attached."""
+    out = []
+    for r in v if isinstance(v, list) else ():
+        r = _text(r)
+        if r and " " not in r and len(r) <= REF_MAX and r not in out:
+            out.append(r)
+    return out[:RUNS_MAX]
 
 
 def _text(v) -> str:
@@ -106,7 +123,8 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
 
     add (title, column = backlog, note, item, by) · move (card, column,
     before: a card id in that column, or "" for its end) · edit (card, title
-    and/or note; None leaves it) · remove (card).
+    and/or note; None leaves it) · remove (card) · attach / detach (card,
+    item: a task id — a run done for the card, or no longer).
 
     Raises ValueError for an unknown action, card or column, a `before` not
     in the column, or an empty title; the file is then left as it was."""
@@ -122,7 +140,8 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
         cards = board["cards"]
         if action == "add":
             new = {"id": _new_id(cards), "title": _title(_cut(title)), "note": _note(note),
-                   "column": column, "item": _ref(item, "item"), "by": _ref(by, "by") or DRIVER,
+                   "column": column, "item": _ref(item, "item"), "runs": [],
+                   "by": _ref(by, "by") or DRIVER,
                    "created_at": now, "moved_at": now}
             cards.append(new)
             msg = f"Added “{new['title']}” to {label(column)}."
@@ -131,6 +150,21 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
             hit = _find(cards, card)
             if action == "move":
                 msg = _move(cards, hit, column, before, now)
+            elif action in ("attach", "detach"):
+                task = _ref(item, "the run")
+                if not task:
+                    raise ValueError("name the run (a task id)")
+                if action == "attach":
+                    for other in cards:      # a run is done for one card at a time
+                        if task in other["runs"] and other is not hit:
+                            other["runs"].remove(task)
+                    if task not in hit["runs"]:
+                        hit["runs"].append(task)
+                    msg = f"“{hit['title']}” now holds {task}."
+                else:
+                    if task in hit["runs"]:
+                        hit["runs"].remove(task)
+                    msg = f"{task} is off “{hit['title']}”."
             elif action == "edit":
                 if title is not None:
                     hit["title"] = _title(title)
@@ -142,6 +176,27 @@ def apply(data_dir, action: str, *, card: str = "", title: str | None = None,
                 msg = f"Removed “{hit['title']}” from the board."
         _write(Path(data_dir) / FILE, board)
     return msg, hit
+
+
+def own(data_dir, cadre: str) -> str:
+    """Give the board to `cadre` (an id); its Kanban tab shows it."""
+    cadre = _ref(cadre, "the cadre")
+    if not cadre:
+        raise ValueError("name the cadre that owns the board")
+    with _locked(data_dir):
+        _keep_unreadable(Path(data_dir) / FILE)
+        board = load(data_dir)
+        board["board"] = cadre
+        _write(Path(data_dir) / FILE, board)
+    return f"The kanban board belongs to {cadre}."
+
+
+def card_for(board: dict, task: str) -> dict | None:
+    """The card a run was done for: one holding it in `runs`, or pulled from it."""
+    for c in board["cards"]:
+        if task in c["runs"] or c["item"] == task:
+            return c
+    return None
 
 
 def _move(cards: list, hit: dict, column: str, before: str, now: float) -> str:
@@ -247,6 +302,7 @@ def listing(board: dict) -> str:
         lines.append(f"{label(col)} · {len(cards)}")
         for c in cards:
             extra = f"  ({c['item']})" if c["item"] else ""
+            extra += f"  [{len(c['runs'])} run{'s' if len(c['runs']) != 1 else ''}]" if c["runs"] else ""
             lines.append(f"  {c['id']}  {c['title']}{extra}")
             if c["note"]:
                 lines.append(f"          {c['note'].splitlines()[0]}")

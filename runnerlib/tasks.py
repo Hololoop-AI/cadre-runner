@@ -36,7 +36,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from . import cadres, engine_seam, library, projects, seed_nodes, wake
+from . import cadres, engine_seam, kanban, library, projects, seed_nodes, wake
 from .blackboard import Board
 from .nodes import Nodes, version_id
 from .registry import slugify
@@ -154,7 +154,7 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 
 
 def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
-                node: str = NODE, parent=None, cadre=None) -> str:
+                node: str = NODE, parent=None, cadre=None, card=None) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
@@ -179,6 +179,10 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     New work passes the rail entry the driver is in. Without one the task
     joins its parent's cadre, else the group rule's. An unknown cadre is
     refused here, before anything is written.
+
+    `card` is the kanban card (runnerlib/kanban.py) the run is done for: it
+    is attached to the card, so the card shows it until the card is done.
+    An unknown card is refused before anything is written.
     """
     if node != NODE and node not in NODES:
         raise ValueError(f"no dialogue node {node!r} — one of {', '.join(NODES)}")
@@ -186,6 +190,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     if not text:
         raise ValueError("a task needs text — what should the session do?")
     title = (title or text.splitlines()[0]).strip()[:80]
+    card = (card or "").strip()
+    if card and not any(c["id"] == card for c in kanban.load(cfg.data_dir)["cards"]):
+        raise ValueError(f"no card {card!r} on the kanban board — `pipeline.py kanban list`")
     projs = projects.load(cfg.data_dir)
     proj = None
     if project:
@@ -240,6 +247,11 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
                      **picked})
     finally:
         board.close()
+    if card:
+        try:
+            kanban.apply(cfg.data_dir, "attach", card=card, item=task_id)
+        except ValueError:
+            pass  # the card went between the check and now; the run still runs
     wake.notify(cfg, "task")
     return task_id
 

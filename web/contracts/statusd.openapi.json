@@ -601,6 +601,37 @@
         }
       }
     },
+    "/api/records": {
+      "get": {
+        "x-tier": "app",
+        "summary": "A cadre's records (runnerlib/records.py), newest first: HTML pages it keeps, each opened as a review page.",
+        "parameters": [
+          {
+            "name": "cadre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "its records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Records"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such cadre"
+          }
+        }
+      }
+    },
     "/kanban": {
       "post": {
         "x-tier": "app",
@@ -2323,6 +2354,7 @@
           "note",
           "column",
           "item",
+          "runs",
           "by",
           "created_at",
           "moved_at"
@@ -2351,6 +2383,13 @@
           },
           "moved_at": {
             "type": "number"
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "task ids of the runs done for this card"
           }
         }
       },
@@ -2389,7 +2428,9 @@
               "add",
               "move",
               "edit",
-              "remove"
+              "remove",
+              "attach",
+              "detach"
             ]
           },
           "card": {
@@ -2604,6 +2645,76 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BlackboardEvent"
+            }
+          }
+        }
+      },
+      "Record": {
+        "x-ts": "CadreRecord",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "cadre",
+          "type",
+          "name",
+          "path",
+          "bytes",
+          "sha256",
+          "note",
+          "by",
+          "created_at",
+          "href"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cadre": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "href": {
+            "type": "string",
+            "description": "opens it as a review page: /open?file=<path>"
+          }
+        }
+      },
+      "Records": {
+        "x-ts": "CadreRecords",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "records"
+        ],
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Record"
             }
           }
         }

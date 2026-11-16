@@ -13,7 +13,8 @@
 // the tabs and Settings stay in reach from every one of them.
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { buildHome, groupBadges, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
+import { buildHome, groupBadges, HOLO, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
+import { RecordsScreen } from './Records';
 import { BlackboardScreen } from './Blackboard';
 import { GroupBar } from './Groups';
 import { KanbanScreen } from './Kanban';
@@ -24,8 +25,8 @@ import './shell.css';
 
 /** A cadre's path: Other is /c/other, any other cadre /c/<its id>. */
 export function cadreHref(id: string, tab = ''): string {
-  if (id === HOME_GROUP) return '/';
-  const base = `/c/${id === OTHER ? 'other' : encodeURIComponent(id)}`;
+  if ((id === HOME_GROUP || id === HOLO) && (!tab || tab === 'home')) return '/';
+  const base = `/c/${id === OTHER ? 'other' : id === HOLO || id === HOME_GROUP ? 'hololoop' : encodeURIComponent(id)}`;
   return tab && tab !== 'home' ? `${base}/${tab}` : base;
 }
 
@@ -127,7 +128,7 @@ export function CadreShell({ id, tab, fleet, children }: {
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    server.fetchNav(id === OTHER ? 'other' : id).then(setNav).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    server.fetchNav(id === OTHER ? 'other' : id === HOLO ? 'hololoop' : id).then(setNav).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [server, id]);
   const [open, setOpen] = useState(false); // the phone's menu
   const [shut, setShut] = useState(() => window.localStorage?.getItem(SIDE_SHUT) === '1');
@@ -157,7 +158,7 @@ export function CadreShell({ id, tab, fleet, children }: {
   ) : error ? <p className="notice">{`Could not load this cadre's navigation: ${error}`}</p> : null;
   return (
     <ChromeContext.Provider value={{ cadre: id, name, menu, tabs, nav }}>
-      <GroupBar groups={groups} group={id} badges={badges} shut={false} open={open}
+      <GroupBar groups={groups} group={id === HOLO ? HOME_GROUP : id} badges={badges} shut={false} open={open}
         onPick={(g) => { setOpen(false); railPick(g); }} onShut={() => {}} />
       <div className={shut ? 'cshell shut' : 'cshell'}>
         {nav && <SideColumn nav={nav} shut={shut} onShut={keepShut} />}
@@ -178,7 +179,8 @@ export function CadreScreen({ id, tab }: { id: string; tab: string }) {
       <Framed.Provider value>
         {tab === 'kanban' ? <KanbanScreen cadre={id} />
           : tab === 'blackboard' ? <BlackboardScreen />
-            : tab === 'settings' ? (id === OTHER ? <OtherSettings /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)
+            : tab === 'records' ? <RecordsScreen cadre={id === OTHER ? 'other' : id === HOLO ? 'hololoop' : id} name={chrome.name} />
+            : tab === 'settings' ? (id === OTHER || id === HOLO ? <OtherSettings holo={id === HOLO} /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)
               : tab === 'agents' ? <AgentsPending name={chrome.name} />
                 : <p className="notice">{`${chrome.name} has no screen called ${tab}.`}</p>}
       </Framed.Provider>
@@ -227,7 +229,18 @@ function CadreSettingsScreen({ id, nav }: { id: string; nav: Nav | null }) {
 }
 
 /** Other is not a project, so it has nothing of its own to set. */
-function OtherSettings() {
+function OtherSettings({ holo = false }: { holo?: boolean }) {
+  if (holo) {
+    return (
+      <section>
+        <h2 className="sect">Settings</h2>
+        <p className="meta">Hololoop is the cadre that works on the cadres and the system themselves: its runs are the meta
+          work (moving runs between cadres, reviving sessions, watching the fleet). It is not a project, so it has no record
+          to set. A run is launched here with New work on <a href="/">Hololoop</a> or <code>pipeline.py task --cadre hololoop</code>,
+          and moved here with <code>pipeline.py cadres set &lt;task&gt; hololoop</code>.</p>
+      </section>
+    );
+  }
   return (
     <section>
       <h2 className="sect">Settings</h2>

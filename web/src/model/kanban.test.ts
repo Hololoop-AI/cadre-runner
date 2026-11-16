@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { activeCards, byColumn, cardItemHref, columnLabel, kanbanMove, type Kanban } from '.';
+import { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, kanbanMove, runsOnCards, type Fleet, type Kanban } from '.';
 
-const card = (id: string, column: string) => ({ id, title: id.toUpperCase(), note: '', column, item: '', by: 'driver', created_at: 1, moved_at: 1 });
+const card = (id: string, column: string) => ({ id, title: id.toUpperCase(), note: '', column, item: '', runs: [] as string[], by: 'driver', created_at: 1, moved_at: 1 });
 const BOARD: Kanban = {
   board: 'dev', columns: ['backlog', 'ready', 'doing', 'done'],
   cards: [card('aaaaaa', 'doing'), card('bbbbbb', 'doing'), card('cccccc', 'backlog')],
@@ -42,5 +42,25 @@ describe('activeCards', () => {
 
   it('is nothing when every card waits in the first column or is done', () => {
     expect(activeCards({ ...BOARD, cards: [card('cccccc', 'backlog'), card('eeeeee', 'done')] })).toEqual([]);
+  });
+});
+
+describe("a card's runs", () => {
+  const sf = (task: string, opened: number, title: string) => ({ path: `/session/${task}000000000000`, task, opened, title });
+  const fleet = {
+    snap: { surfaces: [sf('t1', 5, 'Waiting on you'), sf('t2', 9, 'Being worked on'), sf('t3', 7, 'Finished'), sf('loose', 1, 'Loose')] },
+    tree: { t1: { parent: 'root' }, t2: { parent: 'root', working: true }, t3: {} },
+    statuses: {}, returned: { t1: 6 }, items: { t3: { tags: [], done_at: 8, hidden_at: null } },
+  } as unknown as Fleet;
+  const c = { ...card('dddddd', 'doing'), item: 't3', runs: ['t1', 't2', 'gone'] };
+  it('are read by their own tasks, even deep in another tree, newest first, and nothing else', () => {
+    const runs = cardRuns(c, fleet);
+    expect(runs.map((r) => [r.key, r.state, r.title])).toEqual(
+      [['t2', 'working', 'Being worked on'], ['t3', 'done', 'Finished'], ['t1', 'your-turn', 'Waiting on you']]);
+    expect(runs[2].href).toBe('/view/t1000000000000');
+    expect([...runsOnCards({ ...BOARD, cards: [c] })].sort()).toEqual(['gone', 't1', 't2', 't3']);
+  });
+  it('tally what waits on you, what an agent is on and what is done', () => {
+    expect(cardTally(cardRuns(c, fleet))).toEqual({ runs: 3, yourTurn: 1, working: 1, done: 1 });
   });
 });
