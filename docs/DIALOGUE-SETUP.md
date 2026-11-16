@@ -95,6 +95,12 @@ Skills reach a session two different ways, and you want both:
   contract that makes a page readable to someone with no session history). It
   ships with the runner in `.agents/skills/`, so it needs nothing from you; the
   daemon logs any such skill it cannot find.
+- **A cadre's skills** are linked the same way into every run in that cadre,
+  and a project's own `skills` into its runs. Dev ships with `code-walkthrough`
+  (`config/cadres.json`), found in the skills clone from step 4. A machine that
+  already has Dev gains a newly shipped skill once, on the next daemon start,
+  beside its own; remove it from the cadre and it stays removed. The daemon
+  logs a cadre or project skill it cannot find anywhere.
 - **Everything a session invokes by name** (`investigating`, `verification`,
   `systematic-debugging`, and ~80 others) is loaded from `~/.claude/skills`,
   which `setup-claude.sh` fills with symlinks into the same clone. Skip it and a

@@ -31,7 +31,7 @@ from test_dialogue_actions import (FakeCfg, FakeReg, actions, board,  # noqa: E4
                                    drive, request, seeded)
 
 
-def drive_recording_dirs(cfg, reg, b, spec, calls):
+def drive_recording_dirs(cfg, reg, b, spec, calls, log=None):
     """`drive`, with a spawn recorder that also takes `add_dirs` — the shared
     one predates projects and has a fixed signature."""
     import pipeline
@@ -47,7 +47,7 @@ def drive_recording_dirs(cfg, reg, b, spec, calls):
     real = pipeline.runs_mod.spawn
     pipeline.runs_mod.spawn = fake_spawn
     try:
-        engine_seam.run_spawn_spec(cfg, reg, b, lambda *a: None,
+        engine_seam.run_spawn_spec(cfg, reg, b, log or (lambda *a: None),
                                    pipeline._run_task, spec)
     finally:
         pipeline.runs_mod.spawn = real
@@ -364,6 +364,8 @@ def test_the_shipped_cadres_file_names_each_cadre_by_its_slug_and_dev_owns_the_k
     assert [c["id"] for c in got] == ["dev", "kitchen", "personal"]
     assert all(c["id"] == slugify(c["name"]) for c in got)
     assert [c["id"] for c in got if c.get("kanban")] == ["dev"]
+    assert {c["id"]: c.get("skills", []) for c in got} == {
+        "dev": ["code-walkthrough"], "kitchen": [], "personal": []}, "only Dev ships the walkthrough"
 
 
 def test_a_new_machine_gets_the_whole_shipped_cadre_and_dev_gets_the_kanban_tab():
@@ -414,3 +416,89 @@ def test_an_existing_install_keeps_its_own_cadres_and_board_and_gains_the_missin
     projs = projects.load(d)
     assert projs["dev"]["nav"] == ["home", "settings"], "the machine's own edits win"
     assert kanban.load(d)["board"] == "mine", "a board that already has an owner keeps it"
+
+
+def test_a_run_gets_the_skills_of_every_cadre_it_is_in_and_a_run_elsewhere_does_not():
+    """A cadre's skills reach every run in it: a project filed under the cadre,
+    and a run given to the cadre at launch from a folder in no project. A run in
+    another cadre does not get them, which is what keeps one cadre's tools out of
+    another's sessions."""
+    from runnerlib import cadres
+    d = scratch()
+    dev_work, kitchen_work, loose = _dirs(d, "dev-work", "kitchen-work", "loose")
+    source = d / "skills-tree"
+    (source / "walkthrough").mkdir(parents=True)
+    cfg, reg = FakeCfg(d), FakeReg()
+    cfg.skills_source = source
+    projects.create(d, "Dev", dirs=[], skills=["walkthrough"])
+    projects.create(d, "Kitchen", dirs=[])
+    projects.create(d, "Repo", dirs=[str(dev_work)], group="dev")
+    projects.create(d, "Meals", dirs=[str(kitchen_work)], group="kitchen")
+    cadres.assign(d, "task-loose", "dev")
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, task_id="task-dev", cwd=str(dev_work), project="repo")
+    request(b, task_id="task-kitchen", cwd=str(kitchen_work), project="meals")
+    request(b, task_id="task-loose", cwd=str(loose))
+
+    calls = []
+    for spec in engine.tick(b, acts, n, d).spawns:
+        drive_recording_dirs(cfg, reg, b, spec, calls)
+    assert len(calls) == 3
+    link = Path(".claude") / "skills" / "walkthrough"
+    assert (dev_work / link).is_symlink(), "a project filed under the cadre gets its skills"
+    assert (loose / link).is_symlink(), "so does a run given to the cadre at launch"
+    assert not (kitchen_work / link).exists(), "another cadre's run does not"
+
+
+def test_a_skill_shipped_later_reaches_an_existing_cadre_once_and_a_removal_sticks():
+    """A cadre this machine already has keeps its own edits, but a skill added to
+    the shipped file later still arrives, once: each shipped skill is remembered
+    per cadre, so removing it here is not undone on the next start."""
+    from runnerlib import cadres
+    d = scratch()
+    cadres.seed_defaults(d, _shipped(d, [{"id": "dev", "name": "Dev"}]))
+    projects.update(d, "dev", skills=["mine"])
+    later = _shipped(d, [{"id": "dev", "name": "Dev", "skills": ["walkthrough"]}])
+    assert cadres.seed_defaults(d, later) == [], "no cadre is created"
+    assert projects.load(d)["dev"]["skills"] == ["mine", "walkthrough"], "added beside its own"
+    projects.update(d, "dev", skills=["mine"])
+    cadres.seed_defaults(d, later)
+    assert projects.load(d)["dev"]["skills"] == ["mine"], "a skill removed here stays removed"
+
+
+def test_an_install_seeded_before_skills_were_remembered_gets_them_once():
+    """Machines seeded before skills were tracked have only the cadre ids on file."""
+    from runnerlib import cadres
+    d = scratch()
+    projects.create(d, "Dev", dirs=[])
+    (d / cadres.SEEDED).write_text(json.dumps({"seeded": ["dev"]}))
+    cadres.seed_defaults(d, _shipped(d, [{"id": "dev", "name": "Dev", "skills": ["walkthrough"]}]))
+    assert projects.load(d)["dev"]["skills"] == ["walkthrough"]
+
+
+def test_an_archived_cadre_hands_out_no_skills():
+    from runnerlib import cadres
+    d = scratch()
+    work, = _dirs(d, "work")
+    projects.create(d, "Dev", dirs=[], skills=["walkthrough"])
+    projects.create(d, "Repo", dirs=[str(work)], group="dev")
+    cadres.assign(d, "task-1", "dev")
+    assert cadres.skills_for(d, projects.load(d), "task-1", "repo") == ["walkthrough"]
+    projects.archive(d, "dev")
+    assert cadres.skills_for(d, projects.load(d), "task-1", "repo") == []
+
+
+def test_a_cadre_skill_found_nowhere_is_logged_at_launch(monkeypatch):
+    d = scratch()
+    work, home = _dirs(d, "work", "home")
+    monkeypatch.setenv("HOME", str(home))
+    cfg, reg = FakeCfg(d), FakeReg()
+    cfg.skills_source = d / "no-skills-tree"
+    projects.create(d, "Dev", dirs=[], skills=["walkthrough"])
+    projects.create(d, "Repo", dirs=[str(work)], group="dev")
+    b, n, acts = board(d), seeded(d), actions()
+    request(b, cwd=str(work), project="repo")
+    said = []
+    drive_recording_dirs(cfg, reg, b, engine.tick(b, acts, n, d).spawns[0], [],
+                         log=lambda msg, *a: said.append(str(msg)))
+    assert any("skills not found" in m and "walkthrough" in m for m in said), said

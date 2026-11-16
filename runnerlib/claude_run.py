@@ -22,8 +22,9 @@ REPO_SKILLS = Path(__file__).resolve().parent.parent / ".agents" / "skills"
 def install_task_skills(cwd, skills_source, extra=()) -> tuple[list[str], list[str]]:
     """Best-effort symlink of TASK_SKILLS, plus `extra` (a project's default
     skills, the skill a launch picked), into `<cwd>/.claude/skills`. Returns
-    (linked, missing): `missing` is every TASK_SKILLS entry found neither in
-    REPO_SKILLS nor in `skills_source`, for the caller to say so.
+    (linked, missing): `missing` is every name found neither in REPO_SKILLS
+    nor in `skills_source`, for the caller to say so — except an `extra` one
+    already installed for every session (~/.claude/skills) or in the folder.
 
     A link that points anywhere other than where the skill resolves now is
     re-pointed, so a directory linked to an older copy picks up the new one.
@@ -37,7 +38,8 @@ def install_task_skills(cwd, skills_source, extra=()) -> tuple[list[str], list[s
         src = next((d / name for d in (REPO_SKILLS, Path(skills_source).expanduser())
                     if (d / name).is_dir()), None)
         if src is None:
-            if name in TASK_SKILLS:
+            if name in TASK_SKILLS or not any(
+                    (d / ".claude" / "skills" / name).exists() for d in (Path(cwd), Path.home())):
                 missing.append(name)
             continue
         dest = Path(cwd) / ".claude" / "skills"

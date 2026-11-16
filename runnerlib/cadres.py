@@ -89,41 +89,57 @@ def shipped(path=None) -> list[dict]:
 
 
 def seed_defaults(data_dir, path=None) -> list[str]:
-    """Give this machine each shipped cadre it has never had, once.
+    """Give this machine each shipped cadre it has never had, once, and each
+    skill a shipped cadre lists that it has never been given, once.
 
     A cadre whose id is new here becomes a folderless project with the
     shipped config; one that already exists (made by hand, or seeded before)
-    is left exactly as it is, since the machine's own edits win. `kanban`
+    keeps its own edits, since the machine's own edits win, and only gains
+    the shipped skills it has never been given, beside its own. `kanban`
     hands the kanban board to the cadre when no cadre owns it yet. Every
-    shipped id is then remembered in `cadres-seeded.json`, so archiving or
-    deleting a default sticks and a cadre added to the file later still
+    shipped id, and every shipped skill per cadre, is then remembered in
+    `cadres-seeded.json`, so archiving a default or removing one of its
+    skills sticks, and a cadre or skill added to the file later still
     reaches an existing install. Returns the ids it created."""
     data_dir = Path(data_dir)
     seen_path = data_dir / SEEDED
     try:
-        seen = set(json.loads(seen_path.read_text(encoding="utf-8")).get("seeded") or ())
+        raw = json.loads(seen_path.read_text(encoding="utf-8"))
+        seen = set(raw.get("seeded") or ())
+        given = {k: list(v) for k, v in (raw.get("skills") or {}).items()}
     except (OSError, ValueError, AttributeError):
-        seen = set()
-    fresh = [c for c in shipped(path) if c["id"] not in seen]
-    if not fresh:
-        return []
+        seen, given = set(), {}
     projs = projects.load(data_dir)
-    made = []
-    for c in fresh:
-        if c["id"] not in projs:
-            rec = projects.create(data_dir, c["name"])
-            extra = {k: c[k] for k in SHIPPED_FIELDS if k in c and k != "name"}
-            if extra:
-                projects.update(data_dir, rec["id"], **extra)
-            made.append(rec["id"])
-        if c.get("kanban") and not kanban.load(data_dir).get("board"):
-            kanban.own(data_dir, c["id"])
-        seen.add(c["id"])
-    data_dir.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=".cadres-seeded-", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"seeded": sorted(seen)}, f, indent=2)
-    os.replace(tmp, seen_path)
+    made, changed = [], False
+    for c in shipped(path):
+        new_skills = [s for s in c.get("skills") or () if s not in given.get(c["id"], ())]
+        if c["id"] not in seen:
+            if c["id"] not in projs:
+                rec = projects.create(data_dir, c["name"])
+                extra = {k: c[k] for k in SHIPPED_FIELDS if k in c and k != "name"}
+                if extra:
+                    projects.update(data_dir, rec["id"], **extra)
+                made.append(rec["id"])
+                new_skills = []                 # it arrived with them
+            if c.get("kanban") and not kanban.load(data_dir).get("board"):
+                kanban.own(data_dir, c["id"])
+            seen.add(c["id"])
+            changed = True
+        if new_skills:
+            rec = projects.load(data_dir).get(c["id"])
+            if rec and not rec.get("archived"):
+                have = list(rec.get("skills") or [])
+                projects.update(data_dir, c["id"], skills=have + [s for s in new_skills if s not in have])
+        remembered = list(dict.fromkeys([*given.get(c["id"], []), *(c.get("skills") or [])]))
+        if remembered != given.get(c["id"], []):
+            given[c["id"]] = remembered
+            changed = True
+    if changed:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=".cadres-seeded-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"seeded": sorted(seen), "skills": given}, f, indent=2, sort_keys=True)
+        os.replace(tmp, seen_path)
     return made
 
 
@@ -282,6 +298,20 @@ def chain(projs: dict, cadre: str) -> list[str]:
 def owner(tasks: dict, projs: dict, task: str, project="", tags=()) -> str:
     """The cadre a run (or a page with no task) belongs to."""
     return tasks.get(task) if task and tasks.get(task) else rule(projs, project, tags)
+
+
+def skills_for(data_dir, projs: dict, task: str, project="") -> list[str]:
+    """The skills a run is given at launch: its project's own, then those of
+    every live cadre it is in (its owner and the cadres holding that one),
+    each once. They are linked into the run's folder (claude_run.
+    install_task_skills), so a cadre's skills reach its own runs rather than
+    every session on the machine; a link stays in that folder afterwards."""
+    names = list((projs.get(project) or {}).get("skills") or [])
+    for cadre in chain(projs, owner(load(data_dir), projs, task, project)):
+        rec = projs.get(cadre) or {}
+        if not rec.get("archived"):             # an archived cadre hands out nothing
+            names += rec.get("skills") or []
+    return list(dict.fromkeys(n for n in names if n))
 
 
 def payload_for(payload: dict, cadre: str) -> dict:
