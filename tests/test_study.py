@@ -91,13 +91,12 @@ def test_study_from_a_dialogue_runs_in_its_directory_and_points_back(capsys):
 def test_the_task_agent_is_told_how_to_start_one():
     text = tasks.prompt_text(node="task")
     assert '$pipeline study "<the topic, in their words>" --from $task' in text
-    # after a build, a pointer to a learning thread, not a lesson on the page;
-    # before one, a primer only when a call needs it
+    # pages carry no teaching section; learning happens in threads the driver
+    # opens. A primer only when a driver call needs it.
     for node in ("task", "implement"):
         text = tasks.prompt_text(node=node)
         assert "Understand what changed" not in text
-        assert "Learn this change" in text
-        assert "`learn: <what about it>`" in text and "**Thread**" in text
+        assert "Learn this change" not in text
         assert "cards propose" not in text, "cards come from the thread now"
     assert "Before you decide" in tasks.prompt_text(node="task")
     tutor = tasks.prompt_text(node="tutor")

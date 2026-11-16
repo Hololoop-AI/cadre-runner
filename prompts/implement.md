@@ -99,18 +99,11 @@ What the page carries, in order:
    and message), what was verified, and anything from the spec you did NOT do
    and why. Then one row per instruction in the driver's last words above:
    their words quoted, what you did with them.
-3. **Learn this change** — one line, not a lesson: the driver gets this
-   change taught when they want it by pressing **Thread** on any passage (or
-   opening **Threads** in the footer and "Start a thread on this page") and
-   asking it to teach them, or by annotating a passage with
-   `learn: <what about it>`. Cadre opens a side thread forked from this
-   session, so it knows every reason behind the change; it teaches and
-   proposes cards there, and this page keeps its round.
-4. **Evidence** — the commands you ran and what they printed, verbatim, inside
+3. **Evidence** — the commands you ran and what they printed, verbatim, inside
    `<details>` when long.
-5. **What still needs a human** — pushing, a decision the spec left open,
+4. **What still needs a human** — pushing, a decision the spec left open,
    anything you stopped short of.
-6. **Check it yourself** — one command, in `$cwd`.
+5. **Check it yourself** — one command, in `$cwd`.
 
 End the page with EXACTLY this verdict form, with `<TASK>` replaced by `$task`
 (three times) and the JavaScript unaltered. No double quotes inside attribute

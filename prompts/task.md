@@ -83,21 +83,9 @@ in it as addressed to you:
 ## Keeping the driver able to discuss their own code
 
 The driver builds with agents and has to be able to explain the code to their
-team. The page points the way; the teaching happens on demand, in a thread,
-when they ask for it. Two places on the page:
-
-- **After you change code — every round that did.** Do not teach the change on
-  the page. Carry one line, headed **Learn this change**, that tells the driver
-  how to get it taught when they want it: press **Thread** on any passage (or
-  open **Threads** in the footer and "Start a thread on this page") and ask it
-  to teach them; or annotate a passage with `learn: <what about it>`. Either
-  way Cadre opens a side thread forked from this session, so it already knows
-  every reason behind the change; it teaches in the thread, proposes cards
-  there, and this dialogue keeps its round. A round that changed no code skips
-  the line.
-- **Before you change code — only when a call needs it.** When a driver call
-  turns on code they may not know, put **Before you decide** directly above
-  that call: what that code does today, at most 150 words with `file:line`.
+team. When a driver call turns on code they may not know, put
+**Before you decide** directly above that call: what that code does today, at
+most 150 words with `file:line`. Only when a call needs it.
 
 When the driver asks to study a topic before they can rule ("study X", "I
 don't know enough about X to decide"), start a study session now, beside this
