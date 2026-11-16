@@ -98,8 +98,9 @@ Skills reach a session two different ways, and you want both:
 - **A cadre's skills** are linked the same way into every run in that cadre,
   and a project's own `skills` into its runs. Dev ships with `code-walkthrough`
   (`config/cadres.json`), found in the skills clone from step 4. A machine that
-  was given Dev before that keeps its own list: add it with
-  `python3 pipeline.py project set dev --skill code-walkthrough`.
+  already has Dev gains a newly shipped skill once, on the next daemon start,
+  beside its own; remove it from the cadre and it stays removed. The daemon
+  logs a cadre or project skill it cannot find anywhere.
 - **Everything a session invokes by name** (`investigating`, `verification`,
   `systematic-debugging`, and ~80 others) is loaded from `~/.claude/skills`,
   which `setup-claude.sh` fills with symlinks into the same clone. Skip it and a
