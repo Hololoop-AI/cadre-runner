@@ -106,7 +106,6 @@ function Cell({ r, width }: { r: GraphRow; width: number }) {
   );
 }
 
-/** _graph: the item drawn as the tree that made it */
 /**
  * Opens a graph row to show its history: the page's earlier rounds and any
  * settled branch folded under it. Not on the Python page; marked so the
@@ -142,7 +141,12 @@ function HistoryRow({ r, width, label, ctx }: { r: GraphRow; width: number; labe
   );
 }
 
-function ItemGraph({ it, ctx }: { it: Item; ctx: Ctx }) {
+/**
+ * The item drawn as the tree that made it: every page and session under
+ * `it.key`. The kanban card (CardWork.tsx) draws each of its runs with this
+ * too, so a card's runs read exactly as the Work list's drop-downs do.
+ */
+export function ItemGraph({ it, ctx }: { it: Pick<Item, 'key' | 'pages'>; ctx: Ctx }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((task: string) => setOpen((cur) => {
     const next = new Set(cur);

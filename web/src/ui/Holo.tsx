@@ -1,4 +1,4 @@
-// Hololoop, the fleet's home at /, is a cadre like any other, with runs of
+// Holo, the fleet's home at /, is a cadre like any other, with runs of
 // its own: the meta work on the cadres and the system (runnerlib/cadres.py
 // HOLO). Its home (App.tsx Home) leads with this: one card per cadre saying
 // how much waits on the driver, how much is running and what the week cost,

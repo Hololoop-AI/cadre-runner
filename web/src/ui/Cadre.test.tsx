@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildHome, cadreCards, HOLO, needsYou, inGroup, OTHER, serverView, type Fleet, type Kanban, type Nav, type Project } from '../model';
 import { App } from './App';
 
-// Each cadre owns its runs and opens its own app (/c/<id>); Hololoop (/)
-// sees a card per cadre and no runs; the shell's tabs, side column and phone
+// Each cadre owns its runs and opens its own app (/c/<id>); Holo (/)
+// sees a card per cadre and its own runs; the shell's tabs, side column and phone
 // menu come from the cadre's navigation list (GET /api/nav).
 
 const NOW = Date.now() / 1000;
@@ -30,9 +30,9 @@ const NAV: Nav = {
   cadres: [{ id: 'dev', name: 'Dev' }, { id: 'kitchen', name: 'Kitchen' }, { id: OTHER, name: 'Other' }],
   settings: { project: 'dev', folders: [], members: [{ id: 'cadre-runner', name: 'cadre-runner' }], nav: [] },
 };
-const HOLO_NAV: Nav = { ...NAV, cadre: { id: HOLO, name: 'Hololoop' },
-  screens: [{ id: 'home', label: 'Home', href: '/' }, { id: 'blackboard', label: 'Blackboard', href: '/c/hololoop/blackboard' },
-    { id: 'settings', label: 'Settings', href: '/c/hololoop/settings' }], settings: { project: '', folders: [], members: [], nav: [] } };
+const HOLO_NAV: Nav = { ...NAV, cadre: { id: HOLO, name: 'Holo' },
+  screens: [{ id: 'home', label: 'Home', href: '/' }, { id: 'blackboard', label: 'Blackboard', href: '/c/holo/blackboard' },
+    { id: 'settings', label: 'Settings', href: '/c/holo/settings' }], settings: { project: '', folders: [], members: [], nav: [] } };
 const KCARD = (id: string, title: string, column: string, runs: string[] = []) =>
   ({ id, title, note: '', column, item: '', runs, by: 'driver', created_at: 1, moved_at: 1 });
 const BOARD: Kanban = { board: 'dev', columns: ['backlog', 'ready', 'doing', 'done'],
@@ -51,7 +51,7 @@ describe('the cadre model', () => {
     expect(shown(HOLO)).toEqual(['t-meta']);
   });
 
-  it('gives Hololoop one card per cadre with its waiting, running and week cost', () => {
+  it('gives Holo one card per cadre with its waiting, running and week cost', () => {
     const cards = cadreCards(home.items, home.member, home.groups, FLEET);
     expect(cards.map((c) => [c.id, c.waiting, c.weekUsd])).toEqual(
       [['dev', 2, 4.5], ['kitchen', 1, 1.25], [OTHER, 1, 0]]);
@@ -76,7 +76,7 @@ function serving(path: string) {
     const u = new URL(url);
     asked.push(u.pathname + u.search);
     const body = u.pathname === '/api/fleet' ? FLEET
-      : u.pathname === '/api/nav' ? (u.searchParams.get('cadre') === 'hololoop' ? HOLO_NAV : NAV)
+      : u.pathname === '/api/nav' ? (u.searchParams.get('cadre') === 'holo' ? HOLO_NAV : NAV)
         : u.pathname === '/api/records' ? { records: [{ id: 'r1', cadre: 'dev', type: 'adr', name: 'cadres-own-runs.html', path: '/d/r1.html',
           bytes: 9, sha256: 'x', note: 'why', by: 'driver', created_at: NOW - 60, href: '/open?file=/d/r1.html' }] }
         : u.pathname === '/api/blackboard' ? { events: [EVENT] }
@@ -117,13 +117,36 @@ describe('a cadre app', () => {
     expect(asked).toContain('/api/nav?cadre=dev');
   });
 
-  it("starts a run from a card, telling the server which card it is for", async () => {
-    serving('/c/dev');
+  it('draws a card\'s runs with the Work list\'s graph, and starts a run on the card itself', async () => {
+    const asked = serving('/c/dev');
+    const posts: [string, string][] = [];
+    const real = globalThis.fetch as unknown as (u: string, o?: RequestInit) => Promise<Response>;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, o?: RequestInit) => {
+      if (o?.method === 'POST') {
+        posts.push([new URL(url).pathname, String(o.body)]);
+        return new Response(JSON.stringify({ notice: 'Task submitted.' }), { headers: { 'Content-Type': 'application/json' } });
+      }
+      return real(url, o);
+    }));
     await act(async () => { render(<App />); });
-    await act(async () => { screen.getByRole('button', { name: '+ Run for this card' }).click(); });
-    const form = document.querySelector('#newwork form') as HTMLFormElement;
-    expect((form.elements.namedItem('card') as HTMLInputElement).value).toBe('aaaaaa');
-    expect(form.textContent).toContain('For the card “Cadre slice 2”');
+    const card = document.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
+    expect(card.classList.contains('item')).toBe(true);
+    expect(card.querySelector('.wrun[data-run=t-card] .graph svg circle')).toBeTruthy();
+    // an empty backlog card is the same drop-down, with its own start box
+    const empty = document.querySelector('details.wcard[data-card=bbbbbb]') as HTMLDetailsElement;
+    expect(empty.textContent).toContain('Nothing has run for this card yet');
+    const box = within(empty).getByRole('textbox', { name: 'What should the agent do for Light theme?' }) as HTMLTextAreaElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      set.call(box, 'Draft the light theme');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { within(empty).getByRole('button', { name: 'Start' }).click(); });
+    expect(posts.length).toBe(1);
+    const [path, body] = posts[0];
+    const sent = new URLSearchParams(body);
+    expect([path, sent.get('text'), sent.get('card'), sent.get('cadre')]).toEqual(['/tasks', 'Draft the light theme', 'bbbbbb', 'dev']);
+    expect(asked).toContain('/api/kanban');
   });
 
   it("draws its header tabs and side column from the cadre's navigation, Settings among them", async () => {
@@ -177,7 +200,7 @@ describe('a cadre app', () => {
   });
 });
 
-describe('Hololoop', () => {
+describe('Holo', () => {
   it('is a cadre too: a card per cadre, then its own runs and none of theirs', async () => {
     const asked = serving('/');
     await act(async () => { render(<App />); });
@@ -188,14 +211,14 @@ describe('Hololoop', () => {
     const list = document.getElementById('fleet')!;
     expect(list.textContent).toContain('t-meta page');
     expect(list.textContent).not.toContain('t-dev page');
-    expect(asked).toContain('/api/nav?cadre=hololoop');
-    expect((document.querySelector('#newwork input[name=cadre]') as HTMLInputElement).value).toBe('hololoop');
+    expect(asked).toContain('/api/nav?cadre=holo');
+    expect((document.querySelector('#newwork input[name=cadre]') as HTMLInputElement).value).toBe('holo');
   });
 
   it("links its header's board to the blackboard when it has no kanban board", async () => {
     serving('/');
     await act(async () => { render(<App />); });
-    expect(screen.getByRole('link', { name: 'blackboard' }).getAttribute('href')).toBe('/c/hololoop/blackboard');
+    expect(screen.getByRole('link', { name: 'blackboard' }).getAttribute('href')).toBe('/c/holo/blackboard');
   });
 });
 

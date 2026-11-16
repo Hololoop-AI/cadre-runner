@@ -86,8 +86,6 @@ export interface NewWorkProps {
   tags?: string;
   /** the cadre that will own the work (runnerlib/cadres.py): the one the driver is in */
   cadre?: string;
-  /** the kanban card this run is done for: it is attached to the card (runnerlib/kanban.py) */
-  card?: { id: string; title: string };
   /** why the last Start did not reach the server, shown in the dialog */
   error?: string;
   onClose: () => void;
@@ -95,7 +93,7 @@ export interface NewWorkProps {
 }
 
 /** The New work dialog the header's + New work (or an item's New work under this) opens. */
-export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, lib, tags = '', cadre = '', card, error, onClose, onSubmit }: NewWorkProps) {
+export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, lib, tags = '', cadre = '', error, onClose, onSubmit }: NewWorkProps) {
   const dlg = useRef<HTMLDialogElement>(null);
   const what = useRef<HTMLTextAreaElement>(null);
   const [dir, setDir] = useState('');
@@ -117,10 +115,8 @@ export function NewWorkDialog({ open, dataOpen, parent, parents, projs, home, li
     <dialog id="newwork" ref={dlg} onClose={onClose} data-open={dataOpen ? '' : undefined}>
       <form className="newtask" method="post" action="/tasks"
         onSubmit={(e) => { e.preventDefault(); onSubmit(e.currentTarget); }}>
-        <h3>{card ? 'Start a run for a card' : 'Start work'}</h3>
+        <h3>Start work</h3>
         {cadre && <input type="hidden" name="cadre" value={cadre} />}
-        {card && <input type="hidden" name="card" value={card.id} />}
-        {card && <p className="hint wfor">{`For the card “${card.title}”: it will show under the card until the card is done.`}</p>}
         <label htmlFor="what">What should the agent do?</label>
         <textarea ref={what} id="what" name="text" rows={3} required
           placeholder="e.g. Find out why Study cards are not useful yet"></textarea>

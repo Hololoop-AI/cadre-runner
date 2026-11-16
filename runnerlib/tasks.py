@@ -181,7 +181,8 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     refused here, before anything is written.
 
     `card` is the kanban card (runnerlib/kanban.py) the run is done for: it
-    is attached to the card, so the card shows it until the card is done.
+    is attached to the card, so the card shows it until the card is done,
+    and a card not yet being worked on moves to the working column.
     An unknown card is refused before anything is written.
     """
     if node != NODE and node not in NODES:
@@ -250,7 +251,15 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     if card:
         try:
             kanban.apply(cfg.data_dir, "attach", card=card, item=task_id)
-        except ValueError:
+            # Starting work on a card is starting the card: one still waiting
+            # (Backlog, Ready) moves to the column work happens in, the one
+            # before the last. A card already there, or done, stays put.
+            board_now = kanban.load(cfg.data_dir)
+            cols = board_now["columns"]
+            at = next(c["column"] for c in board_now["cards"] if c["id"] == card)
+            if len(cols) >= 2 and cols.index(at) < len(cols) - 2:
+                kanban.apply(cfg.data_dir, "move", card=card, column=cols[-2])
+        except (ValueError, StopIteration):
             pass  # the card went between the check and now; the run still runs
     wake.notify(cfg, "task")
     return task_id

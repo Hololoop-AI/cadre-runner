@@ -455,7 +455,7 @@ export interface CadreRecords {
 }
 // --- from cadres.ts
 /**
- * Hololoop's cards: one per cadre, then Other when anything is in it.
+ * Holo's cards: one per cadre, then Other when anything is in it.
  * `member` is Home.member (item key -> its cadre and the groups above it,
  * none for Other), so a cadre nested in another counts in both; done and
  * hidden items are not counted. Waiting is counted as the cadre's own page
@@ -467,7 +467,7 @@ export declare function cadreCards(items: Item[], member: Record<string, string[
 export declare function itemCadre(it: Pick<Item, 'key' | 'project' | 'tags'>, owned: Record<string, string>, projs: Record<string, Project>, groups: Group[]): string;
 /** The items waiting on the driver in one cadre (Needs you), newest first. */
 export declare function needsYou(items: Item[], inCadre: (it: Item) => boolean): Item[];
-/** What Hololoop's card for one cadre says. */
+/** What Holo's card for one cadre says. */
 export interface CadreCard {
     id: string;
     name: string;
@@ -637,7 +637,7 @@ export declare function fleetGroups(projs: Record<string, Project>): Group[];
 export declare function groupBadges(items: Item[], member: Record<string, string[]>, groups: Group[]): Record<string, number>;
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
 export declare function groupTag(group: string, groups: Group[]): string;
-/** Hololoop, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
+/** Holo, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
 export declare const HOLO = "~hololoop";
 /** The sidebar entry for every item: the whole fleet, which the sidebar calls Home. */
 export declare const HOME_GROUP = "";
@@ -687,6 +687,12 @@ export declare const DRIVER = "driver";
  * returns the board as it was.
  */
 export declare function kanbanMove(board: Kanban, card: string, column: string, before: string): Kanban;
+/**
+ * The pages a run's graph draws: those of `task` and of every session it
+ * launched, newest first, from `pages` (the home's items, so an archived
+ * page stays out as it does on the Work list).
+ */
+export declare function runPages(task: string, pages: Surface[], kids: Record<string, string[]>): Surface[];
 /** The keys of every run held by a card on `board` (its runs, and the item it was pulled from). */
 export declare function runsOnCards(board: Kanban | null): Set<string>;
 /** One run done for a card, drawn by its own task (it may sit deep inside another item's tree). */

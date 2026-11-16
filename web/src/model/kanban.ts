@@ -3,7 +3,7 @@
 
 import { s as str, taskLabel, treeHref, viewHref } from './format';
 import { answered } from './items';
-import type { Fleet, Kanban, KanbanCard } from './payload';
+import type { Fleet, Kanban, KanbanCard, Surface } from './payload';
 
 /** kanban.DRIVER: who `by` names when the driver added a card */
 export const DRIVER = 'driver';
@@ -51,11 +51,20 @@ export function cardItemHref(item: string): string {
   return item.startsWith('page:') ? `/page/${encodeURIComponent(item.slice(5))}` : treeHref(item);
 }
 
+/**
+ * The item a card was pulled from, when that is work done for it. A run that
+ * parked an idea on the board (it added the card itself: `by` is the run) is
+ * where the idea came from, not work on it, so it is not the card's.
+ */
+function pulledFrom(card: KanbanCard): string {
+  return card.item && !card.item.startsWith('page:') && card.item !== card.by ? card.item : '';
+}
+
 /** The keys of every run held by a card on `board` (its runs, and the item it was pulled from). */
 export function runsOnCards(board: Kanban | null): Set<string> {
   const out = new Set<string>();
   for (const c of board?.cards || []) {
-    if (c.item) out.add(c.item);
+    if (pulledFrom(c)) out.add(c.item);
     for (const r of c.runs || []) out.add(r);
   }
   return out;
@@ -90,7 +99,7 @@ export interface CardRun {
  * Newest touched first. A run this machine knows nothing of is left out.
  */
 export function cardRuns(card: KanbanCard, fleet: Fleet): CardRun[] {
-  const keys = [...new Set([...(card.runs || []), ...(card.item && !card.item.startsWith('page:') ? [card.item] : [])])];
+  const keys = [...new Set([...(card.runs || []), ...(pulledFrom(card) ? [card.item] : [])])];
   const pages = fleet.snap?.surfaces || [];
   const tree = fleet.tree || {};
   const statuses = fleet.statuses || {};
@@ -122,4 +131,21 @@ export function cardTally(runs: Pick<CardRun, 'state' | 'working'>[]): CardTally
     working: runs.filter((r) => r.working).length,
     done: runs.filter((r) => r.state === 'done').length,
   };
+}
+
+/**
+ * The pages a run's graph draws: those of `task` and of every session it
+ * launched, newest first, from `pages` (the home's items, so an archived
+ * page stays out as it does on the Work list).
+ */
+export function runPages(task: string, pages: Surface[], kids: Record<string, string[]>): Surface[] {
+  const mine = new Set([task]);
+  const stack = [...(kids[task] || [])];
+  while (stack.length) {
+    const t = stack.pop()!;
+    if (mine.has(t)) continue;
+    mine.add(t);
+    stack.push(...(kids[t] || []));
+  }
+  return pages.filter((sf) => mine.has(str(sf.task))).sort((x, y) => Number(y.opened || 0) - Number(x.opened || 0));
 }

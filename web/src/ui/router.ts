@@ -8,7 +8,7 @@ import { HOLO, OTHER } from '../model';
 
 /** One screen of the app. */
 export type Route =
-  /** Hololoop: a card per cadre, no runs */
+  /** Holo: a card per cadre, no runs */
   | { screen: 'home' }
   /** a cadre's own app (Cadre.tsx): `cadre` is its id (groups.OTHER for /c/other), `tab` one of its screens */
   | { screen: 'cadre'; cadre: string; tab: string }
@@ -33,7 +33,7 @@ export function route(path: string): Route | null {
   const c = /^\/c\/([^/]+)(?:\/(kanban|blackboard|records|agents|settings))?$/.exec(p);
   if (c) {
     const id = decodeURIComponent(c[1]);
-    return { screen: 'cadre', cadre: id === 'other' ? OTHER : id === 'hololoop' ? HOLO : id, tab: c[2] || 'home' };
+    return { screen: 'cadre', cadre: id === 'other' ? OTHER : id === 'holo' || id === 'hololoop' ? HOLO : id, tab: c[2] || 'home' };
   }
   const m = /^\/(tree|project|page|view)\/([^/]+)$/.exec(p);
   if (!m) return null;

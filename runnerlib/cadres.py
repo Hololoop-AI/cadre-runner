@@ -4,7 +4,7 @@ A cadre is a group of work on the fleet's rail (Dev, Kitchen, Personal, …):
 a live project that another live project names as its group, or a live
 project with no folder (web/src/model/groups.ts `fleetGroups`, ported
 here). Work run in a cadre is that cadre's: its runs show only in its app
-(the fleet route /c/<id>). Hololoop, the fleet's home (/), is a cadre too:
+(the fleet route /c/<id>). Holo, the fleet's home (/), is a cadre too:
 it owns the runs that work on the cadres and the system themselves (HOLO),
 and above its own runs it shows a card per cadre.
 
@@ -41,16 +41,17 @@ LOCK = "cadres.lock"
 # The rail's entry for work in no cadre; groups.ts calls it OTHER too.
 OTHER = "~other"
 OTHER_NAME = "Other"
-# Hololoop, the fleet's home, is a cadre with runs of its own: the meta work
+# Holo (once called Hololoop; its id keeps that name so stored runs keep
+# their cadre), the fleet's home, is a cadre with runs of its own: the meta work
 # on the cadres and the system. It is not a project, so it is fixed here.
 HOLO = "~hololoop"
-HOLO_NAME = "Hololoop"
+HOLO_NAME = "Holo"
 SPECIAL = {OTHER: OTHER_NAME, HOLO: HOLO_NAME}
 
 # What a cadre's header tabs show when its project record names no `nav`.
 # Each is a screen of the fleet app under /c/<id>/; "home" is /c/<id> itself.
 # The fleet-wide screens (runs, costs, the library) are not a cadre's: they
-# stay on Hololoop until they can be cut to one cadre's runs.
+# stay on Holo until they can be cut to one cadre's runs.
 DEFAULT_NAV = ("home", "blackboard", "records", "agents", "settings")
 # Every cadre has a Blackboard (the events its agents write to each other,
 # runnerlib/blackboard.py) and Records (its pages). Only the cadre that owns
@@ -174,7 +175,7 @@ def at_launch(data_dir, projs: dict, *, cadre=None, parent=None, project=None) -
         got = resolve(projs, cadre)
         if got is None:
             names = ", ".join(c["id"] for c in cadre_list(projs)) or "none yet"
-            raise ValueError(f"no cadre {cadre!r} (cadres: {names}, hololoop or other)")
+            raise ValueError(f"no cadre {cadre!r} (cadres: {names}, holo or other)")
         return got
     if parent:
         mine = load(data_dir).get(str(parent))
@@ -283,7 +284,7 @@ def nav(projs: dict, cadre: str, *, board: str = "") -> dict:
     `pinned`: [{label, href}]) — and what its Settings tab shows."""
     rec = projs.get(cadre) or {}
     name = SPECIAL.get(cadre) or rec.get("name") or cadre
-    base = "/c/" + {OTHER: "other", HOLO: "hololoop"}.get(cadre, cadre)
+    base = "/c/" + {OTHER: "other", HOLO: "holo"}.get(cadre, cadre)
     home = "/" if cadre == HOLO else base
     default = BOARD_NAV if board and cadre == board else DEFAULT_NAV
     wanted = [s for s in (rec.get("nav") or default) if s in SCREENS]

@@ -72,6 +72,17 @@ def test_a_run_launched_for_a_card_is_attached_to_it(fleet):
     assert len(cadres.load(fleet)) == 1, "a refused card writes nothing"
 
 
+def test_starting_work_on_a_waiting_card_moves_it_to_doing(fleet):
+    from runnerlib import kanban
+    cfg = FakeCfg(fleet)
+    _, waiting = kanban.apply(fleet, "add", title="Light theme")  # the first column, backlog
+    _, done = kanban.apply(fleet, "add", title="Old thing", column="done")
+    tasks.submit_task(cfg, "draft it", cwd=fleet / "w" / "scratch", card=waiting["id"])
+    tasks.submit_task(cfg, "one more look", cwd=fleet / "w" / "scratch", card=done["id"])
+    cols = {c["id"]: c["column"] for c in kanban.load(fleet)["cards"]}
+    assert cols == {waiting["id"]: "doing", done["id"]: "done"}, "a done card stays done"
+
+
 def test_an_unknown_cadre_is_refused_before_anything_is_written(fleet):
     cfg = FakeCfg(fleet)
     with pytest.raises(ValueError, match="no cadre 'garden'"):
@@ -198,12 +209,14 @@ def test_the_server_answers_nav_and_a_cadres_fleet(fleet, monkeypatch):
         srv.server_close()
 
 
-def test_hololoop_is_a_cadre_with_runs_of_its_own(fleet):
+def test_holo_is_a_cadre_with_runs_of_its_own(fleet):
     projs = projects.load(fleet)
-    assert cadres.resolve(projs, "Hololoop") == cadres.HOLO
+    assert cadres.resolve(projs, "Hololoop") == cadres.HOLO, "its old name still finds it"
+    assert cadres.resolve(projs, "holo") == cadres.HOLO
     assert cadres.at_launch(fleet, projs, cadre="hololoop") == cadres.HOLO
     nav = cadres.nav(projs, cadres.HOLO)
-    assert nav["cadre"] == {"id": cadres.HOLO, "name": "Hololoop"}
+    assert nav["cadre"] == {"id": cadres.HOLO, "name": "Holo"}
+    assert nav["screens"][1]["href"].startswith("/c/holo/")
     assert nav["screens"][0]["href"] == "/" and "blackboard" in [s["id"] for s in nav["screens"]]
     full = {"cadres": {"t-meta": cadres.HOLO, "t-dev": "dev"},
             "running": [{"task": "t-meta"}, {"task": "t-dev"}], "snap": {"surfaces": []}}

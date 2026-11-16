@@ -45,29 +45,22 @@
 .cwork{margin:0 0 18px}
 .cwork h2.sect a{margin-left:.6rem;font-weight:400;letter-spacing:0;text-transform:none;color:var(--accent);text-decoration:none}
 .cwork h2.sect a:hover{text-decoration:underline}
-details.wcard{margin:0 0 6px;background:var(--card);border:1px solid var(--border);border-radius:10px}
-details.wcard[open]{border-color:color-mix(in srgb,var(--accent) 35%,var(--border))}
-details.wcard > summary{display:flex;align-items:baseline;gap:.6rem;padding:8px 12px;cursor:pointer;list-style:none}
-details.wcard > summary::-webkit-details-marker{display:none}
-details.wcard > summary::before{content:'▸';color:var(--muted);flex:none}
-details.wcard[open] > summary::before{content:'▾'}
+/* A card on the board owner's home is a Work-list item (fleet.css .item):
+   these only add the column label, the tally and the start box. */
+details.item.wcard{margin:0 0 6px}
 .wcard .kc{flex:none;width:3.4rem;font-family:var(--mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--label)}
-.wcard .kt{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
 .wcard .wtally{flex:none;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 .wcard .wtally.on{color:var(--ok)}
-.wcard .wnote{margin:0 12px 6px 2.4rem}
-.wcard .meta{margin-left:2.4rem}
-ul.wruns{list-style:none;margin:0 12px 6px 2.4rem;padding:0;display:flex;flex-direction:column;gap:3px}
-ul.wruns li{display:flex;align-items:baseline;gap:.6rem;padding:4px 8px;border-left:2px solid var(--border)}
-ul.wruns li.you{border-left-color:var(--ok)}
-ul.wruns li a{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--fg);text-decoration:none}
-ul.wruns li a:hover{color:var(--accent)}
-ul.wruns .when{flex:none;font-size:.75rem;color:var(--muted)}
-.wcard .wact{margin:4px 12px 10px 2.4rem}
-details.wbacklog{margin:8px 0 4px;color:var(--muted)}
-details.wbacklog summary{cursor:pointer;font-size:.85rem}
-details.wbacklog ul{margin:4px 0 0;padding-left:1.4rem;font-size:.88rem}
+.wcard .wnote{margin:0 0 6px}
+.wcard .wrun + .wrun{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)}
+details.wstartfold{margin:10px 0 2px}
+details.wstartfold > summary{display:inline-block;cursor:pointer;list-style:none}
+details.wstartfold > summary::-webkit-details-marker{display:none}
+form.wstart{display:flex;flex-direction:column;gap:6px;margin:8px 0 0}
+form.wstart textarea{width:100%;box-sizing:border-box}
+form.wstart button{align-self:flex-start}
+details.wbacklog{margin:8px 0 4px}
+details.wbacklog > summary{cursor:pointer;font-size:.85rem;color:var(--muted);margin-bottom:6px}
 form.widea{display:flex;gap:6px;margin:6px 0 0}
 form.widea input{flex:1;min-width:0}
-@media (max-width:640px){details.wcard > summary{flex-wrap:wrap}.wcard .wtally{flex-basis:100%;padding-left:1.4rem}
- ul.wruns,.wcard .wact,.wcard .meta,.wcard .wnote{margin-left:12px}ul.wruns li{flex-wrap:wrap}}
+@media (max-width:640px){.wcard .wtally{flex-basis:100%;padding-left:1.4rem}}

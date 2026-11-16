@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, kanbanMove, runsOnCards, type Fleet, type Kanban } from '.';
+import { activeCards, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, kanbanMove, runPages, runsOnCards, type Fleet, type Kanban } from '.';
 
 const card = (id: string, column: string) => ({ id, title: id.toUpperCase(), note: '', column, item: '', runs: [] as string[], by: 'driver', created_at: 1, moved_at: 1 });
 const BOARD: Kanban = {
@@ -59,6 +59,15 @@ describe("a card's runs", () => {
       [['t2', 'working', 'Being worked on'], ['t3', 'done', 'Finished'], ['t1', 'your-turn', 'Waiting on you']]);
     expect(runs[2].href).toBe('/view/t1000000000000');
     expect([...runsOnCards({ ...BOARD, cards: [c] })].sort()).toEqual(['gone', 't1', 't2', 't3']);
+  });
+  it('leave out the run that parked the idea: where a card came from is not work on it', () => {
+    const parked = { ...card('eeeeee', 'backlog'), item: 't3', by: 't3' };
+    expect(cardRuns(parked, fleet)).toEqual([]);
+    expect([...runsOnCards({ ...BOARD, cards: [parked] })]).toEqual([]);
+  });
+  it('draw a run as the pages of its own task and every session it launched', () => {
+    const pages = [sf('a', 1, 'A'), sf('b', 3, 'B'), sf('c', 2, 'C'), sf('x', 4, 'X')];
+    expect(runPages('a', pages, { a: ['b'], b: ['c'] }).map((p) => p.task)).toEqual(['b', 'c', 'a']);
   });
   it('tally what waits on you, what an agent is on and what is done', () => {
     expect(cardTally(cardRuns(c, fleet))).toEqual({ runs: 3, yourTurn: 1, working: 1, done: 1 });

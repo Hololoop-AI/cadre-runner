@@ -26,11 +26,11 @@ import './shell.css';
 /** A cadre's path: Other is /c/other, any other cadre /c/<its id>. */
 export function cadreHref(id: string, tab = ''): string {
   if ((id === HOME_GROUP || id === HOLO) && (!tab || tab === 'home')) return '/';
-  const base = `/c/${id === OTHER ? 'other' : id === HOLO || id === HOME_GROUP ? 'hololoop' : encodeURIComponent(id)}`;
+  const base = `/c/${id === OTHER ? 'other' : id === HOLO || id === HOME_GROUP ? 'holo' : encodeURIComponent(id)}`;
   return tab && tab !== 'home' ? `${base}/${tab}` : base;
 }
 
-/** The rail entry a rail id opens: Home is Hololoop (/), any cadre its own app. */
+/** The rail entry a rail id opens: Home is Holo (/), any cadre its own app. */
 export function railPick(id: string) {
   go(cadreHref(id));
 }
@@ -94,14 +94,14 @@ function SideColumn({ nav, shut, onShut }: { nav: Nav; shut: boolean; onShut: (s
   );
 }
 
-/** The header of a cadre screen that is not its home: the cadre's name, the menu button, the way back to Hololoop. */
+/** The header of a cadre screen that is not its home: the cadre's name, the menu button, the way back to Holo. */
 export function CadreBar({ chrome, title }: { chrome: Chrome; title: string }) {
   useEffect(() => { document.title = `${chrome.name} — ${title}`; }, [chrome.name, title]);
   return (
     <>
       <header>
         <h1>Cadre<span className="dot">.</span><span className="group">{chrome.name.toLowerCase().replace(/\s+/g, '-')}</span></h1>
-        {chrome.menu}<span className="sp"></span><a href="/">Hololoop</a>
+        {chrome.menu}<span className="sp"></span><a href="/">Holo</a>
       </header>
       {chrome.tabs}
     </>
@@ -128,7 +128,7 @@ export function CadreShell({ id, tab, fleet, children }: {
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    server.fetchNav(id === OTHER ? 'other' : id === HOLO ? 'hololoop' : id).then(setNav).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    server.fetchNav(id === OTHER ? 'other' : id === HOLO ? 'holo' : id).then(setNav).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [server, id]);
   const [open, setOpen] = useState(false); // the phone's menu
   const [shut, setShut] = useState(() => window.localStorage?.getItem(SIDE_SHUT) === '1');
@@ -151,7 +151,7 @@ export function CadreShell({ id, tab, fleet, children }: {
         <div id="cdrawer" className="cdrawer">
           <h3>{name}</h3><CadreTabs nav={nav} tab={tab} /><SideLists nav={nav} />
           <h3>The whole fleet</h3>
-          <p className="cfleet"><a href="/">Hololoop</a><a href="/runs">every run</a><a href="/costs">costs</a><a href="/cards">cards</a><a href="/library">library</a></p>
+          <p className="cfleet"><a href="/">Holo</a><a href="/runs">every run</a><a href="/costs">costs</a><a href="/cards">cards</a><a href="/library">library</a></p>
         </div>
       )}
     </>
@@ -179,7 +179,7 @@ export function CadreScreen({ id, tab }: { id: string; tab: string }) {
       <Framed.Provider value>
         {tab === 'kanban' ? <KanbanScreen cadre={id} />
           : tab === 'blackboard' ? <BlackboardScreen />
-            : tab === 'records' ? <RecordsScreen cadre={id === OTHER ? 'other' : id === HOLO ? 'hololoop' : id} name={chrome.name} />
+            : tab === 'records' ? <RecordsScreen cadre={id === OTHER ? 'other' : id === HOLO ? 'holo' : id} name={chrome.name} />
             : tab === 'settings' ? (id === OTHER || id === HOLO ? <OtherSettings holo={id === HOLO} /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)
               : tab === 'agents' ? <AgentsPending name={chrome.name} />
                 : <p className="notice">{`${chrome.name} has no screen called ${tab}.`}</p>}
@@ -234,10 +234,10 @@ function OtherSettings({ holo = false }: { holo?: boolean }) {
     return (
       <section>
         <h2 className="sect">Settings</h2>
-        <p className="meta">Hololoop is the cadre that works on the cadres and the system themselves: its runs are the meta
+        <p className="meta">Holo is the cadre that works on the cadres and the system themselves: its runs are the meta
           work (moving runs between cadres, reviving sessions, watching the fleet). It is not a project, so it has no record
-          to set. A run is launched here with New work on <a href="/">Hololoop</a> or <code>pipeline.py task --cadre hololoop</code>,
-          and moved here with <code>pipeline.py cadres set &lt;task&gt; hololoop</code>.</p>
+          to set. A run is launched here with New work on <a href="/">Holo</a> or <code>pipeline.py task --cadre holo</code>,
+          and moved here with <code>pipeline.py cadres set &lt;task&gt; holo</code>.</p>
       </section>
     );
   }
@@ -245,7 +245,7 @@ function OtherSettings({ holo = false }: { holo?: boolean }) {
     <section>
       <h2 className="sect">Settings</h2>
       <p className="meta">Other holds the work that no cadre owns, so it has no settings of its own. Move a run into a cadre
-        with <code>pipeline.py cadres set &lt;task&gt; &lt;cadre&gt;</code>; settings for the whole fleet live on <a href="/">Hololoop</a>.</p>
+        with <code>pipeline.py cadres set &lt;task&gt; &lt;cadre&gt;</code>; settings for the whole fleet live on <a href="/">Holo</a>.</p>
     </section>
   );
 }

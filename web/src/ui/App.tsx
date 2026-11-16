@@ -1,5 +1,5 @@
 // The fleet app. Every cadre is an app of its own with runs of its own
-// (Cadre.tsx): `/c/<id>`, and `/` for Hololoop, the cadre that works on the
+// (Cadre.tsx): `/c/<id>`, and `/` for Holo, the cadre that works on the
 // cadres and the system, whose home also has a card per cadre. A cadre's
 // home is its dashboard, drawn here: in the cadre that owns the kanban
 // board, the board's cards lead, each holding the runs done for it, and the
@@ -10,12 +10,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, type Kanban, type KanbanCard, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { groupSuffix } from './Groups';
 import { Header } from './Header';
 import { CadreScreen, CadreShell, cadreHref, useChrome } from './Cadre';
-import { CadreCardList, useHoloRedirect } from './Hololoop';
+import { CadreCardList, useHoloRedirect } from './Holo';
 import { CardWork } from './CardWork';
 import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { RunningNow } from './Running';
@@ -55,7 +55,7 @@ export function App() {
   const [here] = useState(current);
   useEffect(keepLinksInApp, []);
   useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
-  // the Python pages give the body a class on home only; Hololoop and a cadre are homes
+  // the Python pages give the body a class on home only; Holo and a cadre are homes
   useEffect(() => {
     document.body.className = here.screen === 'home' || here.screen === 'cadre' ? 'home cadre' : '';
   }, [here]);
@@ -122,7 +122,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
   // Archived from this browser: hidden at once, before the re-fetch that
   // brings the server's own archived list (fleet.archived).
   const [archivedHere, setArchivedHere] = useState<Set<string>>(() => new Set());
-  const [work, setWork] = useState<{ open: boolean; parent: string | null; card?: KanbanCard }>({ open: !!query.get('parent'), parent: query.get('parent') });
+  const [work, setWork] = useState<{ open: boolean; parent: string | null }>({ open: !!query.get('parent'), parent: query.get('parent') });
   useHoloRedirect(cadre === HOLO);
   const [workError, setWorkError] = useState('');
   const [nw, setNw] = useState<NewWorkInfo>({ home: '', library: [] });
@@ -211,7 +211,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
       <div className="wrap cdash">
         <Header weekUsd={fleet ? Number(fleet.cadre_week_usd?.[group]) || 0 : undefined} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
-          groupName={group === HOLO ? 'hololoop' : groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
+          groupName={group === HOLO ? 'holo' : groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
           boardHref={cadreHref(group, hasKanban ? 'kanban' : 'blackboard')} boardLabel={hasKanban ? 'board' : 'blackboard'} />
         {chrome?.tabs}
         {notice && <p className="notice">{notice}</p>}
@@ -219,11 +219,12 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
         <div className="cgrid">
         <div className="cmain">
         {group === HOLO && fleet && home && <CadreCardList fleet={fleet} home={home} />}
-        {ownsBoard && board && fleet && (
-          <CardWork board={board} fleet={fleet} now={now} kanbanHref={cadreHref(group, 'kanban')}
-            onRun={(c) => setWork({ open: true, parent: '', card: c })} onChanged={(msg) => { setNotice(msg); refetch(); }} />
+        {ownsBoard && board && fleet && home && (
+          <CardWork board={board} fleet={fleet} home={home!} kanbanHref={cadreHref(group, 'kanban')}
+            cadre={group === OTHER ? 'other' : group} folder={nav?.settings.folders[0] || ''}
+            onChanged={(msg) => { setNotice(msg); refetch(); }} />
         )}
-        <h2 className="sect">{ownsBoard ? 'One-off work (on no card)' : group === HOLO ? 'Hololoop\'s own work' : 'Work'}</h2>
+        <h2 className="sect">{ownsBoard ? 'One-off work (on no card)' : group === HOLO ? 'Holo\'s own work' : 'Work'}</h2>
         <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
           setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}
           setLimit={(n) => keep({ limit: n })} projects={projects} />
@@ -265,7 +266,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}
-        cadre={group === OTHER ? 'other' : group === HOLO ? 'hololoop' : group} card={work.card}
+        cadre={group === OTHER ? 'other' : group === HOLO ? 'holo' : group}
         onClose={() => setWork((w) => ({ ...w, open: false }))}
         error={workError}
         onSubmit={(fm) => {
