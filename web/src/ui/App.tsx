@@ -89,7 +89,7 @@ function CadreApp({ machines, cadre, tab }: { machines: Machines; cadre: string;
   const fleet = useFleet(server);
   return (
     <CadreShell id={cadre} tab={tab} fleet={fleet.fleet}>
-      {tab === 'home' ? <Home machines={machines} cadre={cadre} fleetState={fleet} /> : <CadreScreen id={cadre} tab={tab} />}
+      {tab === 'home' ? <Home machines={machines} cadre={cadre} fleetState={fleet} /> : <CadreScreen id={cadre} tab={tab} fleet={fleet.fleet} />}
     </CadreShell>
   );
 }

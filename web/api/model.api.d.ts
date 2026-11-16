@@ -638,7 +638,7 @@ export declare function groupBadges(items: Item[], member: Record<string, string
 /** What New work's Tags box starts with when `group` is chosen: the group's name, or nothing. */
 export declare function groupTag(group: string, groups: Group[]): string;
 /** Holo, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
-export declare const HOLO = "~hololoop";
+export declare const HOLO = "~holo";
 /** The sidebar entry for every item: the whole fleet, which the sidebar calls Home. */
 export declare const HOME_GROUP = "";
 /** Whether `groups` (an item's, from itemGroups) puts it under sidebar entry `group` (HOME_GROUP: everything). */

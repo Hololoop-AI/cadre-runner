@@ -4,7 +4,8 @@
 // attached later — with where each stands and when it came back, so a card
 // is followed to done instead of its work being lost in a list. A run is
 // started from its card. New ideas that spark from the work go to the
-// Backlog in one line, so they are kept without becoming a tangent. Each card
+// Backlog in one line, so they are kept without becoming a tangent; the
+// Backlog itself is on the Kanban tab, not here. Each card
 // is drawn as a Work-list item: its runs as the graph that made them, and a
 // box to start a run on it, empty card or not.
 
@@ -67,7 +68,7 @@ function CardStart({ card, cadre, folder, empty, onChanged }: {
  * then Start work on this card (folded, as + Tag is; open on a card with
  * no runs yet). A card with no runs is the same drop-down, empty.
  */
-function CardBlock({ card, fleet, home, pages, cadre, folder, open, onChanged }: {
+export function CardBlock({ card, fleet, home, pages, cadre, folder, open, onChanged }: {
   card: KanbanCard; fleet: Fleet; home: Home; pages: Surface[]; cadre: string; folder: string;
   open: boolean; onChanged: (msg: string) => void;
 }) {
@@ -96,8 +97,8 @@ function CardBlock({ card, fleet, home, pages, cadre, folder, open, onChanged }:
 }
 
 /**
- * The board's work: Doing and Ready cards with their runs, then the Backlog
- * (folded; each card in it opens the same way, to start work on it), a
+ * The board's work: Doing and Ready cards with their runs, then how many
+ * wait in the Backlog (a link to the board, where they are started), a
  * one-line add, and how many are done. `home` is what each run's graph is
  * drawn from; `cadre` and `folder` are what a run started on a card gets;
  * `onChanged` re-reads after an add or a start.
@@ -130,10 +131,8 @@ export function CardWork({ board, fleet, home, kanbanHref, cadre, folder, onChan
       <h2 className="sect">Work on the board <a href={kanbanHref}>open the board →</a></h2>
       {!active.length && <p className="meta">{`Nothing in ${board.columns.slice(1, -1).map(columnLabel).join(' or ')}. Move a card there to start on it.`}</p>}
       {active.length > 0 && <div className="card items">{active.map((c) => block(c, c.column === board.columns[board.columns.length - 2]))}</div>}
-      <details className="wbacklog">
-        <summary>{`Backlog · ${backlog.length}`}{done.length ? ` · ${done.length} done` : ''}</summary>
-        {backlog.length > 0 && <div className="card items">{backlog.map((c) => block(c, false))}</div>}
-      </details>
+      <p className="meta wbacklog"><a href={kanbanHref}>{`Backlog · ${backlog.length}`}{done.length ? ` · ${done.length} done` : ''}</a>
+        {' on the board, where any card opens to start work on it.'}</p>
       <form className="widea" onSubmit={add}>
         <input type="text" name="title" aria-label="A new idea for the backlog" value={idea} onChange={(e) => setIdea(e.target.value)}
           placeholder="Something sparked? Park it on the backlog and keep going" maxLength={200} />
