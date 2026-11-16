@@ -41,10 +41,9 @@ LOCK = "cadres.lock"
 # The rail's entry for work in no cadre; groups.ts calls it OTHER too.
 OTHER = "~other"
 OTHER_NAME = "Other"
-# Holo (once called Hololoop; its id keeps that name so stored runs keep
-# their cadre), the fleet's home, is a cadre with runs of its own: the meta work
+# Holo (once called Hololoop), the fleet's home, is a cadre with runs of its own: the meta work
 # on the cadres and the system. It is not a project, so it is fixed here.
-HOLO = "~hololoop"
+HOLO = "~holo"
 HOLO_NAME = "Holo"
 SPECIAL = {OTHER: OTHER_NAME, HOLO: HOLO_NAME}
 
@@ -91,7 +90,7 @@ def resolve(projs: dict, ref) -> str | None:
         return None
     if ref.lower() in (OTHER, "other"):
         return OTHER
-    if ref.lower() in (HOLO, "hololoop", "holo"):
+    if ref.lower() in (HOLO, "~hololoop", "hololoop", "holo"):
         return HOLO
     for c in cadre_list(projs):
         if ref.lower() in (c["id"].lower(), c["name"].lower()):

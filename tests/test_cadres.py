@@ -212,7 +212,8 @@ def test_the_server_answers_nav_and_a_cadres_fleet(fleet, monkeypatch):
 def test_holo_is_a_cadre_with_runs_of_its_own(fleet):
     projs = projects.load(fleet)
     assert cadres.resolve(projs, "Hololoop") == cadres.HOLO, "its old name still finds it"
-    assert cadres.resolve(projs, "holo") == cadres.HOLO
+    assert cadres.resolve(projs, "holo") == cadres.HOLO == "~holo"
+    assert cadres.resolve(projs, "~hololoop") == cadres.HOLO, "an id stored under the old name still finds it"
     assert cadres.at_launch(fleet, projs, cadre="hololoop") == cadres.HOLO
     nav = cadres.nav(projs, cadres.HOLO)
     assert nav["cadre"] == {"id": cadres.HOLO, "name": "Holo"}

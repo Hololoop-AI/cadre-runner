@@ -5,9 +5,11 @@
 // board re-reads itself: pushed, not polled. React only: there is no Python
 // page to match, so its look is its own (kanban.css).
 
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { Live } from '../api';
-import { byColumn, cardItemHref, columnLabel, DRIVER, kanbanMove, taskLabel, type Kanban, type KanbanCard } from '../model';
+import { buildHome, byColumn, cardItemHref, cardRuns, cardTally, columnLabel, DRIVER, kanbanMove, OTHER, serverView, taskLabel, type Fleet, type Kanban, type KanbanCard } from '../model';
+import { useChrome } from './Cadre';
+import { CardBlock, tallyText } from './CardWork';
 import './kanban.css';
 import { Pending, Screen } from './Screen';
 import { useServer } from './server';
@@ -30,9 +32,12 @@ const itemLabel = (item: string) => (item.startsWith('page:') ? 'its page' : tas
 /**
  * The Board screen: the chosen machine's board, kept current by its fleet
  * stream. Inside a cadre (`cadre`), a board that belongs to another cadre
- * is not shown: there is one board today, and it is Dev's.
+ * is not shown: there is one board today, and it is Dev's. Given the fleet
+ * (`fleet`, inside a cadre's app), any card opens above the columns to its
+ * work, as a card on the cadre's home does: its runs as the graph that made
+ * them, and Start work on this card.
  */
-export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
+export function KanbanScreen({ cadre = '', fleet = null }: { cadre?: string; fleet?: Fleet | null }) {
   const server = useServer();
   const [board, setBoard] = useState<Kanban | null>(null);
   const [error, setError] = useState('');
@@ -54,6 +59,16 @@ export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
     return server.subscribe(refetch, setLive);
   }, [server, refetch]);
 
+  const chrome = useChrome();
+  const [opened, setOpened] = useState('');
+  const home = useMemo(() => (fleet ? buildHome(fleet, serverView(''), Date.now() / 1000, server.base || location.origin) : null), [fleet, server]);
+  const pages = useMemo(() => home?.items.flatMap((it) => it.pages) ?? [], [home]);
+  const open = board?.cards.find((c) => c.id === opened);
+  const work = fleet && home ? {
+    tally: (c: KanbanCard) => tallyText(cardTally(cardRuns(c, fleet))),
+    onOpen: (c: KanbanCard) => setOpened((cur) => (cur === c.id ? '' : c.id)),
+  } : undefined;
+
   const send = (change: BoardChange) => {
     // a drag lands at once; the server's answer, and the stream, confirm it
     if (change.action === 'move') setBoard((b) => b && kanbanMove(b, change.card, change.column, change.before || ''));
@@ -74,13 +89,33 @@ export function KanbanScreen({ cadre = '' }: { cadre?: string }) {
       {notice && <p className="notice">{notice}</p>}
       {!board ? <Pending error={error} />
         : cadre && board.board !== cadre ? <p className="meta">{`This cadre has no kanban board. The one kanban board there is belongs to ${board.board}.`}</p>
-          : <Board board={board} onChange={send} />}
+          : <>
+            {open && fleet && home && (
+              <section className="kopen" aria-label={`The card ${open.title}, opened`}>
+                <div className="card items">
+                  <CardBlock key={open.id} card={open} fleet={fleet} home={home} pages={pages} open
+                    cadre={cadre === OTHER ? 'other' : cadre} folder={chrome?.nav?.settings.folders[0] || ''}
+                    onChanged={(said) => { setNotice(said); refetch(); }} />
+                </div>
+                <p className="kclose"><button type="button" className="ghost" onClick={() => setOpened('')}>Close the card</button></p>
+              </section>
+            )}
+            <Board board={board} onChange={send} work={work} opened={opened} />
+          </>}
     </Screen>
   );
 }
 
 /** The columns side by side (stacked on a phone), each with its add box and cards. */
-export function Board({ board, onChange }: { board: Kanban; onChange: (c: BoardChange) => void }) {
+/** What opening a card needs: its tally, and what opens it (absent off a cadre's app). */
+export interface CardWorkHooks {
+  tally: (c: KanbanCard) => string;
+  onOpen: (c: KanbanCard) => void;
+}
+
+export function Board({ board, onChange, work, opened = '' }: {
+  board: Kanban; onChange: (c: BoardChange) => void; work?: CardWorkHooks; opened?: string;
+}) {
   const [dragged, setDragged] = useState('');
   const [editing, setEditing] = useState('');
   const cols = byColumn(board);
@@ -111,7 +146,7 @@ export function Board({ board, onChange }: { board: Kanban; onChange: (c: BoardC
                   {editing === c.id
                     ? <EditCard card={c} onChange={onChange} onDone={() => setEditing('')} />
                     : <CardFace card={c} prev={board.columns[i - 1]} next={board.columns[i + 1]}
-                        onEdit={() => setEditing(c.id)} onChange={onChange} />}
+                        onEdit={() => setEditing(c.id)} onChange={onChange} work={work} opened={opened === c.id} />}
                 </li>
               ))}
             </ol>
@@ -128,17 +163,24 @@ function lowerHalf(e: DragEvent): boolean {
 }
 
 /** A card as it sits: its title opens the editor; ← and → move it a column (dragging is awkward on a phone). */
-function CardFace({ card, prev, next, onEdit, onChange }: {
+function CardFace({ card, prev, next, onEdit, onChange, work, opened }: {
   card: KanbanCard; prev?: string; next?: string; onEdit: () => void; onChange: (c: BoardChange) => void;
+  work?: CardWorkHooks; opened: boolean;
 }) {
   const move = (column: string) => onChange({ action: 'move', card: card.id, column, before: '' });
   return (
     <>
       <button type="button" className="ktitle" title="edit" onClick={onEdit}>{card.title}</button>
       {card.note && <p className="knote">{card.note}</p>}
+      {work && (
+        <button type="button" className={opened ? 'kwork on' : 'kwork'} aria-expanded={opened}
+          title="open this card above the board: its runs, and Start work on this card" onClick={() => work.onOpen(card)}>
+          {`${opened ? '▾' : '▸'} ${work.tally(card) === 'no runs yet' ? 'start work' : work.tally(card)}`}
+        </button>
+      )}
       <div className="kfoot">
         {card.item && <a href={cardItemHref(card.item)}>{itemLabel(card.item)}</a>}
-        {card.runs.length > 0 && <span className="kruns">{`${card.runs.length} run${card.runs.length === 1 ? '' : 's'}`}</span>}
+        {!work && card.runs.length > 0 && <span className="kruns">{`${card.runs.length} run${card.runs.length === 1 ? '' : 's'}`}</span>}
         {card.by !== DRIVER && <span className="kby" title={card.by}>{`by ${taskLabel(card.by)}`}</span>}
         <span className="sp"></span>
         <button type="button" className="ghost" disabled={!prev} aria-label={prev ? `Move to ${columnLabel(prev)}` : 'Move left'}

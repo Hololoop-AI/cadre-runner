@@ -169,7 +169,7 @@ export function CadreShell({ id, tab, fleet, children }: {
 }
 
 /** A cadre screen that is not its home: the bar, then the screen drawn without its own frame. */
-export function CadreScreen({ id, tab }: { id: string; tab: string }) {
+export function CadreScreen({ id, tab, fleet = null }: { id: string; tab: string; fleet?: Fleet | null }) {
   const chrome = useChrome();
   if (!chrome) return null;
   const title = chrome.nav?.screens.find((s) => s.id === tab)?.label || tab;
@@ -177,7 +177,7 @@ export function CadreScreen({ id, tab }: { id: string; tab: string }) {
     <div className="wrap">
       <CadreBar chrome={chrome} title={title} />
       <Framed.Provider value>
-        {tab === 'kanban' ? <KanbanScreen cadre={id} />
+        {tab === 'kanban' ? <KanbanScreen cadre={id} fleet={fleet} />
           : tab === 'blackboard' ? <BlackboardScreen />
             : tab === 'records' ? <RecordsScreen cadre={id === OTHER ? 'other' : id === HOLO ? 'holo' : id} name={chrome.name} />
             : tab === 'settings' ? (id === OTHER || id === HOLO ? <OtherSettings holo={id === HOLO} /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)

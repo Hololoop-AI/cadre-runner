@@ -105,7 +105,8 @@ describe('a cadre app', () => {
     expect(card.querySelector('summary')!.textContent).toContain('Cadre slice 2');
     expect(card.querySelector('summary')!.textContent).toContain('1 run · 1 your turn');
     expect(within(card).getByText('t-card page')).toBeTruthy();
-    expect(work.querySelector('details.wbacklog summary')!.textContent).toBe('Backlog · 1');
+    expect(work.querySelector('.wbacklog a')!.textContent).toBe('Backlog · 1');
+    expect(work.querySelector('details.wcard[data-card=bbbbbb]')).toBeNull(); // the Backlog is on the Kanban tab, not home
     const list = document.getElementById('fleet')!;
     expect(list.textContent).toContain('t-dev page');
     expect(list.textContent).not.toContain('t-card page');
@@ -117,8 +118,8 @@ describe('a cadre app', () => {
     expect(asked).toContain('/api/nav?cadre=dev');
   });
 
-  it('draws a card\'s runs with the Work list\'s graph, and starts a run on the card itself', async () => {
-    const asked = serving('/c/dev');
+  it('opens a card on the Kanban tab to its runs, drawn as the Work list\'s graph, and starts work on it there', async () => {
+    const asked = serving('/c/dev/kanban');
     const posts: [string, string][] = [];
     const real = globalThis.fetch as unknown as (u: string, o?: RequestInit) => Promise<Response>;
     vi.stubGlobal('fetch', vi.fn(async (url: string, o?: RequestInit) => {
@@ -129,11 +130,14 @@ describe('a cadre app', () => {
       return real(url, o);
     }));
     await act(async () => { render(<App />); });
-    const card = document.querySelector('details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
+    await act(async () => { screen.getByRole('button', { name: '▸ 1 run · 1 your turn' }).click(); });
+    const card = document.querySelector('section.kopen details.wcard[data-card=aaaaaa]') as HTMLDetailsElement;
     expect(card.classList.contains('item')).toBe(true);
     expect(card.querySelector('.wrun[data-run=t-card] .graph svg circle')).toBeTruthy();
-    // an empty backlog card is the same drop-down, with its own start box
-    const empty = document.querySelector('details.wcard[data-card=bbbbbb]') as HTMLDetailsElement;
+    // an empty backlog card opens the same way, with its start box already open
+    await act(async () => { screen.getByRole('button', { name: '▸ start work' }).click(); });
+    expect(document.querySelector('section.kopen details.wcard[data-card=aaaaaa]')).toBeNull(); // one card open at a time
+    const empty = document.querySelector('section.kopen details.wcard[data-card=bbbbbb]') as HTMLDetailsElement;
     expect(empty.textContent).toContain('Nothing has run for this card yet');
     const box = within(empty).getByRole('textbox', { name: 'What should the agent do for Light theme?' }) as HTMLTextAreaElement;
     await act(async () => {
