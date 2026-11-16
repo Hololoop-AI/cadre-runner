@@ -729,6 +729,56 @@ export interface CardTally {
 // --- from projects.ts
 /** projects.live: not archived, by name */
 export declare function liveProjects(projs: Record<string, Project>): Project[];
+// --- from work.ts
+/** A card's projects, last result and cost, from the home's items for its runs (`items`, by key). */
+export declare function cardFacts(runKeys: string[], items: ReadonlyMap<string, Item>, returned: number[]): CardFacts;
+/** How long a run on no card stays in the list after it last moved: a week. */
+export declare const LOOSE_FRESH_S: number;
+/**
+ * The cadre's work as one list. `board` is null for a cadre with no board;
+ * `loose` are its runs on no card, already filtered by the Work list's own
+ * rules (layout); `items` are the home's items by key, which a card's facts
+ * are read from; `now` is in seconds.
+ */
+export declare function workRows(board: Kanban | null, fleet: Fleet, loose: Item[], now: number, items?: ReadonlyMap<string, Item>, view?: WorkView): WorkRows;
+/** What a card shows in its row besides its tally: read from its runs. */
+export interface CardFacts {
+    /** the projects its runs ran in, most runs first */
+    projects: string[];
+    /** when a run on it last came back (0: none yet) */
+    returned: number;
+    /** what its runs cost */
+    spent: number;
+}
+/** One row of the list: an active card with its tally and facts, or a run on no card. */
+export type WorkRow = {
+    kind: 'card';
+    key: string;
+    card: KanbanCard;
+    tally: CardTally;
+    facts: CardFacts;
+    urgency: Urgency;
+    touched: number;
+/** The list, what folded below it, and its counts. */
+export interface WorkRows {
+    rows: WorkRow[];
+    /** runs on no card, quiet for longer than LOOSE_FRESH_S: folded below the list */
+    older: Item[];
+    /** how many rows need you, and how many an agent is on */
+    needs: number;
+    working: number;
+}
+/** The list's controls, as the Work list's own Sel keeps them. */
+export interface WorkView {
+    /** a SORTS key: needs (default), result, untouched, spent */
+    sort?: string;
+    /** a project id, '' for all */
+    proj?: string;
+    /** the states shown (the state chips); a card is your-turn, working or idle */
+    show?: string[];
+    /** only rows with something you have not opened */
+    unopened?: boolean;
+}
 // --- from tree.ts
 /** ancestors: root first, ending at task's parent */
 export declare function ancestors(task: string, parents: Record<string, string>): string[];

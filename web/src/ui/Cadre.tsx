@@ -2,12 +2,12 @@
 // open. The shell is the same for every cadre and comes from the cadre's
 // navigation list (GET /api/nav?cadre=<id>, runnerlib/cadres.py nav):
 //
-//   wide   the cadre rail of neon icons down the left (Groups.tsx), the
-//          cadre's screens as tabs under the header (always visible while
-//          you are in a cadre), and a second column of batches and pinned
-//          pages one click away, which folds;
-//   phone  one menu button in the header holding all of it: the rail, the
-//          screens (Settings among them) and the second column.
+//   wide   two strips of neon icons down the left: the cadres (Groups.tsx),
+//          then this cadre's pages (PageRail). One fold button folds both
+//          to a sliver, and the browser remembers it;
+//   phone  one menu button in the header holding the same two: the cadres
+//          as a strip, the pages with their names, and the whole fleet's
+//          screens.
 //
 // Each screen is drawn inside the shell (Framed, Screen.tsx), so the rail,
 // the tabs and Settings stay in reach from every one of them.
@@ -17,6 +17,7 @@ import { buildHome, groupBadges, HOLO, HOME_GROUP, OTHER, serverView, type Fleet
 import { RecordsScreen } from './Records';
 import { BlackboardScreen } from './Blackboard';
 import { GroupBar } from './Groups';
+import { PageIcon } from './PageIcon';
 import { KanbanScreen } from './Kanban';
 import { go } from './router';
 import { Framed } from './Screen';
@@ -35,7 +36,8 @@ export function railPick(id: string) {
   go(cadreHref(id));
 }
 
-const SIDE_SHUT = 'cadre.sideShut';
+/** the browser's memory of the rails folded away */
+const RAIL_SHUT = 'cadre.railShut';
 
 /** What a screen inside the shell draws its header with: the phone's menu button and the tabs. */
 export interface Chrome {
@@ -44,7 +46,7 @@ export interface Chrome {
   name: string;
   /** the phone's one menu button (hidden when wide) */
   menu: ReactNode;
-  /** the header tabs when wide, and the phone's open menu */
+  /** the phone's open menu (wide, the pages are in the rail) */
   tabs: ReactNode;
   /** the cadre's navigation, once it has arrived */
   nav: Nav | null;
@@ -56,41 +58,21 @@ export function useChrome(): Chrome | null {
   return useContext(ChromeContext);
 }
 
-/** The cadre's screens as tabs, the current one marked. */
-export function CadreTabs({ nav, tab }: { nav: Nav; tab: string }) {
+/**
+ * The cadre's pages as a second strip of neon icons beside the cadre rail
+ * (wide), folding with it; on a phone, the same icons with their names
+ * inside the menu. The current page is marked as the rail marks its cadre.
+ */
+export function PageRail({ nav, tab }: { nav: Nav; tab: string }) {
   return (
-    <nav className="ctabs" aria-label={`${nav.cadre.name} screens`}>
+    <nav className="pages-rail" aria-label={`${nav.cadre.name} pages`}>
       {nav.screens.map((s) => (
-        <a key={s.href} href={s.href} className={s.id === tab ? 'on' : ''} aria-current={s.id === tab ? 'page' : undefined}>{s.label}</a>
+        <a key={s.href} href={s.href} className={s.id === tab ? 'on' : ''} aria-current={s.id === tab ? 'page' : undefined} title={s.label}>
+          <span className="gi"><PageIcon id={s.id || ''} label={s.label} /></span>
+          <span className="gn">{s.label}</span>
+        </a>
       ))}
     </nav>
-  );
-}
-
-/** The second column: the cadre's batches and pinned pages, with Settings at its foot. */
-function SideLists({ nav }: { nav: Nav }) {
-  const settings = nav.screens.find((s) => s.id === 'settings');
-  return (
-    <>
-      <h3>Batches</h3>
-      {nav.batches.length ? <ul>{nav.batches.map((b) => <li key={b.href}><a href={b.href}>{b.label}</a></li>)}</ul>
-        : <p className="meta">None yet: batches are made on the board in the next slice.</p>}
-      <h3>Pinned</h3>
-      {nav.pinned.length ? <ul>{nav.pinned.map((p) => <li key={p.href}><a href={p.href}>{p.label}</a></li>)}</ul>
-        : <p className="meta">Nothing pinned. A page is pinned from the cadre's settings (the project record's <code>pinned</code>).</p>}
-      {settings && <p className="cset"><a href={settings.href}>⚙ {nav.cadre.name} settings</a></p>}
-    </>
-  );
-}
-
-/** The second column when wide: one click from anywhere in the cadre, and it folds to a sliver. */
-function SideColumn({ nav, shut, onShut }: { nav: Nav; shut: boolean; onShut: (s: boolean) => void }) {
-  return (
-    <aside className={shut ? 'cside shut' : 'cside'} aria-label={`${nav.cadre.name}: batches and pinned pages`}>
-      <button type="button" className="cfold" aria-expanded={!shut} title={shut ? 'Show batches and pinned pages' : 'Fold this column away'}
-        onClick={() => onShut(!shut)}>{shut ? '›' : '‹'}</button>
-      {!shut && <div className="clists"><h2>{nav.cadre.name}</h2><SideLists nav={nav} /></div>}
-    </aside>
   );
 }
 
@@ -131,10 +113,10 @@ export function CadreShell({ id, tab, fleet, children }: {
     server.fetchNav(id === OTHER ? 'other' : id === HOLO ? 'holo' : id).then(setNav).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [server, id]);
   const [open, setOpen] = useState(false); // the phone's menu
-  const [shut, setShut] = useState(() => window.localStorage?.getItem(SIDE_SHUT) === '1');
+  const [shut, setShut] = useState(() => window.localStorage?.getItem(RAIL_SHUT) === '1');
   const keepShut = (s: boolean) => {
     setShut(s);
-    window.localStorage?.setItem(SIDE_SHUT, s ? '1' : '0');
+    window.localStorage?.setItem(RAIL_SHUT, s ? '1' : '0');
   };
   const { groups, badges } = useRail(fleet);
   const name = nav?.cadre.name || (id === OTHER ? 'Other' : id);
@@ -145,25 +127,20 @@ export function CadreShell({ id, tab, fleet, children }: {
     </button>
   );
   const tabs = nav ? (
-    <>
-      <CadreTabs nav={nav} tab={tab} />
-      {open && (
-        <div id="cdrawer" className="cdrawer">
-          <h3>{name}</h3><CadreTabs nav={nav} tab={tab} /><SideLists nav={nav} />
-          <h3>The whole fleet</h3>
-          <p className="cfleet"><a href="/">Holo</a><a href="/runs">every run</a><a href="/costs">costs</a><a href="/cards">cards</a><a href="/library">library</a></p>
-        </div>
-      )}
-    </>
+    open ? (
+      <div id="cdrawer" className="cdrawer">
+        <h3>{name}</h3><PageRail nav={nav} tab={tab} />
+        <h3>The whole fleet</h3>
+        <p className="cfleet"><a href="/">Holo</a><a href="/runs">every run</a><a href="/costs">costs</a><a href="/cards">cards</a><a href="/library">library</a></p>
+      </div>
+    ) : null
   ) : error ? <p className="notice">{`Could not load this cadre's navigation: ${error}`}</p> : null;
   return (
     <ChromeContext.Provider value={{ cadre: id, name, menu, tabs, nav }}>
-      <GroupBar groups={groups} group={id === HOLO ? HOME_GROUP : id} badges={badges} shut={false} open={open}
-        onPick={(g) => { setOpen(false); railPick(g); }} onShut={() => {}} />
-      <div className={shut ? 'cshell shut' : 'cshell'}>
-        {nav && <SideColumn nav={nav} shut={shut} onShut={keepShut} />}
-        <div className="cmainwrap">{children}</div>
-      </div>
+      <GroupBar groups={groups} group={id === HOLO ? HOME_GROUP : id} badges={badges} shut={shut} open={open}
+        onPick={(g) => { setOpen(false); railPick(g); }} onShut={keepShut} />
+      {nav && !shut && <div className="pages-wide"><PageRail nav={nav} tab={tab} /></div>}
+      <div className="cmainwrap">{children}</div>
     </ChromeContext.Provider>
   );
 }

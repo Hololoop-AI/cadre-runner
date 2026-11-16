@@ -10,15 +10,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
-import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, type Kanban, type NewWorkInfo, type Sel } from '../model';
+import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, workRows, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { groupSuffix } from './Groups';
 import { Header } from './Header';
 import { CadreScreen, CadreShell, cadreHref, useChrome } from './Cadre';
 import { CadreCardList, useHoloRedirect } from './Holo';
-import { CardWork } from './CardWork';
-import { NewProjectForm, NewWorkDialog } from './NewWork';
+import { BacklogLine } from './CardWork';
+import { OneWork, workSummary, type WorkMode } from './OneWork';
 import { RunningNow } from './Running';
+import { NewProjectForm, NewWorkDialog } from './NewWork';
 import { Chips, Found, Toolbar } from './Toolbar';
 import { useFind } from './useFind';
 import { useFleet, type FleetState } from './useFleet';
@@ -34,10 +35,12 @@ import { TreeScreen } from './Tree';
 import { MachineSwitch, ServerProvider, useMachines, useServer, type Machines } from './server';
 import { useProjectOptions } from './useProjectOptions';
 import { useWorkLayout } from './useWorkLayout';
-import { WorkList } from './WorkList';
 
 /** Forms inside the Work list that post without leaving the app. */
 const LIST_POSTS = ['/items', '/tasks', '/repair', '/kanban'];
+
+/** Where the browser keeps cards or list. */
+const WORK_MODE = 'cadre.workMode';
 
 /** How many of Needs you the side column lists; the rest are in the Work list. */
 const NEEDS_SHOWN = 8;
@@ -110,6 +113,9 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
     return next;
   });
   const [q, setQ] = useState('');
+  // cards (a grid; one opens large) or list (a row each); the browser keeps the choice
+  const [mode, setMode] = useState<WorkMode>(() => (window.localStorage?.getItem(WORK_MODE) === 'list' ? 'list' : 'cards'));
+  const keepMode = (m: WorkMode) => { setMode(m); window.localStorage?.setItem(WORK_MODE, m); };
   // Catch me up, Archive and Start are plain form posts on the Python page:
   // it reloads at /?notice=…, so open items close, find clears and every
   // form starts over. `reloads` counts those; `drawn` counts the lighter
@@ -157,13 +163,29 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
   const onCards = useMemo(() => (ownsBoard ? runsOnCards(board) : new Set<string>()), [ownsBoard, board]);
   const loose = useMemo(() => (grouped && onCards.size ? (it: { key: string }) => grouped(it) && !onCards.has(it.key) : grouped),
     [grouped, onCards]);
-  const all = useWorkLayout(home, sel, { q: '', proj: '', sort, limit, grouped });
   const laid = useWorkLayout(home, sel, { q, proj, sort, limit, grouped: loose });
-  const found = useFind(q, home);
-  // Needs you: the cadre's own items whose turn it is under the cadre's own
-  // limit, whatever the chips and find show (layout() places every in-scope item)
+  const all = useWorkLayout(home, sel, { q: '', proj: '', sort, limit, grouped });
+  // Needs you: the cadre's own runs whose turn it is, whatever the chips and find show
   const waiting = all ? needsYou([...all.placed.list, ...all.placed.idle, ...all.placed.off], () => true) : [];
-
+  // the list's sort and filters apply to the cards as to the runs on no card
+  const workView = useMemo(() => ({ sort, proj, show: sel.show, unopened: sel.unopened }), [sort, proj, sel.show, sel.unopened]);
+  const byKey = useMemo(() => new Map((home?.items || []).map((it) => [it.key, it])), [home]);
+  const rowsAll = useMemo(() => (fleet && home && laid
+    ? workRows(ownsBoard ? board : null, fleet, [...laid.placed.list, ...laid.placed.idle], now, byKey, workView) : null),
+  [fleet, home, laid, ownsBoard, board, now, byKey, workView]);
+  // the state chips count the cards too: a card is Your turn, Agent working or Idle by its runs
+  const chipCount = useMemo(() => {
+    const out: Record<string, number> = { ...(laid?.placed.count || {}) };
+    if (!fleet || !ownsBoard || !board) return out;
+    const cards = workRows(board, fleet, [], now, byKey, { proj }).rows;
+    for (const r of cards) {
+      const st = r.urgency === 0 ? 'your-turn' : r.urgency === 1 ? 'working' : 'idle';
+      out[st] = (out[st] || 0) + 1;
+      if (r.kind === 'card' && r.tally.fresh) out.unopened = (out.unopened || 0) + 1;
+    }
+    return out;
+  }, [laid, fleet, ownsBoard, board, now, byKey, proj]);
+  const found = useFind(q, home);
   const onToggle = useCallback((key: string, isOpen: boolean) => setOpen((cur) => {
     if (cur.has(key) === isOpen) return cur;
     const next = new Set(cur);
@@ -211,39 +233,47 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
       <div className="wrap cdash">
         <Header weekUsd={fleet ? Number(fleet.cadre_week_usd?.[group]) || 0 : undefined} live={live} snapshot={fleet?.snap?.iso}
           onNewWork={() => setWork({ open: true, parent: '' })} switcher={<MachineSwitch {...machines} />}
-          groupName={group === HOLO ? 'holo' : groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu}
+          groupName={group === HOLO ? 'holo' : groupSuffix(group, [...groups, { id: OTHER, name: 'Other' }])} menu={chrome?.menu} links={group === HOLO}
           boardHref={cadreHref(group, hasKanban ? 'kanban' : 'blackboard')} boardLabel={hasKanban ? 'board' : 'blackboard'} />
         {chrome?.tabs}
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="notice">{`Could not load the fleet: ${error}`}</p>}
-        <div className="cgrid">
-        <div className="cmain">
         {group === HOLO && fleet && home && <CadreCardList fleet={fleet} home={home} />}
-        {ownsBoard && board && fleet && home && (
-          <CardWork board={board} fleet={fleet} home={home!} kanbanHref={cadreHref(group, 'kanban')}
-            cadre={group === OTHER ? 'other' : group} folder={nav?.settings.folders[0] || ''}
-            onChanged={(msg) => { setNotice(msg); refetch(); }} />
-        )}
-        <h2 className="sect">{ownsBoard ? 'One-off work (on no card)' : group === HOLO ? 'Holo\'s own work' : 'Work'}</h2>
-        <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
-          setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}
-          setLimit={(n) => keep({ limit: n })} projects={projects} />
-        {laid && home && (
-          <Chips sel={sel} count={laid.placed.count} tags={tagChips(home.tags, sel)}
-            onState={(st) => (st === 'unopened' ? keep({ unopened: !sel.unopened })
-              : keep({ show: sel.show.includes(st) ? sel.show.filter((x) => x !== st) : [...sel.show, st] }))}
-            onTag={(t) => keep({ tag: sel.tag === t ? '' : t })} />
-        )}
-        <Found q={q.trim()} hits={found?.hits ?? null} now={found?.now ?? now} />
-        <div id="fleet" onSubmit={onListSubmit}>
-          {fleet && home && laid && (
-            <WorkList home={home} fleet={fleet} work={laid} sel={sel} q={q} serverLimit={view.limit} open={open}
-              onToggle={onToggle} onNewWork={onNewWork} onIdleOpen={(o) => keep({ idleOpen: o })}
-              drawn={drawn + reloads} />
-          )}
-        </div>
-        {fleet && <NewProjectForm key={reloads} projs={fleet.projs || {}} />}
-        </div>
+        <div className="cgrid">
+        <section className="cwork cmain" aria-label="Work">
+          <h2 className="sect">{group === HOLO ? 'Holo\'s own work' : 'Work'}
+            {rowsAll && <span className="wsum">{workSummary(rowsAll)}</span>}
+            <span className="wmode" role="group" aria-label="Show the work as">
+              {(['cards', 'list'] as const).map((m) => (
+                <button key={m} type="button" aria-pressed={mode === m} onClick={() => keepMode(m)}>{m === 'cards' ? 'Cards' : 'List'}</button>
+              ))}
+            </span>
+            {ownsBoard && <a href={cadreHref(group, 'kanban')}>the board →</a>}</h2>
+          <Toolbar q={q} setQ={setQ} sort={sort} setSort={(v) => keep({ sort: v })} proj={proj}
+            setProj={(v) => keep({ proj: v })} limit={limit} limits={limitChoices(view.limit, sel.limit)}
+            setLimit={(n) => keep({ limit: n })} projects={projects} folded
+            chips={laid && home && (
+              <Chips part="states" sel={sel} count={chipCount} tags={[]}
+                onState={(st) => (st === 'unopened' ? keep({ unopened: !sel.unopened })
+                  : keep({ show: sel.show.includes(st) ? sel.show.filter((x) => x !== st) : [...sel.show, st] }))}
+                onTag={() => {}} />
+            )}
+            more={laid && home && (
+              <Chips part="tags" sel={sel} count={{}} tags={tagChips(home.tags, sel)}
+                onState={() => {}} onTag={(t) => keep({ tag: sel.tag === t ? '' : t })} />
+            )} />
+          <Found q={q.trim()} hits={found?.hits ?? null} now={found?.now ?? now} />
+          <div id="fleet" onSubmit={onListSubmit}>
+            {fleet && home && laid && (
+              <OneWork board={ownsBoard ? board : null} fleet={fleet} home={home} work={laid} view={workView} mode={mode} q={q}
+                cadre={group === OTHER ? 'other' : group} folder={nav?.settings.folders[0] || ''} open={open}
+                onToggle={onToggle} onNewWork={onNewWork} drawn={drawn + reloads}
+                onChanged={(msg) => { setNotice(msg); refetch(); }} />
+            )}
+          </div>
+          {ownsBoard && board && <BacklogLine board={board} kanbanHref={cadreHref(group, 'kanban')}
+            onChanged={(msg) => { setNotice(msg); refetch(); }} />}
+        </section>
         <aside className="cnext" aria-label="Needs you and running now">
           <section className="needs">
             <h2 className="sect">Needs you <span className="kn">{waiting.length}</span></h2>
@@ -252,7 +282,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
                 <li key={it.key}><a href={it.head?.path ? viewHref(it.head.path) : `/tree/${encodeURIComponent(it.key)}`}>{it.title}</a></li>
               ))}</ul>
             )}
-            {waiting.length > NEEDS_SHOWN && <p className="meta">{`and ${waiting.length - NEEDS_SHOWN} more under Your turn in Work`}</p>}
+            {waiting.length > NEEDS_SHOWN && <p className="meta">{`and ${waiting.length - NEEDS_SHOWN} more in the Work list`}</p>}
           </section>
           <div id="fleet-running">
             {fleet && <RunningNow cards={(fleet.running || []).filter((c) => inGroup(home?.member[s(c.item || c.task)] || [], group))}
@@ -260,9 +290,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
           </div>
         </aside>
         </div>
-        <footer>
-          <a href="/library">installed skills, agents and workflows</a> · <a href="/tree">which session launched which</a> · <a href="/costs">what each run cost</a>
-        </footer>
+        {group === HOLO && fleet && <NewProjectForm key={reloads} projs={fleet.projs || {}} />}
       </div>
       <NewWorkDialog key={reloads} open={work.open} dataOpen={!!query.get('parent')} parent={work.parent}
         parents={home?.parents || []} projs={fleet?.projs || {}} home={nw.home} lib={nw.library}

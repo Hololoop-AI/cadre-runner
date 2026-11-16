@@ -1,6 +1,7 @@
 // The Work list's controls (statusd.work_toolbar), the state and tag chips
 // the page script fills, and Find everywhere's results (render_found).
 
+import type { ReactNode } from 'react';
 import { CHIPS, relTime, SORTS, viewHref, type Hit, type Sel } from '../model';
 
 export interface ToolbarProps {
@@ -14,37 +15,82 @@ export interface ToolbarProps {
   limits: number[];
   setLimit: (n: number) => void;
   projects: [string, string][];
+  /** the home's bar: find, sort and project in one row, then `chips` (the states), with the limit and `more` (tags) folded behind More */
+  folded?: boolean;
+  chips?: ReactNode;
+  more?: ReactNode;
 }
 
 export function Toolbar(p: ToolbarProps) {
+  if (p.folded) {
+    return (
+      <div className="wbar">
+        <form className="toolbar" id="workbar" method="get" action="/" onSubmit={(e) => e.preventDefault()}>
+          <input id="filter" type="search" name="q" aria-label="find" autoComplete="off"
+            placeholder="find in this work, and every page ever opened" value={p.q} onChange={(e) => p.setQ(e.target.value)} />
+          <SortSelect {...p} /><ProjectSelect {...p} />
+        </form>
+        {p.chips}
+        {p.more && (
+          <details className="wfilters">
+            <summary>More</summary>
+            <div className="wfilterbox"><LimitSelect {...p} />{p.more}</div>
+          </details>
+        )}
+      </div>
+    );
+  }
   return (
     <form className="toolbar" id="workbar" method="get" action="/" onSubmit={(e) => e.preventDefault()}>
       <input id="filter" type="search" name="q" aria-label="find" autoComplete="off"
         placeholder="find: filters these items and searches every page ever opened"
         value={p.q} onChange={(e) => p.setQ(e.target.value)} />
-      <select id="sort" name="sort" aria-label="sort" value={p.sort} onChange={(e) => p.setSort(e.target.value)}>
-        {Object.entries(SORTS).map(([k, v]) => <option key={k} value={k}>{`Sort: ${v}`}</option>)}
-      </select>
-      <select id="proj" className="projfilter" aria-label="project" value={p.proj} onChange={(e) => p.setProj(e.target.value)}>
-        <option value="">All projects</option>
-        {p.projects.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-      </select>
-      <label className="hint">Home shows <select id="limit" name="limit" aria-label="home limit" value={String(p.limit)}
-        onChange={(e) => p.setLimit(+e.target.value)}>
-        {p.limits.map((n) => <option key={n} value={String(n)}>{n}</option>)}
-      </select> items, then the least recently touched fold into Idle</label>
+      <ViewControls {...p} />
     </form>
   );
 }
 
+/** Sort, project and how many the home shows. */
+function ViewControls(p: ToolbarProps) {
+  return <><SortSelect {...p} /><ProjectSelect {...p} /><LimitSelect {...p} /></>;
+}
+
+function SortSelect(p: ToolbarProps) {
+  return (
+    <select id="sort" name="sort" aria-label="sort" value={p.sort} onChange={(e) => p.setSort(e.target.value)}>
+      {Object.entries(SORTS).map(([k, v]) => <option key={k} value={k}>{`Sort: ${v}`}</option>)}
+    </select>
+  );
+}
+
+function ProjectSelect(p: ToolbarProps) {
+  return (
+    <select id="proj" className="projfilter" aria-label="project" value={p.proj} onChange={(e) => p.setProj(e.target.value)}>
+      <option value="">All projects</option>
+      {p.projects.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+    </select>
+  );
+}
+
+function LimitSelect(p: ToolbarProps) {
+  return (
+    <label className="hint">Home shows <select id="limit" name="limit" aria-label="home limit" value={String(p.limit)}
+      onChange={(e) => p.setLimit(+e.target.value)}>
+      {p.limits.map((n) => <option key={n} value={String(n)}>{n}</option>)}
+    </select> items, then the least recently touched fold into Idle</label>
+  );
+}
+
 /** The state chips and the tag chips (`tags` already includes a kept tag no item carries: tagChips). */
-export function Chips({ sel, count, tags, onState, onTag }: {
+export function Chips({ sel, count, tags, onState, onTag, part = 'both' }: {
   sel: Sel; count: Record<string, number>; tags: string[];
   onState: (st: string) => void; onTag: (t: string) => void;
+  /** draw only the state chips, only the tag chips, or both */
+  part?: 'states' | 'tags' | 'both';
 }) {
   return (
     <>
-      <div className="toolbar chips" id="states">
+      {part !== 'tags' && <div className="toolbar chips" id="states">
         {CHIPS.map(([st, label]) => {
           const on = st === 'unopened' ? sel.unopened : sel.show.includes(st);
           return (
@@ -53,13 +99,13 @@ export function Chips({ sel, count, tags, onState, onTag }: {
             </button>
           );
         })}
-      </div>
-      <div className="toolbar chips" id="tags">
+      </div>}
+      {part !== 'states' && <div className="toolbar chips" id="tags">
         {tags.length ? <span className="hint">tags:</span> : null}
         {tags.map((t) => (
           <button key={t} type="button" className="chipbtn" aria-pressed={sel.tag === t} onClick={() => onTag(t)}>{`#${t}`}</button>
         ))}
-      </div>
+      </div>}
     </>
   );
 }

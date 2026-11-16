@@ -1,37 +1,85 @@
 /* A cadre's shell (Cadre.tsx) and Hololoop's cards (Hololoop.tsx). React
    only, so not part of the generated fleet.css; colours are the theme's
-   variables. Wide: the rail (groups.css), then the side column of batches
-   and pinned pages, which folds, then the screen with its tabs under the
-   header. Phone: one menu button opens the rail, the tabs and the side
-   column; nothing else of the shell shows. */
+   variables. Wide: the cadre rail (groups.css), then the cadre's pages as a
+   second strip of icons; one button folds both. Phone: one menu button
+   opens the rail and the pages; nothing else of the shell shows. */
 
-/* the tabs: the cadre's screens, always in view while you are in it */
-nav.ctabs{display:flex;gap:4px;flex-wrap:wrap;margin:-4px 0 16px;border-bottom:1px solid var(--border)}
-nav.ctabs a{padding:6px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--muted);
- font-size:13px;text-decoration:none}
-nav.ctabs a:hover{color:var(--fg)}
-nav.ctabs a.on{color:var(--fg);border-bottom-color:var(--accent)}
-
-/* the side column's lists, wide and in the phone's menu */
-.clists h2{margin:0 0 10px;font:600 15px/1.2 var(--serif);color:var(--fg)}
-.clists h3,.cdrawer h3{margin:14px 0 6px;font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:var(--label)}
-.clists ul,.cdrawer ul{list-style:none;margin:0;padding:0}
-.clists li a,.cdrawer li a{display:block;padding:3px 0;color:var(--fg);font-size:13px;text-decoration:none}
-.clists li a:hover,.cdrawer li a:hover{color:var(--accent)}
-.clists .meta,.cdrawer .meta{font:12px/1.45 var(--sans);color:var(--muted);margin:0}
+/* the cadre's pages: a second strip of neon icons beside the cadre rail
+   (PageRail, PageIcon.tsx); same look as the rail's entries (groups.css) */
+nav.pages-rail a{position:relative;display:flex;align-items:center;gap:10px;color:var(--muted);text-decoration:none;font-size:13px}
+nav.pages-rail .gi{display:grid;place-items:center;width:28px;height:28px;flex:none;color:var(--label);transition:color .15s,filter .15s}
+nav.pages-rail .gsvg{width:100%;height:100%;overflow:visible}
+nav.pages-rail a:hover .gi{color:var(--fg);filter:drop-shadow(0 0 2px currentColor)}
+nav.pages-rail a.on .gi{color:var(--accent);filter:drop-shadow(0 0 3px currentColor)}
+nav.pages-rail a.on{color:var(--fg)}
 .cdrawer .cfleet{display:flex;flex-wrap:wrap;gap:4px 14px}
 .cdrawer .cfleet a{color:var(--muted);font-size:13px;text-decoration:none}
-.cset{margin:18px 0 0}
-.cset a{color:var(--accent);font-size:13px;text-decoration:none}
 
-/* the dashboard: the board and the work lead, Needs you and Running now beside */
+/* the home's one Work list: its heading carries the count of what needs you */
+.cwork h2.sect{display:flex;align-items:baseline;gap:14px;margin:0 0 12px}
+.cwork h2.sect .wsum{font:500 12px/1 var(--mono);letter-spacing:0;text-transform:none;color:var(--ok)}
+.cwork h2.sect a{margin-left:auto;font-size:12px;text-transform:none;letter-spacing:0}
+.wbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 18px}
+.wbar form.toolbar{display:flex;gap:8px;flex:1 1 100%;margin:0}
+.wbar form.toolbar input{flex:1;min-width:0;box-sizing:border-box}
+.wbar form.toolbar select{flex:none;width:auto}
+.wbar .toolbar.chips{margin:0}
+details.wfilters > summary{cursor:pointer;white-space:nowrap;color:var(--muted);font-size:13px}
+details.wfilters[open]{flex-basis:100%}
+.wfilterbox{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--sunk)}
+.wfilterbox .toolbar.chips{flex-basis:100%;margin:0}
+/* cards or list, in the Work heading */
+.cwork h2.sect .wmode{display:inline-flex;margin-left:auto;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.cwork h2.sect .wmode + a{margin-left:12px}
+body.home .cwork .wmode button{border:0;border-radius:0;padding:2px 10px;background:transparent;color:var(--muted);
+ font:500 11px/18px var(--sans);letter-spacing:.04em;text-transform:none}
+body.home .cwork .wmode button[aria-pressed=true]{background:var(--card-2);color:var(--fg)}
+
+/* the grid of cards: each says what its row says, with its note; a click opens it large */
+.wtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin:0 0 12px}
+body.home button.wtile{display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;min-height:150px;
+ padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:12px;color:var(--fg);
+ font:inherit;cursor:pointer;transition:border-color .15s,transform .15s}
+body.home button.wtile:hover,body.home button.wtile:focus-visible{border-color:var(--accent);transform:translateY(-1px)}
+body.home button.wtile.loose{border-style:dashed}
+.wtile .ttop{display:flex;align-items:center;gap:8px}
+.wtile .ttop .when{margin-left:auto;font-size:12px;color:var(--muted)}
+.wtile .ttitle{font:600 15px/1.35 var(--sans);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.wtile .tnote{font-size:12.5px;line-height:1.45;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wtile .tfoot{margin-top:auto;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.wtile .wtally{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.wtile .proj{font-family:var(--mono);font-size:.72rem;color:var(--label)}
+.card.items.wempty:not(:has(details.item:not(.offlist))){display:none}
+
+/* the opened card, large, above everything */
+dialog.wlarge{width:min(1100px,94vw);max-height:88vh;padding:0;overflow:hidden;border:1px solid var(--border);border-radius:14px;
+ background:var(--bg);color:var(--fg);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+dialog.wlarge::backdrop{background:color-mix(in srgb,var(--bg) 40%,transparent);backdrop-filter:blur(3px)}
+dialog.wlarge .wlbody{position:relative;padding:18px 20px;max-height:88vh;box-sizing:border-box;overflow:auto}
+body.home dialog.wlarge button.wlclose{position:absolute;top:10px;right:12px;z-index:1;padding:2px 9px;border:1px solid var(--border);
+ border-radius:999px;background:var(--card-2);color:var(--fg)}
+dialog.wlarge .card.items{margin:0;padding-right:36px}
+dialog.wlarge details.item > summary .title{white-space:normal}
+/* a phone: the opened card takes the whole screen */
+@media (max-width:640px){
+ dialog.wlarge{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0}
+ dialog.wlarge .wlbody{max-height:100dvh;height:100%;padding:14px 10px}
+ dialog.wlarge .card.items{padding-right:0;border:0;background:transparent}
+ dialog.wlarge details.item > summary{padding-right:44px}
+}
+
+form.widea{display:flex;gap:8px;align-items:center;margin:10px 0 0}
+form.widea input{flex:1}
+form.widea .wbacklog{white-space:nowrap;font-size:12px}
+
+/* the dashboard: the one Work list leads, Needs you and Running now beside it */
 body.home.cadre .wrap{max-width:1480px}
-.cgrid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start}
-.cnext{position:sticky;top:12px;display:flex;flex-direction:column;gap:14px}
-.cnext .needs{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:28px;align-items:start;margin-top:22px}
+.cnext{position:sticky;top:16px;display:flex;flex-direction:column;gap:16px}
+.cnext .needs{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
 .cnext .needs h2{margin-top:0}
 .cnext .needs .kn{font-family:var(--mono);color:var(--muted);font-size:.8em}
-.cnext .needs ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.cnext .needs ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
 .cnext .needs a{color:var(--fg);text-decoration:none;font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cnext .needs a:hover{color:var(--accent)}
 .cnext #fleet-running .cards,.cnext #fleet-running .grid{grid-template-columns:1fr}
@@ -41,29 +89,30 @@ body.home.cadre .wrap{max-width:1480px}
 body.home header button.cmenu{padding:3px 11px;border:1px solid var(--border);border-radius:999px;
  background:var(--card-2);color:var(--fg);font-size:15px;line-height:20px}
 .cdrawer{margin:0 0 14px;padding:10px 12px;background:var(--sunk);border:1px solid var(--border);border-radius:12px}
+.cdrawer h3{margin:14px 0 6px;font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:var(--label)}
 .cdrawer h3:first-child{margin-top:0}
-.cdrawer nav.ctabs{display:flex;flex-direction:column;border:0;margin:0}
-.cdrawer nav.ctabs a{border:0;border-left:2px solid transparent;padding:6px 10px;font-size:14px}
-.cdrawer nav.ctabs a.on{border-left-color:var(--accent)}
+.cdrawer nav.pages-rail{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+.cdrawer nav.pages-rail a{padding:4px 0}
 
 @media (min-width:641px){
  body.home header button.cmenu{display:none}
  .cdrawer{display:none}
- .cshell{display:grid;grid-template-columns:200px minmax(0,1fr)}
- .cshell.shut{grid-template-columns:22px minmax(0,1fr)}
- .cside{position:sticky;top:0;height:100vh;overflow-y:auto;box-sizing:border-box;padding:14px 12px 14px 10px;
-  background:color-mix(in srgb,var(--sunk) 60%,var(--bg));border-right:1px solid var(--border)}
- .cside.shut{padding:8px 0}
- body.home .cside button.cfold{float:right;padding:0 4px;border:0;background:transparent;color:var(--muted);font-size:15px;line-height:18px}
- body.home .cside.shut button.cfold{float:none;display:block;margin:0 auto}
- body.home .cside button.cfold:hover{color:var(--fg)}
+ /* the pages strip sits beside the cadre rail (44px, groups.css) and folds with it */
+ body.home:has(nav.groups):has(.pages-wide){padding-left:108px}
+ .pages-wide{position:fixed;left:44px;top:0;bottom:0;width:44px;box-sizing:border-box;padding:36px 4px 10px;
+  background:color-mix(in srgb,var(--sunk) 70%,var(--bg));border-right:1px solid var(--border);overflow-y:auto;z-index:5}
+ .pages-wide nav.pages-rail{display:flex;flex-direction:column;align-items:center;gap:10px}
+ .pages-wide nav.pages-rail a{justify-content:center;width:100%;padding:3px 0}
+ .pages-wide nav.pages-rail a.on::before{content:"";position:absolute;left:-4px;top:5px;height:22px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--accent)}
+ /* the name is the tooltip and what a screen reader says */
+ .pages-wide nav.pages-rail .gn{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
  .cmainwrap{min-width:0}
 }
 @media (max-width:640px){
- .cside{display:none}
- /* the phone's header: title, menu, New work; the fleet-wide links move into the menu */
+ .pages-wide{display:none}
+ /* the phone's header: title, menu, New work */
  body.home.cadre header a:not(:first-of-type),body.home.cadre header .live{display:none}
- .cmainwrap > .wrap > nav.ctabs{display:none}
  body.home header:has(button.cmenu) h1{flex-basis:auto}
  body.home header button.cmenu{margin-right:auto}
  /* every dropdown takes the full width on a phone, except the home item
