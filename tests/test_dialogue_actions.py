@@ -469,7 +469,7 @@ def no_real_spawn(calls):
 
     def fake_spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
                    timeout, run_dir, session_id=None, resume=False,
-                   extra_env=None, argv=None, thinking_url=None):
+                   extra_env=None, argv=None, thinking_url=None, plugin_dirs=None):
         Path(run_dir).mkdir(parents=True, exist_ok=True)
         calls.append(Spawned(prompt=prompt, cwd=str(wt_path), model=model,
                              session_id=session_id, resume=resume,

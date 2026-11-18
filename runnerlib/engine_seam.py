@@ -24,7 +24,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import cadres, claude_run, engine, projects
+from . import cadres, claude_run, engine, projects, skillstore
 from . import runs as runs_mod
 from .blackboard import Board
 from .nodes import Nodes
@@ -295,16 +295,20 @@ def run_task_spawn(cfg, reg, board: Board, log, run_turn, spec: dict, payload: d
     skills = cadres.skills_for(cfg.data_dir, projs, task_id, pid or "")
     if str(rec.get("run") or "").startswith("skill:"):
         skills.append(rec["run"].split(":", 1)[1])
+    # The run's skills reach it as a plugin of its own (--plugin-dir), built
+    # from Cadre's store, its shipped skills and every configured source;
+    # nothing is written into the folder the work runs in.
     try:
-        linked, missing = claude_run.install_task_skills(cwd, cfg.skills_source,
-                                                         extra=skills)
+        root, linked, missing = skillstore.build_plugin(
+            cfg, task_id, [*skillstore.TASK_SKILLS, *skills])
+        rec["plugin_dir"] = str(root)
         if linked:
-            log(f"engine: linked skills into {cwd}: {', '.join(linked)}")
+            log(f"engine: {task_id} gets skills {', '.join(linked)}")
         if missing:
-            log(f"engine: skills not found for {cwd}: {', '.join(missing)} — looked in "
-                f"{claude_run.REPO_SKILLS} and {cfg.skills_source}")
+            log(f"engine: skills not found for {task_id}: {', '.join(missing)} — looked in "
+                + ", ".join(str(p) for _, p in skillstore.sources(cfg)))
     except Exception as e:
-        log(f"engine: task skill install failed for {cwd}: {e}")
+        log(f"engine: building {task_id}'s skills failed: {e}")
     if payload.get("target") == tasks.TARGET_HANDOFF:
         # The node event handed this task to a node. Its turns get their own
         # page and a session of their own; the reap links the new page

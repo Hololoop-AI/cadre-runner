@@ -1,0 +1,38 @@
+{
+  "skill_name": "learning-debrief",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We just merged the 6-slice passage-threads feature in cadre-runner that I mostly delegated. Wrap up.",
+      "expected_output": "Offers an optional short debrief in one line rather than running a quiz unasked or dumping a summary.",
+      "files": [],
+      "expectations": [
+        "Offers a debrief as optional (driver can decline)",
+        "Does not start quizzing without the driver's agreement",
+        "Does not produce a long summary of the feature as a substitute"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Yes, debrief me on the passage-threads feature (cadre-runner, runnerlib/study_thread.py).",
+      "expected_output": "Two to four predict/explain/locate/hands-on items, one at a time, answers withheld until attempted.",
+      "files": [],
+      "expectations": [
+        "Asks a predict, explain, locate or hands-on question first",
+        "Withholds the agent's implementation until the driver attempts",
+        "Plans at most four items"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "No debrief right now.",
+      "expected_output": "Accepts, offers a delayed one once, no pressure.",
+      "files": [],
+      "expectations": [
+        "Accepts the decline",
+        "Offers at most once to schedule a later debrief",
+        "Does not argue for doing it now"
+      ]
+    }
+  ]
+}

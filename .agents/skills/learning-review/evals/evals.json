@@ -1,0 +1,39 @@
+{
+  "skill_name": "learning-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Grade this answer to due card c-aa11 (kind concept). Front: 'In cadre-runner, why does a side thread page never supersede its dialogue page?' Reference: {answer: 'Superseding retires the old page; a thread would hide the dialogue page the driver must still rule on.', points: ['supersede retires the page', 'the dialogue page must stay answerable']}. Driver's answer: 'because they are different pages'.",
+      "expected_output": "Grades 1 or 2, names the missing points, gives a hint before the answer; proposes the review command only once the answer is stated.",
+      "files": [],
+      "expectations": [
+        "Proposes grade 1 or 2",
+        "Names at least one specific missing reference point",
+        "Gives a hint or pointed question before stating the full answer",
+        "Either gives a hint and waits for the driver, or, if it states the answer, includes a `cards review c-aa11 --grade` command with --model-grade"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run my review: 3 cards are due \u2014 a fact card on French verb \u00eatre past participle, a code card on where cadre-runner's FSRS scheduler is called, and a concept card on why WAL mode is used. I only have 5 minutes.",
+      "expected_output": "Light-touch: recall only, one card at a time, no deep probing.",
+      "files": [],
+      "expectations": [
+        "Asks only the first card's question before waiting for an answer",
+        "Does not reveal any answer before the driver responds",
+        "Acknowledges the time limit by keeping it brief"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Card c-bb22 front: 'What does it do?' Reference: {answer: 'Retries the webhook with backoff.'}. Driver's answer: 'no idea what this is asking'.",
+      "expected_output": "Recognises the card is the problem, reframes via learning-cards instead of grading the driver down.",
+      "files": [],
+      "expectations": [
+        "Identifies the card as ambiguous / missing context",
+        "Proposes a reframe (cards revise) rather than only recording a grade of 1",
+        "Does not lecture the driver for not knowing"
+      ]
+    }
+  ]
+}

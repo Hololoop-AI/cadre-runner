@@ -16,6 +16,14 @@ def _clean_cadre_env(monkeypatch):
         monkeypatch.delenv(name)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_rust_board(monkeypatch, tmp_path_factory):
+    """No test reaches the machine's real Rust board (the user service at
+    $XDG_RUNTIME_DIR/picatrix/blackboard.sock): the socket points at a path
+    nothing serves. Tests that want a board use `rust_board`."""
+    monkeypatch.setenv("BLACKBOARD_SOCKET", str(tmp_path_factory.mktemp("noboard") / "none.sock"))
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "own_page_server_fakes: the test fakes the review-surface CLI or "
@@ -50,3 +58,38 @@ def _no_fleet_payload_carried_over():
     statusd = sys.modules.get("statusd")
     if statusd is not None:
         statusd.forget_payload()
+
+
+@pytest.fixture
+def rust_board():
+    """A real `blackboard serve` child on a scratch socket, as a
+    runnerlib.rboard.Client; the test is skipped when the binary is absent
+    ($BLACKBOARD_BIN, else `blackboard` on PATH)."""
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from runnerlib import rboard
+
+    binary = os.environ.get("BLACKBOARD_BIN") or shutil.which("blackboard")
+    if not binary:
+        pytest.skip("no blackboard binary (set BLACKBOARD_BIN or put it on PATH)")
+    d = Path(tempfile.mkdtemp(prefix="bb-"))     # short: a socket path has a length limit
+    sock = d / "s.sock"
+    proc = subprocess.Popen([binary, "serve", "--db", str(d / "board.db"), "--socket", str(sock)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    client = rboard.Client(sock)
+    try:
+        for _ in range(100):
+            if client.up():
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("blackboard serve did not answer within 5s")
+        yield client
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+        shutil.rmtree(d, ignore_errors=True)

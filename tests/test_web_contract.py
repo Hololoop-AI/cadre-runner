@@ -30,7 +30,7 @@ import statusd
 CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
-GETS = ["/api/blackboard", "/api/records", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
+GETS = ["/api/deck", "/api/blackboard", "/api/records", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
         "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}",
         "/api/view/{key}", "/api/kanban", "/api/nav"]
 # what a path parameter is filled with when a case is requested
@@ -42,6 +42,7 @@ POSTS = {"/tasks": "text=&cwd=/tmp",
          "/repair": "action=move&key=nosuchkey&project=cadre",
          "/projects": "name=Shop&dir1=/tmp",
          "/study": "topic=fsrs&from=task-a&back=/view/aaaa",
+         "/cards": "id=c-nosuch&do=keep&back=/c/learn/review",
          "/kanban": "action=add&title=Plan+the+week&column=ready"}
 STREAMS = ["/fleet/events"]
 # payload.ts types the app builds itself, never read off the wire

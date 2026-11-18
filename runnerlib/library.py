@@ -66,7 +66,11 @@ def _entry(kind, name, desc, path, scope, broken=False) -> dict:
     desc = " ".join(str(desc or "").split())
     return {"kind": kind, "name": name, "description": desc[:300], "path": str(path),
             "scope": scope, "origin": "linked", "broken": broken,
-            "invoke": invocation(kind, name)}
+            # a skill held by Cadre (its store, its own, a configured source)
+            # reaches the run inside its `cadre` plugin, so it is typed with
+            # the plugin's prefix (runnerlib/skillstore.py)
+            "invoke": (f"/cadre:{name}" if kind == "skill" and scope == "skills_source"
+                       else invocation(kind, name))}
 
 
 def _agents(d: Path, scope: str) -> list[dict]:
@@ -133,8 +137,11 @@ def roots(dirs=(), skills_source=None, home=None) -> list[tuple[str, Path, str]]
             out.append((sub, Path(d) / ".claude" / sub, str(d)))
     for sub in _SCANNERS:
         out.append((sub, home / ".claude" / sub, "user"))
-    if skills_source:
-        out.append(("skills", Path(skills_source).expanduser(), "skills_source"))
+    # one folder, or every place Cadre holds skills (skillstore.paths)
+    listed = skills_source if isinstance(skills_source, (list, tuple)) else [skills_source]
+    for src in listed:
+        if src:
+            out.append(("skills", Path(src).expanduser(), "skills_source"))
     return out
 
 

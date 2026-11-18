@@ -76,7 +76,7 @@ def test_the_agent_is_a_fork_that_reads_anything_and_writes_only_its_page():
     assert not any(a in ("Edit", "Write", "Bash") for a in allowed), "no blanket writes"
     assert [a for a in allowed if a.startswith("Bash(")][0].endswith(" cards propose:*)")
     prompt = argv[argv.index("--append-system-prompt") + 1]
-    assert "edits nothing in the repo" in prompt and "/t/page.html" in prompt
+    assert "edits nothing in that folder" in prompt and "/t/page.html" in prompt
 
     # once it has its own session, a restart resumes THAT, not a new fork
     argv = study_thread.claude_argv(cfg, {**rec, "session_id": "sess-thread"})
@@ -374,7 +374,7 @@ def test_a_thread_started_to_talk_opens_on_the_passage_and_offers_study(quiet):
     assert not any(a in ("Edit", "Write", "Bash") for a in allowed), "still no blanket writes"
     prompt = argv[argv.index("--append-system-prompt") + 1]
     assert study_thread.OPENING["talk"] in prompt
-    assert "edits nothing in the repo" in prompt
+    assert "edits nothing in that folder" in prompt
     assert "study \"<the topic, in their words>\" --from task-parent" in prompt
     assert "numbered options" in prompt and "One of them is always to learn about" in prompt
     assert f"study-thread promote {t['id']}" in prompt and "Never send one they have not seen" in prompt

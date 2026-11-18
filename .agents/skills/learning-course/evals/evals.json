@@ -1,0 +1,37 @@
+{
+  "skill_name": "learning-course",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Teach me system design. I've built web apps but never designed anything at scale.",
+      "expected_output": "Asks goals/prior knowledge, proposes 6-12 idea topic map, creates course file, starts with a question not a lecture.",
+      "files": [],
+      "expectations": [
+        "Proposes a topic map of roughly 6-12 ideas",
+        "Mentions keeping a course file for progress across sessions",
+        "Opens the first idea with a question before teaching"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Resume my system design course. courses/system-design.md says: done \u2014 load balancing, caching; shaky \u2014 cache invalidation; next \u2014 sharding.",
+      "expected_output": "Reviews due course cards / revisits shaky point briefly, then sharding with practice.",
+      "files": [],
+      "expectations": [
+        "Reads or references the course file state",
+        "Briefly revisits cache invalidation or its cards before new material",
+        "Introduces sharding with a question or scenario"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "This sharding explanation isn't landing, can we try differently?",
+      "expected_output": "Changes angle (concrete example/analogy/problem) rather than repeating.",
+      "files": [],
+      "expectations": [
+        "Uses a different angle than restating the same explanation",
+        "Keeps the driver producing (asks them to apply/predict)"
+      ]
+    }
+  ]
+}

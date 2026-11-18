@@ -1,4 +1,8 @@
-"""Cards: what the driver keeps from learning their own code.
+"""Cards: what the driver keeps from learning anything, on a spaced schedule.
+
+The deck is Learn's (the study cadre): cards come from study sessions,
+threads and debriefs on any material (a codebase, a recipe, a medical
+question), and come back as review. `source` names the topic, not a repo.
 
 A stand-in for Arboreus's cards, living inside Cadre so learning happens where
 the work is read rather than in a second app (driver's call, 2026-10-22, on the
@@ -11,8 +15,10 @@ there).
 A card:
 
     id         c-<8 hex>
-    source     what it is about: a repo or topic ("cadre-runner", "work-api")
-    anchor     where it came from: a file, PR, commit, page or task id; "" if none
+    source     what it is about: a topic or work ("sourdough", "cadre-runner")
+    anchor     where it came from: a session or task id, a page, a file, a
+               source; "" if none. A study session anchors its cards to
+               itself, which is how Learn counts the cards kept from it
     front      the prompt, seen cold months from now. Cards are front-only —
                the grader is the answer side, as in Arboreus
     kind       fact | concept | procedure | code — what sort of knowing it

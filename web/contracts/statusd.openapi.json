@@ -267,7 +267,7 @@
     "/study": {
       "post": {
         "x-tier": "app",
-        "summary": "Start a study session on a topic: from the frame above a dialogue's page (`from` = its task) or from the deck (`cwd`). Lands on `back` (a /view/<key> or /cards) with what happened.",
+        "summary": "Ask Learn for a study session on a topic (runnerlib/learn.py request: an ask on the study board that Learn takes at once): from the frame above a dialogue's page (`from` = its task) or from Learn's Cards tab (`cwd`). Lands on `back` (a /view/<key>, /cards or a cadre tab /c/<id>/<tab>) with what happened.",
         "requestBody": {
           "required": true,
           "content": {
@@ -661,6 +661,53 @@
           }
         }
       }
+    },
+    "/api/deck": {
+      "get": {
+        "summary": "Learn's deck: due, in review, proposed, topics, and its study sessions (statusd.deck_payload)",
+        "responses": {
+          "200": {
+            "description": "the deck",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards": {
+      "post": {
+        "x-tier": "app",
+        "summary": "Keep (accept) or drop (discard) one proposed card, from Learn's Cards tab or the /cards page. Lands on `back` when it is a cadre tab, else /cards.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CardForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Landing"
+          },
+          "303": {
+            "$ref": "#/components/responses/Landed"
+          },
+          "403": {
+            "$ref": "#/components/responses/CrossOrigin"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -910,6 +957,16 @@
           "cadre": {
             "type": "string",
             "description": "present only on /api/fleet?cadre=<id>: the cadre the payload was cut to"
+          },
+          "cadres_also": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "task id -> the other cadres the run is shown in (a study session, in the cadre that asked); costs stay the owner's"
           }
         }
       },
@@ -1216,6 +1273,18 @@
                   "type": "string"
                 }
               }
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreAgent"
+            }
+          },
+          "owns": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -1767,7 +1836,7 @@
           },
           "back": {
             "type": "string",
-            "description": "where to land: /view/<key> or /cards"
+            "description": "where to land: /view/<key>, /cards or a cadre tab (/c/learn/cards)"
           }
         },
         "required": [
@@ -2535,6 +2604,13 @@
           },
           "settings": {
             "$ref": "#/components/schemas/CadreSettings"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadreAgent"
+            },
+            "description": "the agents its Agents tab lists (the record's agents)"
           }
         }
       },
@@ -2718,6 +2794,217 @@
             }
           }
         }
+      },
+      "CadreAgent": {
+        "x-ts": "CadreAgent",
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "skill",
+          "does"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "skill": {
+            "type": "string"
+          },
+          "does": {
+            "type": "string"
+          }
+        }
+      },
+      "DeckCard": {
+        "x-ts": "DeckCard",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "front",
+          "source",
+          "kind",
+          "anchor",
+          "scope",
+          "due_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "front": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "anchor": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "due_at": {
+            "type": "string"
+          }
+        }
+      },
+      "DeckTopic": {
+        "x-ts": "DeckTopic",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "cards",
+          "due"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "cards": {
+            "type": "number"
+          },
+          "due": {
+            "type": "number"
+          }
+        }
+      },
+      "StudySession": {
+        "x-ts": "StudySession",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "session",
+          "material",
+          "open",
+          "ready",
+          "since",
+          "purposes",
+          "askers",
+          "page"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "material": {
+            "type": "string"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "since": {
+            "type": "number"
+          },
+          "purposes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "askers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "string"
+          }
+        }
+      },
+      "Deck": {
+        "x-ts": "Deck",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "due",
+          "review",
+          "proposed",
+          "discarded",
+          "topics",
+          "dirs",
+          "sessions",
+          "notice"
+        ],
+        "properties": {
+          "due": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeckCard"
+            }
+          },
+          "review": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeckCard"
+            }
+          },
+          "proposed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeckCard"
+            }
+          },
+          "discarded": {
+            "type": "number"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeckTopic"
+            }
+          },
+          "dirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudySession"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        }
+      },
+      "CardForm": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "do": {
+            "type": "string",
+            "enum": [
+              "keep",
+              "drop"
+            ]
+          },
+          "back": {
+            "type": "string",
+            "description": "a cadre tab to land on (/c/learn/cards)"
+          }
+        },
+        "required": [
+          "id",
+          "do"
+        ]
       }
     }
   }

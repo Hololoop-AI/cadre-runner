@@ -1,0 +1,52 @@
+{
+  "skill_name": "learning",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "In the passage thread on a review page, the driver selected 'the reaper compares the page timestamp from before the turn' and wrote: 'wait, what does this mean? I need to decide whether to approve this'.",
+      "expected_output": "A short mentor exchange: a brief orienting question or a short direct explanation, not an essay; ends with them restating or applying it.",
+      "files": [],
+      "expectations": [
+        "The reply is under ~150 words",
+        "The reply asks the driver at least one question that makes them reason (predict, explain, or apply), or explains briefly and then asks them to restate/apply",
+        "The reply does not ask 'does that make sense?' or equivalent",
+        "No markdown headings or bullet lists in the chat reply"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Driver in a study thread: 'just tell me, I'm in a hurry — why does the daemon keep running after a statusd.py-only merge?'",
+      "expected_output": "Answers directly and briefly, respecting 'just tell me'; may offer a card in one line.",
+      "files": [],
+      "expectations": [
+        "The reply answers the question directly in its first two sentences",
+        "The reply does not withhold the answer behind a guess-first question",
+        "The reply is under ~120 words"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Driver: 'I want to properly learn system design, I keep hand-waving it in reviews.'",
+      "expected_output": "Routes to learning-course: asks what they want to be able to do and what they know, proposes a topic map.",
+      "files": [],
+      "expectations": [
+        "The reply proposes or asks to build a topic map / sequence rather than delivering a lecture",
+        "The reply asks what the driver already knows or wants to do with the subject",
+        "The reply does not exceed ~300 words"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I've never studied distributed systems at all. Teach me what consensus is — I want to understand Raft eventually.",
+      "expected_output": "Takes the professor role: gives a short map of the subject and a compact explanation with one concrete example before asking anything, then hands over a first small problem; offers learning-course for the full subject.",
+      "files": [],
+      "expectations": [
+        "Does not open by asking the driver to guess what consensus is",
+        "Gives a structure or map (a few named ideas in order) before detail",
+        "Includes one concrete example or scenario",
+        "Ends with a question or small problem for the driver to work",
+        "Mentions or routes to learning-course for the whole subject"
+      ]
+    }
+  ]
+}

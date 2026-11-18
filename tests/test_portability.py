@@ -35,34 +35,23 @@ def _checkout() -> Path:
 
 
 def test_task_dialogues_get_their_skills_in_any_cwd():
-    """A dialogue runs in whatever directory the ask names, so the skills its
-    prompt invokes by name must be linked there at spawn. A round written without auto-surface silently
+    """A dialogue runs in whatever directory the ask names, and the skills its
+    prompt invokes by name reach it as its own plugin (--plugin-dir), not as
+    files in that directory. A round written without auto-surface silently
     drops the whole authoring contract (decided layer included)."""
+    from runnerlib import skillstore
     source = scratch()
-    for name in claude_run.TASK_SKILLS:
+    for name in skillstore.TASK_SKILLS:
         (source / name).mkdir(parents=True)
-    cwd = scratch() / "some-project"          # NOT a git repo — must still work
-    cwd.mkdir()
-
-    linked, missing = claude_run.install_task_skills(cwd, source)
-    assert linked == claude_run.TASK_SKILLS and missing == []
-    for name in claude_run.TASK_SKILLS:
-        link = cwd / ".claude" / "skills" / name
-        assert link.is_symlink()
+        (source / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+    cfg = type("Cfg", (), {"data_dir": scratch(), "runner": {"skills_source": str(source)}})()
+    root, linked, missing = skillstore.build_plugin(cfg, "task-x", skillstore.TASK_SKILLS)
+    assert linked == skillstore.TASK_SKILLS and missing == []
+    for name in skillstore.TASK_SKILLS:
         # the copy that ships with Cadre wins over the skills tree
-        assert Path(os.readlink(link)) == claude_run.REPO_SKILLS / name
-
+        assert Path(os.readlink(root / "skills" / name)) == skillstore.REPO_SKILLS / name
     # idempotent: a second spawn links nothing and raises nothing
-    assert claude_run.install_task_skills(cwd, source) == ([], [])
-
-    # a skill found nowhere is reported missing, never an error in the spawn path
-    repo_skills = claude_run.REPO_SKILLS
-    try:
-        claude_run.REPO_SKILLS = scratch()
-        assert claude_run.install_task_skills(scratch(), scratch() / "gone") == (
-            [], claude_run.TASK_SKILLS)
-    finally:
-        claude_run.REPO_SKILLS = repo_skills
+    assert skillstore.build_plugin(cfg, "task-x", skillstore.TASK_SKILLS)[1:] == ([], [])
 
 
 def _tracked(path) -> bool | None:
@@ -78,7 +67,8 @@ def _tracked(path) -> bool | None:
 def test_cadre_ships_its_own_page_skill():
     """auto-surface used to exist only as an untracked link into one person's
     skills repo, so any other machine ran without it."""
-    skill = claude_run.REPO_SKILLS / "auto-surface" / "SKILL.md"
+    from runnerlib import skillstore
+    skill = skillstore.REPO_SKILLS / "auto-surface" / "SKILL.md"
     assert skill.is_file()
     assert _tracked(skill) is not False, "the skill must be tracked, not a local file"
 
@@ -96,38 +86,18 @@ def test_no_machines_own_config_is_shipped():
 
 
 def test_a_link_to_an_older_copy_is_re_pointed():
-    """A directory linked to the personal-repo copy before Cadre shipped its
-    own kept that link forever: an existing link was never looked at again."""
+    """A plugin linked to an older copy of a skill follows it to where the
+    skill resolves now."""
+    from runnerlib import skillstore
+    cfg = type("Cfg", (), {"data_dir": scratch(), "runner": {}})()
     old = scratch() / "auto-surface"
     old.mkdir()
-    cwd = scratch()
-    (cwd / ".claude" / "skills").mkdir(parents=True)
-    (cwd / ".claude" / "skills" / "auto-surface").symlink_to(old)
-
-    linked, _ = claude_run.install_task_skills(cwd, scratch())
+    skills = skillstore.plugin_dir(cfg, "task-x") / "skills"
+    skills.mkdir(parents=True)
+    (skills / "auto-surface").symlink_to(old)
+    _, linked, _ = skillstore.build_plugin(cfg, "task-x", ["auto-surface"])
     assert linked == ["auto-surface"]
-    assert Path(os.readlink(cwd / ".claude" / "skills" / "auto-surface")) == \
-        claude_run.REPO_SKILLS / "auto-surface"
-
-
-def test_a_linked_skill_is_never_committed():
-    """The link is an absolute path into this machine's home folder."""
-    repo = _checkout()
-    sub = repo / "service"
-    sub.mkdir()
-    for cwd in (repo, sub):
-        claude_run.install_task_skills(cwd, scratch())
-    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
-    assert ".claude/skills/auto-surface" in exclude
-    assert "service/.claude/skills/auto-surface" in exclude
-    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
-                            cwd=repo, capture_output=True, text=True).stdout
-    assert "auto-surface" not in status, status
-    # and again adds nothing twice
-    (repo / ".claude" / "skills" / "auto-surface").unlink()
-    claude_run.install_task_skills(repo, scratch())
-    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
-    assert exclude.count(".claude/skills/auto-surface") == 1
+    assert Path(os.readlink(skills / "auto-surface")) == skillstore.REPO_SKILLS / "auto-surface"
 
 
 # --------------------------------------------------------------------------- hosts and paths
