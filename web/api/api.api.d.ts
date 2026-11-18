@@ -40,6 +40,8 @@ export interface Server {
     fetchBlackboard(): Promise<Blackboard>;
     /** GET /api/records?cadre=<id>: a cadre's records, each opened as a review page */
     fetchRecords(cadre: string): Promise<CadreRecords>;
+    /** GET /api/deck: Learn's deck, its topics and its study sessions */
+    fetchDeck(): Promise<Deck>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */

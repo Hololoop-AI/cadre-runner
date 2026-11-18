@@ -173,7 +173,16 @@ discussions ("d7", "the stack round") — name the thing by what it is about
    relative href to another artifact is a dead link. Link by absolute path
    through the resolver: `<a href="/open?file=/abs/path/to/page.html">`, naming
    the destination by what it is about rather than its filename.
-1. **Orientation** — the ask restated in full; what kind of decision this is;
+   A section the page mentions ("see the quick fixes", "the next section")
+   links to it: give each `<h2>` an `id` and write the mention as
+   `<a href="#that-id">`. Every other reference the driver could want to open
+   is a link too, not just formatted text: a URL (`target="_blank"`), a kanban
+   card (`<a href="/c/<cadre>/kanban?card=<id>" target="_blank">`, the cadre
+   being the board's owner in `pipeline.py kanban list --json`), a run's page.
+1. **Orientation** — the header's meta line carries the session's facts:
+   **Round $iteration of $max_rounds**, the project, and when this page was
+   written (run `date '+%-d %b %Y, %H:%M %Z'` as you write it: the date the page
+   was rendered, not the day the dialogue began). Then the ask restated in full; what kind of decision this is;
    how reversible it is; what happens on each possible response, including
    doing nothing. The header says **Round $iteration of $max_rounds** and what
    happens when the budget runs out (the dialogue escalates to the driver;

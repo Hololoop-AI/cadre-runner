@@ -28,7 +28,7 @@ describe('ViewScreen', () => {
     expect(screen.getByTitle('surface').getAttribute('src')).toBe(window.location.origin + '/session/k1');
     expect(screen.getByText('Pantry plan')).toBeTruthy();
     expect(document.title).toBe('Pantry plan — Cadre');
-    expect(screen.getByText('← fleet').getAttribute('href')).toBe(window.location.origin + '/');
+    expect(screen.getByText('← back').getAttribute('href')).toBe(window.location.origin + '/');
     expect(screen.queryByPlaceholderText(/study a topic/)).toBeNull();
     expect(screen.queryByText(/open alone/)).toBeNull();
   });

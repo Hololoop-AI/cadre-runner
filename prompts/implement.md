@@ -97,7 +97,8 @@ What the page carries, in order:
 1. **Orientation** — one short paragraph for a reader with no context: this is
    the work handed off from an approved page (link it, through the resolver,
    named by what it is about), what was approved, round $iteration of
-   $max_rounds, and what each verdict below does.
+   $max_rounds, when this page was written (run `date '+%-d %b %Y, %H:%M %Z'`),
+   and what each verdict below does.
 2. **What I did** — the result first: what changed, what was committed (hash
    and message), what was verified, and anything from the spec you did NOT do
    and why. Then one row per instruction in the driver's last words above:

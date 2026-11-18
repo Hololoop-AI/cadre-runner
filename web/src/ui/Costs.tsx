@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { num, plural, pyRound, relTime, s, taskLabel, usd, type CostBucket, type TurnRecord } from '../model';
 import { Pending, Screen, useOnce } from './Screen';
 import { useServer } from './server';
+import { BackLink } from './Back';
 
 /** costs.cost_of: a turn's reported cost, or null when it reported none. */
 function costOf(e: TurnRecord): number | null {
@@ -40,7 +41,7 @@ export function CostsScreen() {
   const now = Date.now() / 1000;
   return (
     <Screen name="Costs" tab="Cadre — costs">
-      <p className="meta"><a href="/">← fleet</a> · <a href="/costs.json">as JSON</a></p>
+      <p className="meta"><BackLink /> · <a href="/costs.json">as JSON</a></p>
       {!c ? <Pending error={error} /> : (
         <>
           <section className="card"><h2>Spent</h2>

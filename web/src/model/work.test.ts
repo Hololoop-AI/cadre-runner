@@ -32,8 +32,16 @@ describe('workRows', () => {
     expect(workRows(null, FLEET, [viewed], NOW).older.map((i) => i.key)).toEqual(['viewed']);
   });
 
-  it('leaves backlog and done cards out', () => {
+  it('leaves quiet backlog and done cards out', () => {
     expect(workRows(BOARD, FLEET, [], NOW).rows.every((r) => r.kind === 'card' && r.card.column === 'doing')).toBe(true);
+  });
+
+  it('lists a done or backlog card while a run on it is working or came back unopened', () => {
+    const board: Kanban = { ...BOARD, cards: [card('shipped', 'done', ['t-new']), card('later', 'backlog', ['t-busy']), card('gone', 'done', ['t-seen'])] };
+    const fleet = { tree: { 't-busy': { title: 'b', working: true, since: NOW - 10 }, 't-new': { title: 'n', since: NOW - 60 }, 't-seen': { title: 's', since: NOW - 60 } },
+      snap: { surfaces: [{ path: '/p/new.html', task: 't-new' }, { path: '/p/seen.html', task: 't-seen' }] },
+      statuses: { 'new.html': { unseen: true } } } as unknown as Fleet;
+    expect(workRows(board, fleet, [], NOW).rows.map((r) => r.key).sort()).toEqual(['card:later', 'card:shipped']);
   });
 
   it('sorts and filters the cards as it does the runs: by project, state and newest result', () => {

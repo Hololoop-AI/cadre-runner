@@ -13,6 +13,7 @@ import { RunPicker } from './NewWork';
 import { Pending, Screen, useOnce } from './Screen';
 import { useServer } from './server';
 import { Kids } from './Tree';
+import { BackLink } from './Back';
 
 /** What one row of the running section reads besides the row. */
 interface RowCtx {
@@ -144,7 +145,7 @@ export function ProjectScreen({ id }: { id: string }) {
   const notice = new URLSearchParams(window.location.search).get('notice') || '';
   if (!d) return <Screen name={id} tab={`${id} — project`}><Pending error={error} /></Screen>;
   const p = d.project;
-  const meta = [<a key="f" href="/">← fleet</a>];
+  const meta = [<BackLink key="f" />];
   if (d.group) meta.push(<Fragment key="g">in <a href={`/project/${d.group.id}`}>{d.group.name}</a></Fragment>);
   if (d.members.length) {
     meta.push(<Fragment key="m">{'group of '}{d.members.map((m, i) => (

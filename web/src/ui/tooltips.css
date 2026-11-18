@@ -1,0 +1,6 @@
+/* The fast tooltip (tooltips.ts): one box for the whole app, placed under the
+   element it explains (above it near the bottom of the window). */
+.ftip{position:fixed;z-index:1000;max-width:min(28rem,calc(100vw - 12px));padding:5px 8px;border-radius:6px;
+ background:var(--card-2);color:var(--fg);border:1px solid var(--border);box-shadow:0 4px 14px rgba(0,0,0,.35);
+ font-size:.78rem;line-height:1.35;white-space:pre-line;pointer-events:none}
+.ftip[hidden]{display:none}

@@ -23,6 +23,15 @@ function draw() {
 }
 
 describe('Board', () => {
+  it('shows only the cards that match find, by title, note or id, and counts them against the column', () => {
+    const view = render(<Board board={BOARD} onChange={() => {}} find="sunday" />);
+    expect([...view.container.querySelectorAll('.ktitle')].map((b) => b.textContent)).toEqual(['Plan the week']);
+    expect(view.container.querySelector('section[data-column="doing"] h2')?.textContent).toBe('Doing 0 of 2');
+    cleanup();
+    const byId = render(<Board board={BOARD} onChange={() => {}} find="cccccc" />);
+    expect([...byId.container.querySelectorAll('.ktitle')].map((b) => b.textContent)).toEqual(['Order flowers']);
+  });
+
   it('draws the four columns in order, each card in its column in board order', () => {
     const { view, titles } = draw();
     expect([...view.container.querySelectorAll('.kcol h2')].map((h) => h.textContent)).toEqual(['Backlog 1', 'Ready 0', 'Doing 2', 'Done 0']);

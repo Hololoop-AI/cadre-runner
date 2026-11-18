@@ -5,6 +5,7 @@
 import { escapedCut, relTime, s, type PageOwner } from '../model';
 import { Pending, Screen, useOnce } from './Screen';
 import { useServer } from './server';
+import { BackLink } from './Back';
 
 /** statusd._attach_form: attach an agent to a page nobody owns; any other owner says why not. */
 function Attach({ head, owner }: { head: string; owner: PageOwner | null }) {
@@ -45,7 +46,7 @@ export function PageScreen({ pageKey }: { pageKey: string }) {
   const ended = !!row.ended;
   return (
     <Screen name={title} dot={false} tab={`${title} — manage`}>
-      <p className="meta"><a href="/">← fleet</a>{' · project '}<b>{s(row.project || 'none')}</b>{` · page ${head}`}</p>
+      <p className="meta"><BackLink />{' · project '}<b>{s(row.project || 'none')}</b>{` · page ${head}`}</p>
       {notice && <section className="card"><p>{notice}</p></section>}
       {pageKey === head ? null : <p className="meta">{`you opened an earlier round (${pageKey}); the conversation continues in the newest one`}</p>}
       <section className="card"><h2>{`this conversation · ${rounds.length} round${rounds.length !== 1 ? 's' : ''}, newest first`}</h2>

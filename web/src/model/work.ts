@@ -25,6 +25,25 @@ export interface CardFacts {
   spent: number;
 }
 
+/**
+ * The cards a cadre's home lists: every Ready and Doing card, and a Backlog or
+ * Done card only while a run on it is working or came back unopened. Its runs
+ * are on a card, so they are not in the list of runs on no card either:
+ * leaving the card out would leave that new result nowhere but find.
+ */
+function homeCards(board: Kanban, fleet: Fleet) {
+  const listed = activeCards(board);
+  const active = new Set(listed.map((c) => c.id));
+  const withRuns = (card: KanbanCard) => {
+    const runs = cardRuns(card, fleet);
+    return { card, runs, tally: cardTally(runs) };
+  };
+  return [
+    ...listed.map(withRuns),
+    ...board.cards.filter((c) => !active.has(c.id)).map(withRuns).filter((x) => x.tally.working || x.tally.fresh),
+  ];
+}
+
 /** One row of the list: an active card with its tally and facts, or a run on no card. */
 export type WorkRow =
   | { kind: 'card'; key: string; card: KanbanCard; tally: CardTally; facts: CardFacts; urgency: Urgency; touched: number }
@@ -101,9 +120,7 @@ function sorter(sort = 'needs'): (a: WorkRow, b: WorkRow) => number {
 export function workRows(board: Kanban | null, fleet: Fleet, loose: Item[], now: number,
   items: ReadonlyMap<string, Item> = new Map(), view: WorkView = {}): WorkRows {
   const rows: WorkRow[] = [];
-  for (const card of board ? activeCards(board) : []) {
-    const runs = cardRuns(card, fleet);
-    const tally = cardTally(runs);
+  for (const { card, runs, tally } of board ? homeCards(board, fleet) : []) {
     // a run deep in another item's tree has no item of its own: read its project and cost from the tree
     const known = new Map(runs.map((r): [string, Item] => [r.key, items.get(r.key)
       ?? ({ key: r.key, project: String(fleet.tree?.[r.key]?.project || ''), spent: Number(fleet.spent?.[r.key]) || 0 } as Item)]));

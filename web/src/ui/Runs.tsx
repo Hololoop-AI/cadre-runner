@@ -9,6 +9,7 @@ import {
 import { go } from './router';
 import { Pending, Screen, useOnce } from './Screen';
 import { useServer } from './server';
+import { BackLink } from './Back';
 
 /** statusd._run_row */
 function Row({ r, now, perTask }: { r: RunRow; now: number; perTask: boolean }) {
@@ -90,7 +91,7 @@ export function RunsScreen() {
     <Screen name="Runs" tab="Cadre — runs">
       {!data ? <Pending error={error} /> : (
         <>
-          <p className="meta"><a href="/">← fleet</a>{' · '}{tabs}</p>
+          <p className="meta"><BackLink />{' · '}{tabs}</p>
           <form id="runfilter" className="repair" method="get" action="/runs"
             onSubmit={(e: FormEvent<HTMLFormElement>) => { e.preventDefault(); submit(e.currentTarget); }}>
             <input type="hidden" name="view" value={view} />

@@ -7,3 +7,6 @@
  * Switching machines draws that machine's screen afresh.
  */
 export declare function App(): import("react").JSX.Element;
+// --- from tooltips.ts
+/** Show every `title` in `doc` as the app's fast tooltip; returns what removes it again. */
+export declare function installTooltips(doc?: Document): () => void;
