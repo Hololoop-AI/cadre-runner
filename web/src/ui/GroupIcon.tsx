@@ -4,7 +4,7 @@
 // follow the theme: whatever colour the button has, the icon has.
 //
 // A group gets its glyph by name, for the groups this fleet knows (Dev,
-// Kitchen, Personal); any other group gets its first letter inside the ring.
+// Kitchen, Personal, Learn); any other group gets its first letter inside the ring.
 
 import type { ReactNode } from 'react';
 import { HOME_GROUP, OTHER } from '../model';
@@ -20,6 +20,8 @@ const GLYPHS = new Map<string, ReactNode>(Object.entries({
   kitchen: <path d="M10 15.5v4.5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-4.5zM7.5 17h2.5M22 17h2.5M9.5 13h13M16 10.5V13" />,
   // personal: a head and shoulders
   personal: <path d="M16 15.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM10.5 22.5a5.5 5.5 0 0 1 11 0" />,
+  // learn: an open book, its spine down the middle
+  learn: <path d="M16 12c-1.9-1.2-4.3-1.5-6.5-1v10c2.2-.5 4.6-.2 6.5 1 1.9-1.2 4.3-1.5 6.5-1V11c-2.2-.5-4.6-.2-6.5 1zM16 12v10" />,
   // other: three dots
   [OTHER]: <path d="M11 16h.01M16 16h.01M21 16h.01" strokeWidth="2.6" />,
 }));

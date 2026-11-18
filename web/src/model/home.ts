@@ -90,9 +90,11 @@ export function buildHome(fleet: Fleet, view: ServerView, now: number, origin: s
   const groups = fleetGroups(projs);
   const member: Record<string, string[]> = Object.create(null);
   const owned = fleet.cadres || {};
+  const also = fleet.cadres_also || {};
+  const groupsOf = (c: string) => (c === OTHER ? [] : c === HOLO ? [HOLO] : itemGroups({ project: c, tags: [] }, projs, groups));
   for (const it of items) {
-    const c = itemCadre(it, owned, projs, groups);
-    member[it.key] = c === OTHER ? [] : c === HOLO ? [HOLO] : itemGroups({ project: c, tags: [] }, projs, groups);
+    // its owner's cadre and those holding it, then any cadre it is also shown in (runnerlib/cadres.py show_also)
+    member[it.key] = [...new Set([...groupsOf(itemCadre(it, owned, projs, groups)), ...(also[it.key] || []).flatMap(groupsOf)])];
   }
   // statusd.parent_choices: fleet_items without statuses, so newest by when a page opened
   const parents = fleetItems({ surfaces, tree, projs, pageless, archived: gone })

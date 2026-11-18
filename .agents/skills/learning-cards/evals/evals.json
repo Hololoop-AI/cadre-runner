@@ -1,0 +1,40 @@
+{
+  "skill_name": "learning-cards",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Reframe this weak card, id c-1234abcd, front: 'In cadre-runner, what callback does engine_seam.tick_pass now take to start a dialogue turn, and what are its four arguments?' Context: the engine takes a start_turn callback so engine_seam never imports the runner module.",
+      "expected_output": "Rewrites it as a why/what-breaks concept or code card with a reference, using cards revise, keeping the id.",
+      "files": [],
+      "expectations": [
+        "Uses `cards revise c-1234abcd` (not propose + discard)",
+        "The new front asks why/what-depends/what-breaks rather than listing arguments",
+        "The JSON includes a kind and a reference with an answer and at least one point",
+        "Shows the old and new wording"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Propose cards for a sourdough lesson the driver just finished on when a levain is ready (peaked and just starting to fall), the float test's unreliability, and why a young levain gives a milder loaf.",
+      "expected_output": "One to three cards with kinds and references, source named 'sourdough', not a path.",
+      "files": [],
+      "expectations": [
+        "Between one and three cards are proposed",
+        "Every card has kind and reference.answer and reference.points",
+        "--source is a topic name (e.g. sourdough), not a filesystem path",
+        "At least one card is a concept card asking why"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "We just finished a task that renamed a CSS variable --accent to --cadre-accent across 40 files. Propose cards on it.",
+      "expected_output": "Pushes back: little worth remembering; proposes at most one card or none, explaining why.",
+      "files": [],
+      "expectations": [
+        "Proposes zero or one card",
+        "Explains that a mechanical rename has little to retain, or picks the one non-obvious point",
+        "Does not propose a card asking for the old or new variable name alone"
+      ]
+    }
+  ]
+}

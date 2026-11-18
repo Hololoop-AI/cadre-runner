@@ -200,6 +200,8 @@ export interface Fleet {
   fleet_page_code?: { stale?: boolean; since?: number; head?: string };
   /** task id -> the cadre that owns the run (runnerlib/cadres.py; OTHER: none) */
   cadres?: Record<string, string>;
+  /** task id -> the other cadres the run is shown in (a study session, in the cadre that asked); costs stay the owner's */
+  cadres_also?: Record<string, string[]>;
   /** cadre id -> what its runs spent in the last 7 days */
   cadre_week_usd?: Record<string, number>;
 }
@@ -223,6 +225,18 @@ export interface Nav {
   cadres: { id: string; name: string }[];
   /** what its Settings tab shows: its own setup, not its work */
   settings: CadreSettings;
+  /** the agents its Agents tab lists (the record's `agents`) */
+  agents?: CadreAgent[];
+}
+
+/** One of a cadre's agents, as its record lists it. */
+export interface CadreAgent {
+  id: string;
+  name: string;
+  /** the skill it works with */
+  skill: string;
+  /** what it does, in a sentence */
+  does: string;
 }
 
 /** A cadre's own setup, read from its project record (runnerlib/cadres.py settings). */
@@ -469,4 +483,52 @@ export interface PagePayload {
   /** conversations that can replace it, same project first */
   candidates: { key: string; title: string }[];
   owner: PageOwner | null;
+}
+
+/** One card as Learn's Cards tab shows it (statusd.deck_payload). */
+export interface DeckCard {
+  id: string;
+  front: string;
+  /** its topic */
+  source: string;
+  kind: string;
+  anchor: string;
+  scope: string;
+  /** when it comes due, '' unless kept */
+  due_at: string;
+}
+
+/** A topic of the deck: the cards kept on it and how many are due. */
+export interface DeckTopic {
+  source: string;
+  cards: number;
+  due: number;
+}
+
+/** A study session Learn took from the board (runnerlib/learn.py). */
+export interface StudySession {
+  session: string;
+  material: string;
+  open: boolean;
+  ready: boolean;
+  since: number;
+  /** why it was asked for: decision, skill, course */
+  purposes: string[];
+  /** the cadres that asked */
+  askers: string[];
+  /** its page, through /open */
+  page: string;
+}
+
+/** GET /api/deck: what Learn's Cards tab and home draw. */
+export interface Deck {
+  due: DeckCard[];
+  review: DeckCard[];
+  proposed: DeckCard[];
+  discarded: number;
+  topics: DeckTopic[];
+  /** folders a study can run in */
+  dirs: string[];
+  sessions: StudySession[];
+  notice: string;
 }

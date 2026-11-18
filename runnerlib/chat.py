@@ -34,7 +34,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from . import projects, runs, surface, tasks
+from . import projects, runs, skillstore, surface, tasks
 from .engine_seam import pipeline_command
 from .nodes import Nodes
 
@@ -304,6 +304,7 @@ def _spawn(cfg, reg, log, task_id, rec, chat, session_id, cwd) -> bool:
                       cfg.claude["permission_mode"], cfg.claude["timeout_seconds"],
                       run_dir, session_id=session_id, resume=True, argv=argv,
                       **({"add_dirs": add_dirs} if add_dirs else {}),
+                      plugin_dirs=skillstore.plugin_args(cfg, task_id) or None,
                       thinking_url=api(chat["reply_key"], "agent-thinking"),
                       extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                  "CADRE_STAGE": STAGE, "CADRE_SESSION_ID": session_id,

@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formBody } from '../api';
+import { LearnPanel } from './Learn';
 import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, workRows, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { groupSuffix } from './Groups';
@@ -275,6 +276,7 @@ function Home({ machines, cadre, fleetState }: { machines: Machines; cadre: stri
             onChanged={(msg) => { setNotice(msg); refetch(); }} />}
         </section>
         <aside className="cnext" aria-label="Needs you and running now">
+          {nav?.screens.some((x) => x.id === 'review') && <LearnPanel reviewHref={cadreHref(group, 'review')} />}
           <section className="needs">
             <h2 className="sect">Needs you <span className="kn">{waiting.length}</span></h2>
             {!waiting.length ? <p className="meta">Nothing is waiting on you here.</p> : (

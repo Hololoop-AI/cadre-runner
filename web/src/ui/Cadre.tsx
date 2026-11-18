@@ -16,6 +16,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { buildHome, groupBadges, HOLO, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
 import { RecordsScreen } from './Records';
 import { BlackboardScreen } from './Blackboard';
+import { AgentsList, ReviewScreen } from './Learn';
 import { GroupBar } from './Groups';
 import { PageIcon } from './PageIcon';
 import { KanbanScreen } from './Kanban';
@@ -158,7 +159,8 @@ export function CadreScreen({ id, tab, fleet = null }: { id: string; tab: string
           : tab === 'blackboard' ? <BlackboardScreen />
             : tab === 'records' ? <RecordsScreen cadre={id === OTHER ? 'other' : id === HOLO ? 'holo' : id} name={chrome.name} />
             : tab === 'settings' ? (id === OTHER || id === HOLO ? <OtherSettings holo={id === HOLO} /> : <CadreSettingsScreen id={id} nav={chrome.nav} />)
-              : tab === 'agents' ? <AgentsPending name={chrome.name} />
+              : tab === 'agents' ? (chrome.nav?.agents?.length ? <AgentsList name={chrome.name} agents={chrome.nav.agents} /> : <AgentsPending name={chrome.name} />)
+                : tab === 'review' ? <ReviewScreen back={`/c/${encodeURIComponent(id)}/review`} />
                 : <p className="notice">{`${chrome.name} has no screen called ${tab}.`}</p>}
       </Framed.Provider>
     </div>

@@ -86,7 +86,11 @@ def _runner(key):
 
 
 def _skills_source():
-    return _CFG.skills_source if _CFG else Path(os.path.expanduser(_DEFAULTS["skills_source"]))
+    """Every place Cadre holds skills (runnerlib/skillstore.py), for the library."""
+    if _CFG:
+        from runnerlib import skillstore
+        return skillstore.paths(_CFG)
+    return Path(os.path.expanduser(_DEFAULTS["skills_source"]))
 
 
 # Env wins over config wins over the defaults: a unit file overrides one dial
@@ -159,12 +163,14 @@ APP_DIR = Path(__file__).resolve().parent / "web" / "dist"
 # them): these paths answer with its index.html. Without a build in dist/
 # they are a 404 that says how to build it.
 REACT_ROUTE = re.compile(r"^/?$|^/(library|costs|runs|tree|kanban)$|^/(tree|project|page|view)/[^/]+$"
-                         r"|^/c/[^/]+(/(kanban|blackboard|records|agents|settings))?$")
+                         r"|^/c/[^/]+(/(kanban|blackboard|records|agents|settings|review))?$")
 # A cadre's navigation (runnerlib/cadres.py nav): GET /api/nav?cadre=<id>.
 NAV_API_PATH = "/api/nav"
 # The newest events on the blackboard (runnerlib/blackboard.py recent), read
 # only: GET /api/blackboard?limit=<n>. The Blackboard tab draws them.
 BLACKBOARD_API_PATH = "/api/blackboard"
+# Learn's Cards tab and home: the deck, its topics and Learn's study sessions.
+DECK_API_PATH = "/api/deck"
 # A cadre's records (runnerlib/records.py): GET /api/records?cadre=<id>. Each
 # opens as a review page through the page server's /open?file=.
 RECORDS_API_PATH = "/api/records"
@@ -1325,8 +1331,9 @@ def load_costs(data_dir: Path | None = None) -> tuple[list[dict], dict]:
 
 def render_cards(deck: list[dict], due: int, dirs: list[str], notice: str = "",
                  now: float | None = None) -> str:
-    """Your deck, on this machine: your own cards and the team cards synced
-    into it, what is due, and a box to start a study session. The deck is
+    """Learn's Cards tab, also served alone at /cards: your deck on this
+    machine (your own cards and the team cards synced into it), what is due,
+    and a box to start a study session. The deck is
     never another backend's to read — /api/cards serves only a team's."""
     banner = f'<section class="card"><p>{escape(notice)}</p></section>' if notice else ""
     opts = "".join(f'<option value="{escape(d)}">{escape(d)}</option>'
@@ -1337,8 +1344,9 @@ def render_cards(deck: list[dict], due: int, dirs: list[str], notice: str = "",
              '</textarea><div class="row">'
              + (f'<select name="cwd">{opts}</select>' if opts else "")
              + '<button type="submit">Study it</button></div>'
-             '<p class="meta">A tutor session: due cards first, one short idea, a few '
-             'questions, graded next round. It reads the code; it never changes it.</p>'
+             '<p class="meta">A study session in Learn: due cards first, one short idea, a '
+             'few questions, graded next round. It reads the material in the folder you '
+             'pick; it never changes it.</p>'
              '</form></section>')
 
     def row(c):
@@ -1370,8 +1378,8 @@ def render_cards(deck: list[dict], due: int, dirs: list[str], notice: str = "",
             f'<b>{len(live)}</b> in review · <b>{len(proposed)}</b> waiting for you to '
             f'keep or discard · {gone} discarded.</p>'
             '<p class="empty">Cards come due inside study sessions; start one below. '
-            'Pages that change code propose cards about the change; they wait under '
-            'Proposed until you keep or drop them. Team cards arrive with each '
+            'Study sessions and threads propose cards about what you learned; they wait '
+            'under Proposed until you keep or drop them. Team cards arrive with each '
             'session\'s sync and are scheduled for you alone.</p></section>')
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -1517,6 +1525,53 @@ def backends_payload() -> dict:
     [[backends]] entry, which the app reads and posts to directly."""
     return {"backends": [{"name": b["name"] or MACHINE, "url": ""} if b["url"] is None
                          else {"name": b["name"] or b["url"], "url": b["url"]} for b in BACKENDS]}
+
+
+def _is_cadre_tab(path: str) -> bool:
+    """A cadre's tab in the app (/c/<id>/<tab>), where a form posted from it returns."""
+    return bool(re.fullmatch(r"/c/[A-Za-z0-9_.~-]+(/[a-z]+)?", path or ""))
+
+
+def deck_payload(now=None) -> dict:
+    """GET /api/deck: what Learn's Cards tab and home draw. The deck (due,
+    in review, proposed), its topics (a card's `source`), the folders a study
+    can run in, and the study sessions Learn took from the board
+    (runnerlib/learn.py), newest first."""
+    out = {"due": [], "review": [], "proposed": [], "discarded": 0, "topics": [],
+           "dirs": [], "sessions": [], "notice": ""}
+    if not _CFG:
+        out["notice"] = "No runner config: no deck here."
+        return out
+    def row(c):
+        return {"id": c["id"], "front": c["front"], "source": c["source"],
+                "kind": c.get("kind") or "fact", "anchor": c.get("anchor") or "",
+                "scope": c.get("scope") or "personal",
+                "due_at": str(c.get("fsrs_due") or "") if c["status"] == "accepted" else ""}
+    try:
+        deck = cards_mod.listing(_CFG.cards_dir)
+        due = cards_mod.due(_CFG.cards_dir, now=now)
+    except Exception as e:                      # a broken deck must not 500 the tab
+        out["notice"] = f"The deck could not be read: {e}"
+        deck, due = [], []
+    due_ids = {c["id"] for c in due}
+    out["due"] = [row(c) for c in due]
+    out["review"] = sorted((row(c) for c in deck if c["status"] == "accepted"), key=lambda r: r["due_at"])
+    out["proposed"] = [row(c) for c in deck if c["status"] == "proposed"]
+    out["discarded"] = sum(1 for c in deck if c["status"] == "discarded")
+    topics: dict = {}
+    for c in deck:
+        if c["status"] == "accepted":
+            t = topics.setdefault(c["source"], {"source": c["source"], "cards": 0, "due": 0})
+            t["cards"] += 1
+            t["due"] += c["id"] in due_ids
+    out["topics"] = sorted(topics.values(), key=lambda t: (-t["due"], -t["cards"], t["source"]))
+    projs = load_projects()
+    out["dirs"] = list(dict.fromkeys(d for p in projs.values() if not p.get("archived")
+                                     for d in p.get("dirs") or ()))
+    from runnerlib import learn
+    out["sessions"] = [{**s, "page": "/open?file=" + urllib.parse.quote(s["page"], safe="/")}
+                       for s in learn.sessions(_CFG)]
+    return out
 
 
 def newwork_payload() -> dict:
@@ -1681,6 +1736,9 @@ def fleet_payload() -> dict:
             "items": items_mod.load(DATA_DIR),
             # which cadre owns each run, and what each spent this week
             "cadres": (cmap := cadres_mod.load(DATA_DIR)),
+            # and the other cadres a run is shown in (a study session, in
+            # the cadre that asked for it)
+            "cadres_also": cadres_mod.load_also(DATA_DIR),
             "cadre_list": cadres_mod.cadre_list(projs),
             "cadre_week_usd": cadres_mod.week_usd(turns, cmap, projs),
             "fleet_page_code": {"stale": _CODE.stale(), "since": _CODE.since,
@@ -2099,7 +2157,8 @@ class Handler(BaseHTTPRequestHandler):
                 notice = "Nothing done: keep or drop?"
         except Exception as e:                      # a bad id must not 500 the page
             notice = f"Nothing done: {e}"
-        self._redirect(CARDS_PATH, notice)
+        back = form.get("back") or ""
+        self._redirect(back if _is_cadre_tab(back) else CARDS_PATH, notice)
 
     def _study(self):
         """POST /study: topic, and either `from` (the dialogue whose page needs
@@ -2109,7 +2168,7 @@ class Handler(BaseHTTPRequestHandler):
         if form is None:
             return
         back = form.get("back") or CARDS_PATH
-        if not (back.startswith(VIEW_PATH) or back == CARDS_PATH):
+        if not (back.startswith(VIEW_PATH) or back == CARDS_PATH or _is_cadre_tab(back)):
             back = CARDS_PATH
         if not _CFG:
             self._redirect(back, "No runner config: a study session cannot start here.")
@@ -2125,15 +2184,20 @@ class Handler(BaseHTTPRequestHandler):
                                  "the page is not on the fleet yet, or none was picked.")
             return
         try:
-            from runnerlib import tasks as tasks_mod
-            result = tasks_mod.submit_study(
-                _CFG, form.get("topic", ""), from_task=form.get("from") or None,
-                cwd=cwd, page=(row or {}).get("artifact"))
+            from runnerlib import learn
+            got = learn.request(_CFG, form.get("topic", ""), from_task=form.get("from") or "",
+                                cwd=cwd, page=str((row or {}).get("artifact") or ""),
+                                log=lambda *_: None)
         except Exception as e:                      # a bad ask must not 500 the page
             self._redirect(back, f"Study not started: {e}")
             return
-        self._redirect(back, "Study started — it joins the fleet when its first "
-                             "round is ready.")
+        self._redirect(back, ("Joined the study session already open on this." if got.folded
+                              else "Study asked for: another Learn took it, and answers on the board."
+                              if not got.session
+                              else "Study started in Learn — it joins the fleet when its first "
+                                   "round is ready.")
+                       + (" (No study board here, so no answer comes back to this page.)"
+                          if got.via == "direct" and form.get("from") else ""))
 
     def _form(self) -> dict | None:
         """A same-origin url-encoded POST body as {field: first value}, or
@@ -2470,6 +2534,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"records": [
                     {**r, "href": "/open?file=" + urllib.parse.quote(r["path"], safe="/")}
                     for r in records_mod.query(DATA_DIR, cadre=cadre)]})
+            return
+        if path == DECK_API_PATH and self.command in ("GET", "HEAD"):
+            self._send_json(deck_payload())
             return
         if path == BLACKBOARD_API_PATH and self.command in ("GET", "HEAD"):
             try:

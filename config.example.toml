@@ -4,7 +4,9 @@
 [runner]
 poll_interval = 45                                  # longest gap between daemon passes (work wakes it sooner)
 data_dir = "~/.local/state/pipeline-runner"         # registry, board, pages, logs
-skills_source = "~/.local/share/cadre/ai-dev-skills/skills"  # skills linked into a turn's directory
+skills_source = "~/.local/share/cadre/ai-dev-skills/skills"  # a folder of skills a run can be given
+skills_sources = []                # more skill folders, looked up in order before skills_source;
+                                   # Cadre's own store (pipeline.py skills add) and its shipped skills come first
 status_bind = "127.0.0.1"          # statusd.py: bind address (built-in default 127.0.0.1) and port;
 status_port = 8181                 # CADRE_STATUS_BIND / CADRE_STATUS_PORT override
                                    # several addresses: ["127.0.0.1", "<private address>"]

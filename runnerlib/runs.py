@@ -68,10 +68,14 @@ def session_args(session_id: str | None, resume: bool) -> list[str]:
             ["--resume", session_id] if resume else ["--session-id", session_id])
 
 
-def dir_args(add_dirs) -> list[str]:
-    """Extra directories a session may read — a project's siblings. Last on
-    the command line: `--add-dir` takes every argument after it."""
-    return ["--add-dir", *add_dirs] if add_dirs else []
+def dir_args(add_dirs, plugin_dirs=()) -> list[str]:
+    """The run's plugins (`--plugin-dir`, one each: the skills Cadre gives it,
+    runnerlib/skillstore.py), then the extra directories a session may read —
+    a project's siblings. `--add-dir` is last: it takes every argument after
+    it. Both ride the node command's `{dirs}`, so no node needs a new
+    placeholder."""
+    out = [a for p in plugin_dirs or () for a in ("--plugin-dir", str(p))]
+    return out + (["--add-dir", *add_dirs] if add_dirs else [])
 
 
 def permission_args(permission_mode: str) -> list[str]:
@@ -105,7 +109,7 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
           timeout, run_dir: Path, session_id: str | None = None,
           resume: bool = False, extra_env: dict | None = None,
           argv: list[str] | None = None, add_dirs=None,
-          thinking_url: str | None = None) -> int:
+          thinking_url: str | None = None, plugin_dirs=None) -> int:
     """Detached agent session under a shell wrapper that writes stdout, stderr,
     and the exit code to files — the daemon can die and restart without losing
     the outcome. Returns the wrapper pid.
@@ -149,13 +153,13 @@ def spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
             "prompt": [] if fed else prompt,
             "session": session_args(session_id, resume),
             "permission": permission_args(permission_mode),
-            "dirs": dir_args(add_dirs)})
+            "dirs": dir_args(add_dirs, plugin_dirs)})
     else:
         argv = ([claude_bin, "-p", prompt, "--model", model, "--effort", effort,
                  "--output-format", "json"]
                 + session_args(session_id, resume)
                 + permission_args(permission_mode)
-                + dir_args(add_dirs))
+                + dir_args(add_dirs, plugin_dirs))
     env = {**os.environ,
            "CADRE_RUN_OUT": str(run_dir / "out.json"),
            "CADRE_RUN_ERR": str(run_dir / "err.txt"),

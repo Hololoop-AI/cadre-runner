@@ -24,6 +24,7 @@ from runnerlib import records as records_mod
 from runnerlib import conversations
 from runnerlib import engine_seam
 from runnerlib import library as library_mod
+from runnerlib import skillstore as skillstore_mod
 from runnerlib import node_cli
 from runnerlib import cards as cards_mod
 from runnerlib import chat as chat_mod
@@ -295,6 +296,13 @@ def cmd_run(cfg, args, single_pass=False):
         except Exception as e:
             log(f"ERROR reaping task turns: {e}")
         surface_mod.tick(cfg, reg, log)
+        # Learn on this machine: study asks taken, answers sent and delivered
+        # over the Rust board (runnerlib/learn.py). No board, nothing happens.
+        try:
+            from runnerlib import learn
+            learn.tick(cfg, log)
+        except Exception as e:
+            log(f"ERROR learn tick: {e}")
         # ---- ENGINE SEAM (CADRE_ENGINE=1 | only) ----------------------------
         # engine.tick, and spawns executed through THIS module's _run_task.
         # Unset the flag: none of it runs, and nothing starts a turn.
@@ -439,6 +447,9 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
         _open_page_now(cfg, rec, task_id, stage, page)
     except Exception as e:      # a page that cannot open early still opens at the reap
         log(f"{task_id}: could not open the page before the turn: {e}")
+    if rec.get("plugin_dir") and action.get("argv") and "{dirs}" not in action["argv"]:
+        log(f"{task_id}: node {stage}'s command has no {{dirs}}, so this turn gets no "
+            f"skills plugin — add {{dirs}} to it (pipeline.py node show {stage})")
     pid = runs_mod.spawn(cfg.claude["bin"], prompt, cwd, model, effort,
                          cfg.claude["permission_mode"], cfg.claude["timeout_seconds"],
                          run_dir, session_id=session_id,
@@ -451,6 +462,7 @@ def _run_task(cfg, reg, task_id, action, skip_cap=False):
                          # only when a project gives some: absent, the
                          # spawn is exactly what it was before projects
                          **({"add_dirs": action["add_dirs"]} if action.get("add_dirs") else {}),
+                         plugin_dirs=[rec["plugin_dir"]] if rec.get("plugin_dir") else None,
                          extra_env={"CADRE_STORY": task_id, "CADRE_TASK": task_id,
                                     "CADRE_STAGE": stage, "CADRE_SESSION_ID": session_id,
                                     "CADRE_RUN_ID": rid,
@@ -940,12 +952,16 @@ def cmd_study_thread(cfg, args):
 
 
 def cmd_study(cfg, args):
-    """Start a study session on a topic — a dialogue on the `tutor` node.
+    """Ask Learn for a study session on a topic — an ask on the study board
+    that Learn takes at once, starting a session on the `tutor` node (or
+    joining one already open on the same topic). The session's end answers
+    on the board, and the answer shows on the asking page and thread.
 
     `--from` is the dialogue that needed it: the driver could not rule on a
     page without knowing the topic, so the study starts NOW, beside that
     dialogue, instead of waiting for it to end (driver's call 2026-10-22). The
     session runs in that dialogue's directory and links back to its page."""
+    from runnerlib import learn
     cwd, page = args.cwd, None
     if args.from_task:
         rec = tasks_mod.records(Registry(cfg.data_dir / "registry.json")).get(args.from_task)
@@ -954,13 +970,31 @@ def cmd_study(cfg, args):
         cwd = cwd or rec.get("cwd") or None
         page = task_page(cfg, args.from_task, rec.get("page"))
     try:
-        task_id = tasks_mod.submit_study(cfg, " ".join(args.topic), from_task=args.from_task,
-                                         cwd=cwd, page=page)
+        got = learn.request(cfg, " ".join(args.topic), from_task=args.from_task or "",
+                            cwd=cwd or "", page=str(page or ""),
+                            thread=getattr(args, "thread", "") or "",
+                            purpose=getattr(args, "purpose", "") or "",
+                            asker=getattr(args, "asker", "") or "", log=log)
     except (ValueError, projects_mod.ProjectError) as e:
         sys.exit(f"study refused: {e}")
-    print(task_id)
-    print(f"surface: {surface_mod._dir(cfg) / f'task-{task_id}.html'}"
-          f"  (written by the tutor, opened when its first round finishes)")
+    if got.note:
+        print(f"NOTE: {got.note}", file=sys.stderr)
+    if not got.session:
+        print(f"ask {got.seq} is on the board; another Learn took it, and its session answers there")
+        return
+    print(got.session)
+    how = "joined the open session" if got.folded else "written by the tutor, opened when its first round finishes"
+    page_path = learn.session_page(cfg, got.session)
+    print(f"surface: {page_path}  ({how})")
+
+
+def cmd_study_ready(cfg, args):
+    from runnerlib import learn
+    try:
+        learn.mark_ready(cfg, args.session, args.ready == "yes")
+    except ValueError as e:
+        sys.exit(f"study-ready: {e}")
+    print(f"{args.session}: {'ready' if args.ready == 'yes' else 'not ready yet'} — said in its answer when it ends")
 
 
 def cmd_project(cfg, args):
@@ -1186,10 +1220,37 @@ def cmd_kanban(cfg, args):
     print(card["id"] if args.action == "add" else msg)
 
 
+def cmd_skills(cfg, args):
+    """Skills Cadre holds: `list` every one it can hand a run and where it
+    comes from; `add <folder>` copies a skill into this machine's own store
+    (it then wins over every source); `remove <name>` takes one out."""
+    try:
+        if args.action == "add":
+            if not args.rest:
+                sys.exit("skills add <folder with a SKILL.md> [--name <name>]")
+            got = skillstore_mod.add(cfg, args.rest[0], args.name or "")
+            print(f"{got['name']}: in this machine's store ({got['path']})")
+            return
+        if args.action == "remove":
+            if not args.rest:
+                sys.exit("skills remove <name>")
+            skillstore_mod.remove(cfg, args.rest[0])
+            print(f"{args.rest[0]}: removed from this machine's store")
+            return
+    except skillstore_mod.SkillError as e:
+        sys.exit(f"skills {args.action} refused: {e}")
+    print("looked up in this order:")
+    for label, p in skillstore_mod.sources(cfg):
+        print(f"  {label:7} {p}{'' if p.is_dir() else '  (missing)'}")
+    for s in skillstore_mod.listing(cfg):
+        hidden = f"  (hides {len(s['shadowed'])} other copy)" if s["shadowed"] else ""
+        print(f"{s['name']:28} {s['where']:7} {s['path']}{hidden}")
+
+
 def cmd_library(cfg, args):
     """Every agent, skill and workflow installed here, and how to launch it."""
     entries = library_mod.scan(dirs=args.dir or [str(Path.cwd())],
-                               skills_source=cfg.skills_source)
+                               skills_source=skillstore_mod.paths(cfg))
     if args.kind:
         entries = [e for e in entries if e["kind"] == args.kind]
     if args.json:
@@ -1273,8 +1334,23 @@ def main():
     p.add_argument("topic", nargs="+", help="what you need to understand")
     p.add_argument("--from", dest="from_task", help="the task whose page needs it; the "
                                                     "session runs in its directory")
-    p.add_argument("--cwd", help="the repo to study (default: the --from task's "
-                                 "directory, else here)")
+    p.add_argument("--cwd", help="the folder holding the material (default: the --from "
+                                 "task's directory, else here)")
+    p.add_argument("--thread", default="", help="the thread asking, if one is: the answer "
+                                                "comes back into it too")
+    p.add_argument("--purpose", default="", choices=["", "decision", "skill", "course"],
+                   help="why: to rule on a page (decision, the default with --from), to "
+                        "keep a skill (skill, the default otherwise) or a whole subject (course)")
+    p.add_argument("--asker", default="", help="the cadre asking (default: the --from task's)")
+    p = sub.add_parser("skills", help="skills Cadre holds: list them and where each comes "
+                                      "from, add one to this machine's store, remove one")
+    p.add_argument("action", choices=["list", "add", "remove"])
+    p.add_argument("rest", nargs="*", help="add: the skill's folder · remove: its name")
+    p.add_argument("--name", default="", help="add: store it under this name")
+    p = sub.add_parser("study-ready", help="a study session's tutor records whether the "
+                                           "driver now has what they asked for")
+    p.add_argument("session", help="the study session's task id")
+    p.add_argument("ready", choices=["yes", "no"])
     p = sub.add_parser("study-thread", help="threads: a side chat beside a page "
                                             "whose agent stays awake (start, list, run, promote)")
     p.add_argument("action", choices=["start", "list", "run", "promote"])
@@ -1396,7 +1472,7 @@ def main():
      "surface": cmd_surface, "task": cmd_task,
      "promote": cmd_promote, "handoff": cmd_handoff, "node": cmd_node,
      "chat-reply": cmd_chat_reply,
-     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "cadres": cmd_cadres, "records": cmd_records, "study": cmd_study, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
+     "project": cmd_project, "cards": cmd_cards, "kanban": cmd_kanban, "cadres": cmd_cadres, "records": cmd_records, "study": cmd_study, "skills": cmd_skills, "study-ready": cmd_study_ready, "study-thread": cmd_study_thread, "library": cmd_library, "up": cmd_up,
      "run": lambda c, a: cmd_run(c, a, single_pass=False),
      "serve": cmd_serve,
      "once": lambda c, a: cmd_run(c, a, single_pass=True)}[args.cmd](cfg, args)

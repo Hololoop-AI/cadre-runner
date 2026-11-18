@@ -36,7 +36,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from . import cadres, engine_seam, kanban, library, projects, seed_nodes, wake
+from . import cadres, engine_seam, kanban, library, projects, seed_nodes, skillstore, wake
 from .blackboard import Board
 from .nodes import Nodes, version_id
 from .registry import slugify
@@ -154,7 +154,8 @@ def seed(data_dir, cfg=None, prompts_dir=None) -> dict:
 
 
 def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
-                node: str = NODE, parent=None, cadre=None, card=None) -> str:
+                node: str = NODE, parent=None, cadre=None, card=None,
+                task_id: str = "", also_in=()) -> str:
     """Write the task-request event and return the new task id.
 
     Seeding the node is part of submitting: the action this event triggers
@@ -184,6 +185,12 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
     is attached to the card, so the card shows it until the card is done,
     and a card not yet being worked on moves to the working column.
     An unknown card is refused before anything is written.
+
+    `task_id` reuses an id chosen beforehand: submitting the same id twice
+    starts one session, because the start action fires once per key. A
+    caller that must survive a crash between choosing and recording uses it
+    (runnerlib/learn.py). `also_in` names cadres that list the run beside its
+    owner (cadres.show_also), costs and skills staying the owner's.
     """
     if node != NODE and node not in NODES:
         raise ValueError(f"no dialogue node {node!r} — one of {', '.join(NODES)}")
@@ -225,9 +232,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
             proj = None  # never block a task on bookkeeping
     picked = {}
     if run:
-        entry = library.resolve(library.scan(dirs=[cwd], skills_source=cfg.skills_source), run)
+        entry = library.resolve(library.scan(dirs=[cwd], skills_source=skillstore.paths(cfg)), run)
         picked = {"run": f"{entry['kind']}:{entry['name']}", "invoke": entry["invoke"]}
-    task_id = new_id(title)
+    task_id = task_id or new_id(title)
     # Launched from inside a session: that session's task is the parent, which
     # is how the fleet draws an orchestrator's tree (session_tree.py). A
     # parent the caller names (the driver, picking an item) wins.
@@ -237,6 +244,9 @@ def submit_task(cfg, text: str, cwd=None, title=None, project=None, run=None,
 
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
     cadres.assign(cfg.data_dir, task_id, owner)
+    for other in also_in or ():
+        if other and other != owner:
+            cadres.show_also(cfg.data_dir, task_id, other)
     seed(cfg.data_dir, cfg)
     board = Board(engine_seam.board_path(cfg))
     try:
@@ -286,8 +296,14 @@ def card_context(cfg, card: dict) -> str:
 
 
 def submit_study(cfg, topic: str, from_task=None, cwd=None, page=None,
-                 project=None, passage: str = "") -> str:
+                 project=None, passage: str = "", asker: str = "", task_id: str = "") -> str:
     """Start a study session on `topic` — a task on the `tutor` node.
+
+    The session belongs to the cadre that owns the tutor node (a cadre
+    record's `owns`: Learn ships owning it, config/cadres.json), and is also
+    shown in the cadre that asked (`asker`, else the `from_task`'s owner).
+    With no live cadre owning the node it falls back to the usual rule (its
+    parent's cadre, else the group rule).
 
     `from_task` is the dialogue that needed it: the driver could not rule on
     its page without the topic, so the study starts now, beside it, in its
@@ -308,8 +324,11 @@ def submit_study(cfg, topic: str, from_task=None, cwd=None, page=None,
         # the exact thing they mean, which the topic alone only gestures at.
         origin += ("\n\nThe driver selected this passage on that page:\n\n> "
                    + passage.strip()[:1000].replace("\n", "\n> "))
+    owner = cadres.owner_of_node(projects.load(cfg.data_dir), TUTOR)
+    asker = asker or (cadres.load(cfg.data_dir).get(from_task) if from_task else "") or ""
     return submit_task(cfg, f"Study session: {topic}{origin}", cwd=cwd,
-                       title=f"Study: {topic}"[:80], project=project, node=TUTOR)
+                       title=f"Study: {topic}"[:80], project=project, node=TUTOR,
+                       cadre=owner, task_id=task_id, also_in=[asker] if owner else ())
 
 
 # --------------------------------------------------------------------------- records
@@ -526,9 +545,10 @@ def write_verdict(cfg, task_id: str, verdict: str) -> dict:
     `continue` verdict is not written here at all — continuing IS a feedback
     turn, so the bridge writes it as one.
     """
-    return _command(cfg, task_id,
-                    {"target": TARGET_VERDICT, "task": task_id, "story": task_id,
-                     "verdict": verdict})
+    out = _command(cfg, task_id,
+                   {"target": TARGET_VERDICT, "task": task_id, "story": task_id,
+                    "verdict": verdict})
+    return out
 
 
 # --------------------------------------------------------------------------- the node event

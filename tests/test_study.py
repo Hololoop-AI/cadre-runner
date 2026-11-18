@@ -101,7 +101,7 @@ def test_the_task_agent_is_told_how_to_start_one():
         assert "cards propose" not in text, "cards come from the thread now"
     assert "Before you decide" in tasks.prompt_text(node="task")
     tutor = tasks.prompt_text(node="tutor")
-    assert "edits nothing in the repo" in tutor
+    assert "edits nothing in the repo or folder" in tutor
     assert "cards propose" in tasks.prompt_text(node="thread")
     assert "queueKey:'study-answers'" in tutor and "verdict=continue" in tutor
 

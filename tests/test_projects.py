@@ -39,7 +39,7 @@ def drive_recording_dirs(cfg, reg, b, spec, calls, log=None):
     def fake_spawn(claude_bin, prompt, wt_path, model, effort, permission_mode,
                    timeout, run_dir, session_id=None, resume=False,
                    extra_env=None, argv=None, add_dirs=None,
-                   thinking_url=None):
+                   thinking_url=None, plugin_dirs=None):
         calls.append({"prompt": prompt, "argv": list(argv or []),
                       "add_dirs": add_dirs, "resume": resume})
         return 4242
@@ -361,19 +361,21 @@ def test_the_shipped_cadres_file_names_each_cadre_by_its_slug_and_dev_owns_the_k
     from runnerlib import cadres
     from runnerlib.registry import slugify
     got = cadres.shipped()
-    assert [c["id"] for c in got] == ["dev", "kitchen", "personal"]
+    assert [c["id"] for c in got] == ["dev", "kitchen", "personal", "learn"]
     assert all(c["id"] == slugify(c["name"]) for c in got)
     assert [c["id"] for c in got if c.get("kanban")] == ["dev"]
     assert {c["id"]: c.get("skills", []) for c in got} == {
-        "dev": ["code-walkthrough"], "kitchen": [], "personal": []}, "only Dev ships the walkthrough"
+        "dev": ["code-walkthrough"], "kitchen": [], "personal": [],
+        "learn": ["learning", "learning-review", "learning-debrief", "learning-course", "learning-cards"]}, \
+        "only Dev ships the walkthrough; Learn ships the five learning skills"
 
 
 def test_a_new_machine_gets_the_whole_shipped_cadre_and_dev_gets_the_kanban_tab():
     from runnerlib import cadres, kanban
     d = scratch()
-    assert cadres.seed_defaults(d) == ["dev", "kitchen", "personal"]
+    assert cadres.seed_defaults(d) == ["dev", "kitchen", "personal", "learn"]
     projs = projects.load(d)
-    assert [c["name"] for c in cadres.cadre_list(projs)] == ["Dev", "Kitchen", "Personal"]
+    assert [c["name"] for c in cadres.cadre_list(projs)] == ["Dev", "Kitchen", "Learn", "Personal"]
     assert projs["dev"]["dirs"] == [], "no folders ship: the machine adds its own"
     assert kanban.load(d)["board"] == "dev"
     board = kanban.load(d)["board"]
@@ -398,7 +400,7 @@ def test_a_removed_default_stays_removed_and_a_later_one_still_arrives():
     cadres.seed_defaults(d)
     projects.archive(d, "kitchen")
     assert cadres.seed_defaults(d) == []
-    assert [c["id"] for c in cadres.cadre_list(projects.load(d))] == ["dev", "personal"]
+    assert [c["id"] for c in cadres.cadre_list(projects.load(d))] == ["dev", "learn", "personal"]
     # a cadre added to the shipped file in a later release reaches this install once
     later = _shipped(d, [*cadres.shipped(), {"id": "garden", "name": "Garden"}])
     assert cadres.seed_defaults(d, later) == ["garden"]
@@ -412,7 +414,7 @@ def test_an_existing_install_keeps_its_own_cadres_and_board_and_gains_the_missin
     projects.update(d, "dev", nav=["home", "settings"])
     projects.create(d, "Mine")
     kanban.own(d, "mine")
-    assert cadres.seed_defaults(d) == ["kitchen", "personal"]
+    assert cadres.seed_defaults(d) == ["kitchen", "personal", "learn"]
     projs = projects.load(d)
     assert projs["dev"]["nav"] == ["home", "settings"], "the machine's own edits win"
     assert kanban.load(d)["board"] == "mine", "a board that already has an owner keeps it"
@@ -428,6 +430,7 @@ def test_a_run_gets_the_skills_of_every_cadre_it_is_in_and_a_run_elsewhere_does_
     dev_work, kitchen_work, loose = _dirs(d, "dev-work", "kitchen-work", "loose")
     source = d / "skills-tree"
     (source / "walkthrough").mkdir(parents=True)
+    (source / "walkthrough" / "SKILL.md").write_text("---\nname: walkthrough\n---\n")
     cfg, reg = FakeCfg(d), FakeReg()
     cfg.skills_source = source
     projects.create(d, "Dev", dirs=[], skills=["walkthrough"])
@@ -444,10 +447,15 @@ def test_a_run_gets_the_skills_of_every_cadre_it_is_in_and_a_run_elsewhere_does_
     for spec in engine.tick(b, acts, n, d).spawns:
         drive_recording_dirs(cfg, reg, b, spec, calls)
     assert len(calls) == 3
-    link = Path(".claude") / "skills" / "walkthrough"
-    assert (dev_work / link).is_symlink(), "a project filed under the cadre gets its skills"
-    assert (loose / link).is_symlink(), "so does a run given to the cadre at launch"
-    assert not (kitchen_work / link).exists(), "another cadre's run does not"
+    from runnerlib import skillstore
+
+    def gets(task):
+        return (skillstore.plugin_dir(cfg, task) / "skills" / "walkthrough").is_symlink()
+    assert gets("task-dev"), "a project filed under the cadre gets its skills"
+    assert gets("task-loose"), "so does a run given to the cadre at launch"
+    assert not gets("task-kitchen"), "another cadre's run does not"
+    for work in (dev_work, kitchen_work, loose):
+        assert not (work / ".claude").exists(), "nothing is written into the work folder"
 
 
 def test_a_skill_shipped_later_reaches_an_existing_cadre_once_and_a_removal_sticks():

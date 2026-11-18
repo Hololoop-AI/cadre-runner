@@ -12,6 +12,9 @@ DEFAULTS = {
         "poll_interval": 45,
         "data_dir": "~/.local/state/pipeline-runner",
         "skills_source": "~/.local/share/cadre/ai-dev-skills/skills",
+        # more skill folders, looked up in order after Cadre's own store and
+        # its shipped skills, before skills_source (runnerlib/skillstore.py)
+        "skills_sources": [],
         "max_concurrent_runs": 8,  # detached sessions; beyond it, turns wait (backpressure)
         # The status/proxy service (statusd.py). Loopback by default: the page
         # has no login and drives agents that run without permission prompts,

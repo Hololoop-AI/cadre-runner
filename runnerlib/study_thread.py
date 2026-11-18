@@ -266,6 +266,11 @@ def claude_argv(cfg, rec: dict, claude_bin: str = "claude") -> list[str]:
             "--output-format", "stream-json", "--verbose", "--model", rec["model"],
             "--effort", effort, "--thinking-display", "summarized",
             "--include-partial-messages"]
+    # the skills its task's turns get (runnerlib/skillstore.py), the learning
+    # skill among them
+    from .skillstore import plugin_args
+    for p in plugin_args(cfg, rec.get("task") or ""):
+        argv += ["--plugin-dir", p]
     if rec.get("session_id"):
         argv += ["--resume", rec["session_id"]]
     elif rec.get("fork_from"):

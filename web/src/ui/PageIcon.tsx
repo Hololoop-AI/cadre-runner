@@ -15,6 +15,8 @@ const GLYPHS: Record<string, ReactNode> = {
   blackboard: <path d="M6 8h20v12H6zM10 12.5h7M10 16h11M12 20l-2.5 5M20 20l2.5 5" />,
   // records: a stack of pages
   records: <path d="M10 7h10l4 4v14H10zM20 7v4h4M13 15h8M13 18.5h8M13 22h5M7 10v17h13" />,
+  // review: two items, one behind the other
+  review: <path d="M8 11h13v14H8zM11 11V8h13v14h-3M11.5 16h6M11.5 19.5h4" />,
   // agents: a small robot head
   agents: <path d="M9 12h14v11H9zM16 12V8.5M16 7.5h.01M13 17h.01M19 17h.01M13 20.5h6M6.5 16v3M25.5 16v3" />,
   // settings: a gear, eight teeth round a hole
