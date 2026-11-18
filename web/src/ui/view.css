@@ -8,11 +8,6 @@
 .view .viewbar a{color:var(--accent);text-decoration:none}
 .view .viewbar a:hover{text-decoration:underline}
 .view .viewbar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
-.view .viewbar .study{display:flex;gap:.35rem}
-.view .viewbar .study input{background:var(--card-2);color:var(--fg);border:1px solid var(--border);
-  border-radius:4px;padding:.2rem .45rem;width:16rem;font:inherit}
-.view .viewbar .study button{background:var(--card-2);color:var(--accent);border:1px solid var(--border);
-  border-radius:4px;padding:.2rem .6rem;font:inherit;cursor:pointer}
 .view .viewbar .notice{color:var(--ok)}
 .view iframe{flex:1;border:0;width:100%;background:var(--bg)}
-@media (max-width:640px){.view .viewbar{flex-wrap:wrap;gap:.5rem}.view .viewbar .study input{width:auto;flex:1}}
+@media (max-width:640px){.view .viewbar{flex-wrap:wrap;gap:.5rem}}
