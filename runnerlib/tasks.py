@@ -85,8 +85,8 @@ NODES = {
     # started beside the one that needed it (`pipeline.py study`), so the
     # original thread keeps going instead of being handed away.
     TUTOR: {"reads": ["command:task:start", "command:task:feedback"],
-            "about": "teaches the driver their own code in short rounds: due "
-                     "cards, one idea, a few questions, graded next round"},
+            "about": "Learn's tutor: teaches the driver any topic in short rounds: "
+                     "what is due for review, one idea, a few questions, graded next round"},
 }
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
