@@ -16,6 +16,7 @@ import { MOUNT } from './router';
 import { useOnce } from './Screen';
 import { useServer } from './server';
 import './view.css';
+import { BackLink } from './Back';
 
 const SESSION = '/session/';
 
@@ -57,7 +58,7 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
   return (
     <div className="view">
       <nav className="viewbar">
-        <a href={window.location.origin + MOUNT + '/'} target="_self">← fleet</a>
+        <span><BackLink up={window.location.origin + MOUNT + '/'} home={window.location.origin + MOUNT + '/'} target="_self" /></span>
         <span className="title">{title}</span>
         {notice && <span className="notice">{notice}</span>}
       </nav>

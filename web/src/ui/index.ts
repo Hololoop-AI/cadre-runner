@@ -2,3 +2,4 @@
 // Python page draws it. This file is the module's only public entry.
 
 export { App } from './App';
+export { installTooltips } from './tooltips';

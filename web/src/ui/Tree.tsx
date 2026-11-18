@@ -6,6 +6,7 @@ import { ancestors, descendants, parentsOf, plural, relTime, s, treeHref, treeRo
 import type { TreeNode } from '../model';
 import { Pending, Screen, useOnce } from './Screen';
 import { useServer } from './server';
+import { BackLink } from './Back';
 
 /** What the tree page shows of a session's last result (session_tree.RESULT_CHARS). */
 const RESULT_CHARS = 1500;
@@ -55,7 +56,7 @@ export function TreeScreen({ task }: { task: string }) {
   const now = Date.now() / 1000;
   if (!data) return <Screen name="Session trees" after=" tree" tab="Session trees — tree"><Pending error={error} /></Screen>;
   const { tree, kids, roots } = treeRoots(data.nodes);
-  const meta = <p className="meta"><a href="/">← fleet</a> · <a href="/tree">every tree</a></p>;
+  const meta = <p className="meta"><BackLink /> · <a href="/tree">every tree</a></p>;
   if (!task) {
     return (
       <Screen name="Session trees" after=" tree" tab="Session trees — tree">

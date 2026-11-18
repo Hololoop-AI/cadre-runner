@@ -8,11 +8,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { Live } from '../api';
 import { buildHome, byColumn, runsOnCards, cardItemHref, cardRuns, cardTally, columnLabel, DRIVER, kanbanMove, OTHER, serverView, taskLabel, type Fleet, type Kanban, type KanbanCard } from '../model';
-import { useChrome } from './Cadre';
+import { cadreHref, useChrome } from './Cadre';
 import { CardBlock, tallyText } from './CardWork';
 import './kanban.css';
 import { Pending, Screen } from './Screen';
 import { useServer } from './server';
+import { BackLink } from './Back';
 
 /** One change to the board, as POST /kanban takes it. */
 export type BoardChange = Record<string, string> & { action: 'add' | 'move' | 'edit' | 'remove' };
@@ -60,7 +61,9 @@ export function KanbanScreen({ cadre = '', fleet = null }: { cadre?: string; fle
   }, [server, refetch]);
 
   const chrome = useChrome();
-  const [opened, setOpened] = useState('');
+  // ?card=<id> opens that card, so a card can be linked to from anywhere
+  const [opened, setOpened] = useState(() => new URLSearchParams(window.location.search).get('card') || '');
+  const [find, setFind] = useState('');
   const home = useMemo(() => (fleet ? buildHome(fleet, serverView(''), Date.now() / 1000, server.base || location.origin) : null), [fleet, server]);
   const pages = useMemo(() => home?.items.flatMap((it) => it.pages) ?? [], [home]);
   const open = board?.cards.find((c) => c.id === opened);
@@ -84,8 +87,12 @@ export function KanbanScreen({ cadre = '', fleet = null }: { cadre?: string; fle
 
   return (
     <Screen name="Board" tab="Cadre — board">
-      <p className="meta"><a href="/">← fleet</a>{' · '}<span className={`live ${live}`}>{LIVE[live]}</span>
+      <p className="meta"><BackLink up={cadre ? cadreHref(cadre) : '/'} />{' · '}<span className={`live ${live}`}>{LIVE[live]}</span>
         {' · agents use '}<code>pipeline.py kanban</code></p>
+      <p className="kfind">
+        <input type="search" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find a card: title, note or id"
+          aria-label="find a card" onKeyDown={(e) => { if (e.key === 'Escape') setFind(''); }} />
+      </p>
       {notice && <p className="notice">{notice}</p>}
       {!board ? <Pending error={error} />
         : cadre && board.board !== cadre ? <p className="meta">{`This cadre has no kanban board. The one kanban board there is belongs to ${board.board}.`}</p>
@@ -100,7 +107,7 @@ export function KanbanScreen({ cadre = '', fleet = null }: { cadre?: string; fle
                 <p className="kclose"><button type="button" className="ghost" onClick={() => setOpened('')}>Close the card</button></p>
               </section>
             )}
-            <Board board={board} onChange={send} work={work} opened={opened} />
+            <Board board={board} onChange={send} work={work} opened={opened} find={find} />
           </>}
     </Screen>
   );
@@ -113,8 +120,14 @@ export interface CardWorkHooks {
   onOpen: (c: KanbanCard) => void;
 }
 
-export function Board({ board, onChange, work, opened = '' }: {
-  board: Kanban; onChange: (c: BoardChange) => void; work?: CardWorkHooks; opened?: string;
+/** Whether a card matches what was typed in find: every word, in its title, note or id. */
+export function cardMatches(card: KanbanCard, find: string): boolean {
+  const hay = `${card.title}\n${card.note}\n${card.id}`.toLowerCase();
+  return find.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+
+export function Board({ board, onChange, work, opened = '', find = '' }: {
+  board: Kanban; onChange: (c: BoardChange) => void; work?: CardWorkHooks; opened?: string; find?: string;
 }) {
   const [dragged, setDragged] = useState('');
   const [editing, setEditing] = useState('');
@@ -129,20 +142,22 @@ export function Board({ board, onChange, work, opened = '' }: {
   return (
     <div className="kanban">
       {board.columns.map((column, i) => {
-        const cards = cols.get(column) || [];
+        const all = cols.get(column) || [];
+        const cards = all.filter((c) => cardMatches(c, find));
         return (
           <section key={column} className="kcol" data-column={column}
             onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, column, '')}>
-            <h2>{columnLabel(column)} <span className="kn">{cards.length}</span></h2>
+            <h2>{columnLabel(column)} <span className="kn">{cards.length === all.length ? cards.length : `${cards.length} of ${all.length}`}</span></h2>
             <AddCard column={column} onChange={onChange} />
             <ol>
-              {cards.map((c, j) => (
+              {cards.map((c) => (
                 <li key={c.id} className={c.id === dragged ? 'kcard dragging' : 'kcard'} draggable={editing !== c.id}
                   onDragStart={(e) => { e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed = 'move'; setDragged(c.id); }}
                   onDragEnd={() => setDragged('')}
                   onDragOver={(e) => e.preventDefault()}
                   // the lower half of a card means "after it"
-                  onDrop={(e) => drop(e, column, lowerHalf(e) ? cards[j + 1]?.id ?? '' : c.id)}>
+                  // the next card in the whole column, not the filtered one: find may hide it
+                  onDrop={(e) => drop(e, column, lowerHalf(e) ? all[all.indexOf(c) + 1]?.id ?? '' : c.id)}>
                   {editing === c.id
                     ? <EditCard card={c} onChange={onChange} onDone={() => setEditing('')} />
                     : <CardFace card={c} prev={board.columns[i - 1]} next={board.columns[i + 1]}

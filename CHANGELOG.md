@@ -7,6 +7,14 @@ All notable changes to Cadre are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Pages say when they were written, beside the round, and link the sections
+  and references they mention.
+- Fleet: tooltips show after 300 ms; the board has find and opens a linked card
+  (`?card=<id>`); ← back returns to the page you came from; a Done or Backlog
+  card shows on its cadre's home while a run on it is working or came back
+  unopened.
+
 ### Added
 - Learn, the study cadre: shipped beside Dev, Kitchen and Personal, with the
   five learning skills (shipped in `.agents/skills`), a Review tab (study

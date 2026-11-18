@@ -27,7 +27,7 @@ depends on nothing. Each module is reached only through its `index.ts`
 
 ## ui
 - **Owns:** drawing the home page and the library, costs, runs, session-tree, project and manage screens exactly as statusd.py draws them (render_home, render_library, render_costs, render_runs, render_tree, render_project, render_page): same elements, same classes, the Python page's stylesheet (`src/ui/fleet.css`, generated); plus the groups sidebar, which the Python page lacks and which draws nothing until a group exists (`src/ui/Groups.tsx`, its icons in `src/ui/GroupIcon.tsx`, its own `groups.css`); the Board (`/kanban`, `src/ui/Kanban.tsx`), which has no Python page either and keeps its own `kanban.css`, its small read-only copy on the home page of the group the board names (`ActiveCards`: the columns between the first and the last), the header's board link and each item's Add to board form, all React only; and the tab icon drawn in the theme's accent (`src/ui/favicon.ts`). `ui/router.ts` picks the screen by path; `ui/server.tsx` the machine.
-- **Entry:** `src/ui/index.ts` (only public import path: `App`)
+- **Entry:** `src/ui/index.ts` (only public import path: `App`, and `installTooltips`, the app-wide fast tooltip `main.tsx` starts once)
 - **Public API:** snapshot at `api/ui.api.d.ts`
 - **May depend on:** `model`, `api`, react · **Must not depend on:** anything under another module's directory
 - **Hides:** the page script's DOM habits it reproduces: items re-placed in last layout's order, find reading visible text, a "reload" after a plain form post
