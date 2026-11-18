@@ -49,7 +49,7 @@ export function ReviewScreen({ back }: { back: string }) {
     </form>
   );
   const table = (rows: DeckCard[], last: (c: DeckCard) => React.ReactNode) => (
-    <table className="bboard">
+    <table className="bboard deck">
       <thead><tr><th>to review</th><th>topic</th><th>kind</th><th /></tr></thead>
       <tbody>{rows.map((c) => (
         <tr key={c.id}><td>{c.front}</td><td>{c.source}{c.scope === 'team' ? ' · team' : ''}</td><td>{c.kind}</td><td>{last(c)}</td></tr>
@@ -77,7 +77,7 @@ export function ReviewScreen({ back }: { back: string }) {
                 )}
                 <button type="submit">Study it</button>
               </div>
-              <p className="meta">A study session in Learn: due cards first, one short idea, a few questions, graded next round.
+              <p className="meta">A study session in Learn: what is due first, one short idea, a few questions, graded next round.
                 It reads the material in the folder you pick; it never changes it.</p>
             </form>
           </section>
@@ -136,7 +136,7 @@ export function AgentsList({ name, agents }: { name: string; agents: CadreAgent[
     <section>
       <h2 className="sect">Agents</h2>
       <p className="meta">{`${name}'s agents and the skill each works with. Their evals arrive with the agents view.`}</p>
-      <table className="bboard">
+      <table className="bboard agents">
         <thead><tr><th>agent</th><th>skill</th><th>what it does</th></tr></thead>
         <tbody>{agents.map((a) => <tr key={a.id}><td>{a.name}</td><td><code>{a.skill}</code></td><td>{a.does}</td></tr>)}</tbody>
       </table>
