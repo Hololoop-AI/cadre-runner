@@ -58,7 +58,7 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
   return (
     <div className="view">
       <nav className="viewbar">
-        <span><BackLink up={window.location.origin + MOUNT + '/'} home={window.location.origin + MOUNT + '/'} target="_self" /></span>
+        <span><BackLink up={window.location.origin + MOUNT + '/'} home={window.location.origin + MOUNT + '/'} target="_self" framed /></span>
         <span className="title">{title}</span>
         {notice && <span className="notice">{notice}</span>}
       </nav>
