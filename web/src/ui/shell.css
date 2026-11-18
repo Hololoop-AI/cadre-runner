@@ -137,6 +137,11 @@ table.bboard td:first-child,table.bboard td:last-child{white-space:nowrap;color:
 @media (max-width:640px){table.bboard thead{display:none}table.bboard tr{display:block;border-bottom:1px solid var(--border);padding:6px 0}
  table.bboard td{display:inline-block;border:0;padding:2px 6px}}
 
+/* Learn's Review tab and a cadre's Agents tab: the long column wraps (the
+   blackboard's first and last columns are short, so they do not) */
+table.deck td:first-child{white-space:normal;color:inherit}
+table.agents td:last-child{white-space:normal;color:inherit}
+
 /* Hololoop: a card per cadre */
 ul.cadres{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 a.ccard{display:grid;grid-template-columns:34px 1fr;grid-template-rows:auto auto auto auto;column-gap:10px;

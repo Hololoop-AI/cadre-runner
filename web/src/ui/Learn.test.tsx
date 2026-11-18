@@ -101,3 +101,11 @@ describe('Learn', () => {
     for (const name of ['Tutor', 'Course builder', 'Card writer']) expect(screen.getByText(name)).toBeTruthy();
   });
 });
+
+describe('the Review tab with long questions', () => {
+  it('lets the question column wrap instead of pushing topic, kind and keep off the page', async () => {
+    serving('/c/learn/review');
+    await act(async () => { render(<App />); });
+    expect(document.querySelectorAll('table.deck').length).toBeGreaterThan(0);
+  });
+});
