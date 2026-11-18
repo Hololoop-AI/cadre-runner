@@ -15,6 +15,15 @@ A card:
     anchor     where it came from: a file, PR, commit, page or task id; "" if none
     front      the prompt, seen cold months from now. Cards are front-only —
                the grader is the answer side, as in Arboreus
+    kind       fact | concept | procedure | code — what sort of knowing it
+               asks for, so the tutor can pick how to review it (recall a
+               fact, explain a concept, apply a procedure, read code)
+    reference  what a good answer holds, for the tutor to grade against and
+               teach from (driver's call, 2026-11-08: "there should be a
+               reference answer that the tutor has access to"): {"answer":
+               the ideal answer, "points": what a good answer must hit,
+               "mistakes": [{"wrong": a likely wrong idea, "fix": its
+               correction}]}. Stored as JSON; read back as a dict
     status     proposed | accepted | discarded. Only accepted cards schedule
     scope      personal | team. A team backend's deck is all team cards
     origin     for a team card copied into a personal deck: the team backend's
@@ -49,11 +58,16 @@ from ._vendor.fsrs import Card, Rating, Scheduler, State
 
 FILE = "cards.db"
 STATUSES = ("proposed", "accepted", "discarded")
+KINDS = ("fact", "concept", "procedure", "code")
 SCOPES = ("personal", "team")
 # Where a team backend's page server serves its deck (statusd.py).
 API_PATH = "/api/cards"
+# One declaration for the column, used by the schema and by the migration that
+# adds it to an older deck, so a new kind is one edit to KINDS.
+_KIND_COL = (f"TEXT NOT NULL DEFAULT 'fact' "
+             f"CHECK (kind IN ({', '.join(repr(k) for k in KINDS)}))")
 
-SCHEMA = """
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS cards (
     id               TEXT PRIMARY KEY,
     source           TEXT NOT NULL,
@@ -69,7 +83,9 @@ CREATE TABLE IF NOT EXISTS cards (
     fsrs_stability   REAL,
     fsrs_difficulty  REAL,
     fsrs_due         TEXT,
-    fsrs_last_review TEXT
+    fsrs_last_review TEXT,
+    kind             {_KIND_COL},
+    reference        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS cards_by_due ON cards(status, fsrs_due);
 CREATE UNIQUE INDEX IF NOT EXISTS cards_by_origin ON cards(origin, origin_id)
@@ -112,7 +128,30 @@ def connect(data_dir) -> sqlite3.Connection:
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript(SCHEMA)
+    _migrate(db)
     return db
+
+
+# Columns added after the first decks were made, as `ALTER TABLE` adds them
+# to a deck that predates them. Cards made before them read as kind 'fact'
+# with no reference.
+_ADDED = (
+    ("kind", _KIND_COL),
+    ("reference", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def _migrate(db):
+    have = {r["name"] for r in db.execute("PRAGMA table_info(cards)")}
+    for name, decl in _ADDED:
+        if name not in have:
+            try:
+                db.execute(f"ALTER TABLE cards ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as e:
+                # Another process opened the same old deck at the same moment
+                # and added the column first.
+                if "duplicate column" not in str(e):
+                    raise
 
 
 @contextmanager
@@ -124,7 +163,49 @@ def _db(data_dir):
 
 
 def _row(r) -> dict:
-    return dict(r) if r is not None else None
+    if r is None:
+        return None
+    d = dict(r)
+    if "reference" in d:
+        d["reference"] = json.loads(d["reference"]) if d["reference"] else None
+    return d
+
+
+def _text(v) -> str:
+    """A field's text, stripped; '' for anything that is not a string."""
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _front(front) -> str:
+    if not _text(front):
+        raise CardError("every card needs a non-empty front")
+    return _text(front)
+
+
+def _kind(kind) -> str:
+    if kind not in KINDS:
+        raise CardError(f"every card needs a kind: one of {', '.join(KINDS)}")
+    return kind
+
+
+def _reference(ref) -> str:
+    """A proposal's reference, checked and stored as JSON: an ideal answer is
+    required; points and mistakes are optional lists."""
+    if not isinstance(ref, dict) or not _text(ref.get("answer")):
+        raise CardError('every card needs a reference: {"answer": the ideal answer, '
+                        '"points": [...], "mistakes": [{"wrong": ..., "fix": ...}]}')
+    points = ref.get("points") or []
+    mistakes = ref.get("mistakes") or []
+    if not (isinstance(points, list) and all(_text(p) for p in points)):
+        raise CardError("reference points are a list of non-empty strings")
+    if not (isinstance(mistakes, list) and all(
+            isinstance(m, dict) and _text(m.get("wrong")) and _text(m.get("fix"))
+            for m in mistakes)):
+        raise CardError('reference mistakes are a list of {"wrong": ..., "fix": ...}')
+    return json.dumps({"answer": _text(ref["answer"]),
+                       "points": [_text(p) for p in points],
+                       "mistakes": [{"wrong": _text(m["wrong"]), "fix": _text(m["fix"])}
+                                    for m in mistakes]})
 
 
 def get(data_dir, card_id) -> dict:
@@ -136,25 +217,56 @@ def get(data_dir, card_id) -> dict:
 
 
 def propose(data_dir, cards, source, anchor="", now=None, scope="personal") -> list:
-    """Land cards as `proposed` for the driver's curation pass. `cards` is a
-    list of {"front": ...}; any other key (a `why` for the curation pass) is
-    read by the caller, not stored."""
+    """Land cards as `proposed` for the driver's curation pass. Each card is
+    {"front", "kind", "reference"} (see the module docstring); any other key
+    (a `why` for the curation pass) is read by the caller, not stored.
+    `source` is the topic by name ("cadre-runner", "sourdough"), never a
+    folder path: the Cards page groups and finds cards by it."""
     if scope not in SCOPES:
         raise CardError(f"scope is one of {', '.join(SCOPES)}")
     source = (source or "").strip()
     if not source:
         raise CardError("a card needs a source: the repo or topic it is about")
-    fronts = [(c.get("front") or "").strip() for c in cards]
-    if not fronts or not all(fronts):
-        raise CardError("every card needs a non-empty front")
+    if source.startswith(("/", "~", "./")):
+        raise CardError(f"a card's source is a topic name, not a path: {source!r}")
+    if not cards:
+        raise CardError("a proposal needs at least one card, each with a front")
+    fronts = [_front(c.get("front")) for c in cards]
+    kinds = [_kind(c.get("kind")) for c in cards]
+    refs = [_reference(c.get("reference")) for c in cards]
     at = _now(now).isoformat()
     ids = [f"c-{uuid.uuid4().hex[:8]}" for _ in fronts]
     with _db(data_dir) as db:
         db.executemany(
-            "INSERT INTO cards (id, source, anchor, front, status, scope, created_at) "
-            "VALUES (?, ?, ?, ?, 'proposed', ?, ?)",
-            [(i, source, anchor or "", f, scope, at) for i, f in zip(ids, fronts)])
+            "INSERT INTO cards (id, source, anchor, front, kind, reference, status, scope, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?)",
+            [(i, source, anchor or "", f, k, r, scope, at)
+             for i, f, k, r in zip(ids, fronts, kinds, refs)])
     return [get(data_dir, i) for i in ids]
+
+
+def revise(data_dir, card_id, front=None, kind=None, reference=None) -> dict:
+    """Reframe a card rather than drop it: new wording, kind or reference, same
+    id, status and schedule (driver's call, 2026-11-09: "a poorly written card
+    might still have useful content that just needs to be reframed"). Only the
+    fields given change; each is checked as `propose` checks it. A team card
+    is the team's to reword, so a copy synced from one is refused."""
+    card = get(data_dir, card_id)
+    if card["origin"]:
+        raise CardError(f"{card_id} is a team card; reword it on the team backend")
+    changes = {}
+    if front is not None:
+        changes["front"] = _front(front)
+    if kind is not None:
+        changes["kind"] = _kind(kind)
+    if reference is not None:
+        changes["reference"] = _reference(reference)
+    if not changes:
+        raise CardError("nothing to revise: give a front, kind or reference")
+    with _db(data_dir) as db:
+        db.execute(f"UPDATE cards SET {', '.join(f'{k} = ?' for k in changes)} "
+                   "WHERE id = ?", (*changes.values(), card_id))
+    return get(data_dir, card_id)
 
 
 def _store(db, card_id, fc: Card):
@@ -249,7 +361,7 @@ def export_team(data_dir) -> list:
     what a teammate's machine needs to copy one in — no schedule, no reviews."""
     with _db(data_dir) as db:
         return [_row(r) for r in db.execute(
-            "SELECT id, source, anchor, front FROM cards "
+            "SELECT id, source, anchor, front, kind, reference FROM cards "
             "WHERE status = 'accepted' AND scope = 'team' ORDER BY created_at, rowid")]
 
 
@@ -276,22 +388,27 @@ def merge_team(data_dir, origin, team_cards, now=None) -> dict:
             if not oid or not front:
                 continue
             seen.add(oid)
+            # A team backend older than kinds and references sends neither.
+            kind = c.get("kind") if c.get("kind") in KINDS else "fact"
+            ref = c.get("reference")
+            ref = json.dumps(ref) if isinstance(ref, dict) else ""
+            want = (front, c.get("source") or "team", c.get("anchor") or "", kind, ref)
             have = db.execute("SELECT * FROM cards WHERE origin = ? AND origin_id = ?",
                               (origin, oid)).fetchone()
             if have is None:
                 cid = f"c-{uuid.uuid4().hex[:8]}"
                 db.execute(
-                    "INSERT INTO cards (id, source, anchor, front, status, scope, origin, "
-                    "origin_id, created_at) VALUES (?, ?, ?, ?, 'accepted', 'team', ?, ?, ?)",
-                    (cid, c.get("source") or "team", c.get("anchor") or "", front,
-                     origin, oid, _now(now).isoformat()))
+                    "INSERT INTO cards (id, source, anchor, front, kind, reference, status, "
+                    "scope, origin, origin_id, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'team', ?, ?, ?)",
+                    (cid, want[1], want[2], front, kind, ref, origin, oid,
+                     _now(now).isoformat()))
                 _store(db, cid, Card(due=_now(now)))
                 out["added"] += 1
-            elif (have["front"], have["source"], have["anchor"]) != (
-                    front, c.get("source") or "team", c.get("anchor") or ""):
-                db.execute("UPDATE cards SET front = ?, source = ?, anchor = ? WHERE id = ?",
-                           (front, c.get("source") or "team", c.get("anchor") or "",
-                            have["id"]))
+            elif (have["front"], have["source"], have["anchor"], have["kind"],
+                  have["reference"]) != want:
+                db.execute("UPDATE cards SET front = ?, source = ?, anchor = ?, kind = ?, "
+                           "reference = ? WHERE id = ?", (*want, have["id"]))
                 out["updated"] += 1
         for r in db.execute("SELECT id, origin_id FROM cards WHERE origin = ? "
                             "AND status = 'accepted'", (origin,)).fetchall():
@@ -309,5 +426,18 @@ def parse_proposal(text) -> list:
         raise CardError(f"proposal is not JSON: {e}") from None
     cards = data.get("cards") if isinstance(data, dict) else data
     if not isinstance(cards, list) or not all(isinstance(c, dict) for c in cards):
-        raise CardError('proposal is {"cards": [{"front": ...}, ...]}')
+        raise CardError('proposal is {"cards": [{"front": ..., "kind": ..., '
+                        '"reference": {"answer": ...}}, ...]}')
     return cards
+
+
+def parse_revision(text) -> dict:
+    """`{"front": ..., "kind": ..., "reference": {...}}`, any subset — what an
+    agent hands `cards revise`. Returns only those three keys."""
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise CardError(f"revision is not JSON: {e}") from None
+    if not isinstance(data, dict):
+        raise CardError('revision is {"front": ..., "kind": ..., "reference": {...}}')
+    return {k: data[k] for k in ("front", "kind", "reference") if k in data}

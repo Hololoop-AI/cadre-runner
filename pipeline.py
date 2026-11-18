@@ -1014,11 +1014,17 @@ def cmd_cards(cfg, args):
         due = f"  due {c['fsrs_due'][:16]}" if c["status"] == "accepted" else ""
         print(f"{c['id']}  [{c['status']}] {c['source']}"
               + (f" @ {c['anchor']}" if c["anchor"] else "") + f"{due}\n    {c['front']}")
+    def read_input():
+        return sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
     try:
         if args.action == "propose":
-            text = sys.stdin.read() if args.file in (None, "-") else Path(args.file).read_text()
-            out = cards_mod.propose(deck, cards_mod.parse_proposal(text),
+            out = cards_mod.propose(deck, cards_mod.parse_proposal(read_input()),
                                     args.source, args.anchor or "", scope=scope)
+        elif args.action == "revise":
+            if len(args.ids) != 1:
+                sys.exit("cards revise: one card id, and the new fields as JSON on stdin")
+            out = [cards_mod.revise(deck, args.ids[0],
+                                    **cards_mod.parse_revision(read_input()))]
         elif args.action == "sync":
             if scope == "team":
                 sys.exit("cards sync: this is a team backend — its deck is the "
@@ -1289,14 +1295,15 @@ def main():
     p = sub.add_parser("cards", help="cards: spaced review of what you learned about "
                                      "your code (agents propose, you accept and review)")
     p.add_argument("action", choices=["propose", "list", "due", "accept", "discard",
-                                      "review", "sync"])
-    p.add_argument("ids", nargs="*", help="card ids (accept, discard, review)")
+                                      "review", "revise", "sync"])
+    p.add_argument("ids", nargs="*", help="card ids (accept, discard, review, revise)")
     p.add_argument("--source", help="the repo or topic a card is about (propose: "
                                     "required; list/due: filter)")
     p.add_argument("--anchor", help="propose: where the cards came from — a file, "
                                     "PR, commit, page or task id")
-    p.add_argument("--file", help='propose: JSON {"cards":[{"front":...}]}; - or '
-                                  "omitted reads stdin")
+    p.add_argument("--file", help='propose: JSON {"cards":[{"front":...,"kind":...,'
+                                  '"reference":{"answer":...,"points":[...]}}]}; - or '
+                                  "omitted reads stdin. revise: JSON with any of front, kind, reference")
     p.add_argument("--status", choices=list(cards_mod.STATUSES), help="list: filter")
     p.add_argument("--limit", type=int, help="due: at most this many")
     p.add_argument("--grade", type=int, choices=[1, 2, 3, 4],

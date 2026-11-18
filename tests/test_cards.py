@@ -41,8 +41,13 @@ T0 = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 STEADY = Scheduler(enable_fuzzing=False)
 
 
+def card(front, kind="concept", answer="the ideal answer"):
+    """A proposal as an agent sends it: a front, a kind and a reference."""
+    return {"front": front, "kind": kind, "reference": {"answer": answer}}
+
+
 def proposed(d, *fronts, source="cadre-runner", anchor="runnerlib/tasks.py"):
-    return cards.propose(d, [{"front": f, "why": "for curation"} for f in fronts],
+    return cards.propose(d, [{**card(f), "why": "for curation"} for f in fronts],
                          source, anchor, now=T0)
 
 
@@ -92,8 +97,8 @@ def test_the_review_log_cannot_be_rewritten():
 
 
 @pytest.mark.parametrize("call, says", [
-    (lambda d: cards.propose(d, [{"front": "x"}], ""), "source"),
-    (lambda d: cards.propose(d, [{"front": "  "}], "repo"), "front"),
+    (lambda d: cards.propose(d, [card("x")], ""), "source"),
+    (lambda d: cards.propose(d, [card("  ")], "repo"), "front"),
     (lambda d: cards.propose(d, [], "repo"), "front"),
     (lambda d: cards.review(d, proposed(d, "q")[0]["id"], "a", 3), "only an accepted"),
     (lambda d: cards.accept(d, "c-missing"), "no card"),
@@ -120,8 +125,8 @@ def cli(d, monkeypatch, capsys, action, *ids, stdin="", **kw):
 def test_an_agent_proposes_on_stdin_and_the_driver_reviews(monkeypatch, capsys):
     d = scratch()
     out = cli(d, monkeypatch, capsys, "propose", source="work-api", anchor="PR 412",
-              stdin=json.dumps({"cards": [{"front": "In work-api, what retries a "
-                                                    "failed webhook?", "why": "core"}]}))
+              stdin=json.dumps({"cards": [{**card("In work-api, what retries a failed webhook?"),
+                                          "why": "core"}]}))
     cid = out[0]["id"]
     assert out[0]["anchor"] == "PR 412"
     cli(d, monkeypatch, capsys, "accept", cid)
@@ -135,7 +140,7 @@ def test_an_agent_proposes_on_stdin_and_the_driver_reviews(monkeypatch, capsys):
 def test_the_cli_refuses_instead_of_crashing(monkeypatch, capsys):
     d = scratch()
     with pytest.raises(SystemExit, match="refused: a card needs a source"):
-        cli(d, monkeypatch, capsys, "propose", stdin='{"cards":[{"front":"q"}]}')
+        cli(d, monkeypatch, capsys, "propose", stdin=json.dumps({"cards": [card("q")]}))
     with pytest.raises(SystemExit, match="--grade"):
         cli(d, monkeypatch, capsys, "review", "c-1")
 
@@ -163,16 +168,17 @@ def test_a_personal_deck_lives_outside_the_backend_data_and_a_team_deck_inside()
 
 def test_team_cards_join_each_personal_deck_and_are_scheduled_per_person():
     team, alice, bob = scratch(), scratch(), scratch()
-    a, b = cards.propose(team, [{"front": "In work-api, what retries a webhook?"},
-                                {"front": "In work-api, where is auth checked?"}],
+    a, b = cards.propose(team, [card("In work-api, what retries a webhook?"),
+                                card("In work-api, where is auth checked?")],
                          "work-api", scope="team", now=T0)
-    cards.propose(team, [{"front": "a proposal nobody accepted"}], "work-api",
+    cards.propose(team, [card("a proposal nobody accepted")], "work-api",
                   scope="team", now=T0)
     for c in (a, b):
         cards.accept(team, c["id"], now=T0)
     shared = cards.export_team(team)
     assert [c["id"] for c in shared] == [a["id"], b["id"]]
-    assert set(shared[0]) == {"id", "source", "anchor", "front"}, "no schedule leaves"
+    assert set(shared[0]) == {"id", "source", "anchor", "front", "kind", "reference"}, \
+        "no schedule leaves"
 
     url = "http://team:8183"
     assert cards.merge_team(alice, url, shared, now=T0) == {
@@ -207,7 +213,7 @@ def serve(cfg, monkeypatch):
 def test_a_team_backend_serves_its_deck_and_a_personal_one_never_does(monkeypatch, capsys):
     tmp = scratch()
     team_cfg = cfg_for(tmp, cards="team")
-    (c,) = cards.propose(team_cfg.cards_dir, [{"front": "In work-api, why two queues?"}],
+    (c,) = cards.propose(team_cfg.cards_dir, [card("In work-api, why two queues?")],
                          "work-api", scope="team")
     cards.accept(team_cfg.cards_dir, c["id"])
     srv, url = serve(team_cfg, monkeypatch)
@@ -225,7 +231,7 @@ def test_a_team_backend_serves_its_deck_and_a_personal_one_never_does(monkeypatc
         srv.server_close()
 
     personal = cfg_for(tmp, cards_dir=str(tmp / "mine"))
-    cards.propose(personal.cards_dir, [{"front": "something personal"}], "notes")
+    cards.propose(personal.cards_dir, [card("something personal")], "notes")
     srv, url = serve(personal, monkeypatch)
     try:
         with pytest.raises(urllib.error.HTTPError) as e:
@@ -234,3 +240,174 @@ def test_a_team_backend_serves_its_deck_and_a_personal_one_never_does(monkeypatc
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# Kinds and references (driver's call, 2026-11-08): the tutor grades against
+# a reference answer and picks how to review by kind, so neither is optional.
+
+@pytest.mark.parametrize("bad, says", [
+    ({"front": "q", "reference": {"answer": "a"}}, "kind"),
+    ({"front": "q", "kind": "trivia", "reference": {"answer": "a"}}, "kind"),
+    ({"front": "q", "kind": "fact"}, "reference"),
+    ({"front": "q", "kind": "fact", "reference": {"answer": "  "}}, "reference"),
+    ({"front": "q", "kind": "fact", "reference": {"answer": "a", "points": "one"}}, "points"),
+    ({"front": "q", "kind": "fact", "reference": {"answer": "a",
+                                                  "mistakes": [{"wrong": "w"}]}}, "mistakes"),
+])
+def test_a_card_without_a_kind_or_reference_is_refused(bad, says):
+    d = scratch()
+    with pytest.raises(cards.CardError, match=says):
+        cards.propose(d, [bad], "sourdough")
+    assert cards.listing(d) == [], "a refused proposal lands nothing, not part of it"
+
+
+def test_a_source_is_a_topic_name_not_a_folder():
+    d = scratch()
+    for path in ("/home/dev/notes", "~/notes", "./here"):
+        with pytest.raises(cards.CardError, match="topic name"):
+            cards.propose(d, [card("q")], path)
+
+
+def test_the_reference_reads_back_whole_for_the_tutor():
+    d = scratch()
+    ref = {"answer": "Starter that has peaked and begun to fall.",
+           "points": ["peaked", "falling, not rising"],
+           "mistakes": [{"wrong": "as soon as it bubbles", "fix": "bubbles start early; "
+                         "wait for the peak"}]}
+    (c,) = cards.propose(d, [{"front": "When is a levain ready to mix?", "kind": "fact",
+                              "reference": ref}], "sourdough", now=T0)
+    cards.accept(d, c["id"], now=T0)
+    (due,) = cards.due(d, now=T0)
+    assert due["kind"] == "fact" and due["reference"] == ref
+
+
+def test_a_deck_made_before_kinds_gains_them_and_keeps_its_cards():
+    d = scratch()
+    Path(d).mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(Path(d) / cards.FILE)
+    old.executescript(cards.SCHEMA.replace(
+        f"    fsrs_last_review TEXT,\n    kind             {cards._KIND_COL},\n"
+        "    reference        TEXT NOT NULL DEFAULT ''\n", "    fsrs_last_review TEXT\n"))
+    old.execute("INSERT INTO cards (id, source, front, status, created_at) "
+                "VALUES ('c-old', 'cadre-runner', 'an old card', 'proposed', ?)",
+                (T0.isoformat(),))
+    old.commit()
+    assert "kind" not in {r[1] for r in old.execute("PRAGMA table_info(cards)")}
+    old.close()
+
+    got = cards.get(d, "c-old")
+    assert got["kind"] == "fact" and got["reference"] is None
+    (new,) = cards.propose(d, [card("a new card", kind="code")], "cadre-runner")
+    assert new["kind"] == "code"
+
+
+def test_team_cards_bring_their_kind_and_reference_and_an_old_team_sends_neither():
+    d = scratch()
+    ref = {"answer": "two", "points": [], "mistakes": []}
+    cards.merge_team(d, "http://team:8183", [
+        {"id": "t1", "source": "work-api", "front": "why two queues?", "kind": "concept",
+         "reference": ref},
+        {"id": "t2", "source": "work-api", "front": "from an older team backend"}], now=T0)
+    by = {c["front"]: c for c in cards.listing(d)}
+    assert by["why two queues?"]["kind"] == "concept"
+    assert by["why two queues?"]["reference"] == ref
+    assert by["from an older team backend"]["kind"] == "fact"
+    assert by["from an older team backend"]["reference"] is None
+
+    sharper = {**ref, "points": ["one per priority"]}
+    out = cards.merge_team(d, "http://team:8183", [
+        {"id": "t1", "source": "work-api", "front": "why two queues?", "kind": "concept",
+         "reference": sharper},
+        {"id": "t2", "source": "work-api", "front": "from an older team backend"}], now=T0)
+    assert out == {"added": 0, "updated": 1, "retired": 0}
+    assert cards.listing(d)[0]["reference"] == sharper
+
+
+# Reframing (driver's call, 2026-11-09): a weak card is rewritten, not only
+# kept or dropped, and keeps its place in the schedule.
+
+def test_a_reframed_card_keeps_its_id_and_schedule():
+    d = scratch()
+    (c,) = proposed(d, "What are the four arguments of tick_pass?")
+    cards.accept(d, c["id"], now=T0)
+    cards.review(d, c["id"], "no idea", 1, now=T0, scheduler=STEADY)
+    before = cards.get(d, c["id"])
+    ref = {"answer": "So the engine never imports the runner.", "points": ["no import cycle"]}
+    after = cards.revise(d, c["id"], front="Why does the engine take a callback to start "
+                         "a turn instead of calling the runner?", reference=ref)
+    assert after["front"].startswith("Why does the engine")
+    assert after["reference"] == {**ref, "mistakes": []}
+    assert after["kind"] == before["kind"], "a field not given stays as it was"
+    assert (after["status"], after["fsrs_due"], after["fsrs_stability"]) == (
+        before["status"], before["fsrs_due"], before["fsrs_stability"])
+    assert len(cards.reviews(d, c["id"])) == 1, "its review history stays with it"
+
+
+@pytest.mark.parametrize("change, says", [
+    ({}, "nothing to revise"),
+    ({"front": "  "}, "front"),
+    ({"kind": "trivia"}, "kind"),
+    ({"reference": {"answer": ""}}, "reference"),
+    ({"front": 5}, "front"),
+    ({"reference": {"answer": ["a list"]}}, "reference"),
+    ({"reference": {"answer": "a", "mistakes": [{"wrong": 1, "fix": "f"}]}}, "mistakes"),
+])
+def test_a_bad_revision_is_refused_and_changes_nothing(change, says):
+    d = scratch()
+    (c,) = proposed(d, "q")
+    with pytest.raises(cards.CardError, match=says):
+        cards.revise(d, c["id"], **change)
+    assert cards.get(d, c["id"]) == c
+
+
+def test_a_synced_team_card_is_reworded_on_the_team_backend_not_here():
+    d = scratch()
+    cards.merge_team(d, "http://team:8183", [{"id": "t1", "source": "work-api",
+                                              "front": "why two queues?"}], now=T0)
+    (c,) = cards.listing(d)
+    with pytest.raises(cards.CardError, match="team card"):
+        cards.revise(d, c["id"], front="sharper")
+
+
+def test_an_agent_reframes_a_card_on_stdin(monkeypatch, capsys):
+    d = scratch()
+    (c,) = proposed(d, "what does greet.py print?")
+    out = cli(d, monkeypatch, capsys, "revise", c["id"],
+              stdin=json.dumps({"front": "Why does greet.py take its text from config?",
+                                "kind": "concept"}))
+    assert out[0]["id"] == c["id"] and out[0]["kind"] == "concept"
+
+
+@pytest.mark.parametrize("text, says", [
+    ("not json", "not JSON"),
+    ('["front"]', "revision is"),
+])
+def test_a_revision_that_is_not_a_json_object_is_refused(text, says):
+    with pytest.raises(cards.CardError, match=says):
+        cards.parse_revision(text)
+
+
+def test_a_revision_keeps_only_the_fields_revise_takes():
+    got = cards.parse_revision('{"front": "q", "status": "accepted", "why": "sharper"}')
+    assert got == {"front": "q"}
+
+
+def test_a_non_text_front_is_refused_not_a_crash():
+    with pytest.raises(cards.CardError, match="front"):
+        cards.propose(scratch(), [card(5)], "repo")
+
+
+def test_two_processes_opening_an_old_deck_at_once_do_not_crash():
+    # The second process checked the columns before the first added them.
+    class StaleView:
+        def __init__(self, db):
+            self.db = db
+
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info"):
+                return [{"name": "id"}]
+            return self.db.execute(sql, *args)
+
+    db = cards.connect(scratch())
+    cards._migrate(StaleView(db))
+    assert {r["name"] for r in db.execute("PRAGMA table_info(cards)")} >= {"kind", "reference"}
