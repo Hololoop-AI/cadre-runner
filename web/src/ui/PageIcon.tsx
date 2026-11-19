@@ -1,7 +1,7 @@
 // A cadre page's icon, in the rail's neon style (GroupIcon.tsx): thin
 // round-capped strokes in currentColor with a soft glow (groups.css). A
-// cadre's icon sits in a ring; a page's has none, so the two strips read
-// apart at a glance. An unknown page gets its first letter.
+// cadre's icon sits in a ring; a page's has none, so the rail and the page
+// icons beside it read apart at a glance. An unknown page gets its first letter.
 
 import type { ReactNode } from 'react';
 

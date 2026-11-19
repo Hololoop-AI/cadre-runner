@@ -9,6 +9,7 @@
 // layout).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { formBody } from '../api';
 import { LearnPanel } from './Learn';
 import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, workRows, type Kanban, type NewWorkInfo, type Sel } from '../model';
@@ -27,7 +28,7 @@ import { useFleet, type FleetState } from './useFleet';
 import { CostsScreen } from './Costs';
 import { KanbanScreen } from './Kanban';
 import { LibraryScreen } from './Library';
-import { current, keepLinksInApp, postScreenForms } from './router';
+import { current, keepCadreMovesInApp, keepLinksInApp, postScreenForms } from './router';
 import { PageScreen } from './Page';
 import { ViewScreen } from './View';
 import { ProjectScreen } from './Project';
@@ -56,8 +57,32 @@ const NO_GROUPS: never[] = [];
  */
 export function App() {
   const machines = useMachines();
-  const [here] = useState(current);
+  const [here, setHere] = useState(current);
+  // A move inside the app (goInApp) or the browser's back and forward: redraw the screen the
+  // address names, without a reload. Where the browser can, the old screen crossfades into the
+  // new one and the rail, tabs and underline keep their place (shell.css view transitions).
+  useEffect(() => {
+    let last = JSON.stringify(current());
+    const onPop = (e: PopStateEvent) => {
+      const next = current();
+      const key = JSON.stringify(next);
+      // a change that names the same screen (a hash, a query this screen reads itself) is not a move
+      if (key === last) return;
+      last = key;
+      const ours = (e.state as { cadreMove?: boolean } | null)?.cadreMove === true;
+      const apply = () => {
+        flushSync(() => setHere(next));
+        if (ours) window.scrollTo(0, 0);
+      };
+      const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+      if (doc.startViewTransition && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) doc.startViewTransition(apply);
+      else apply();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   useEffect(keepLinksInApp, []);
+  useEffect(keepCadreMovesInApp, []);
   useEffect(() => followThemeFavicon(), []); // the tab icon in the theme's accent, as it changes
   // the Python pages give the body a class on home only; Holo and a cadre are homes
   useEffect(() => {
@@ -93,7 +118,9 @@ function CadreApp({ machines, cadre, tab }: { machines: Machines; cadre: string;
   const fleet = useFleet(server);
   return (
     <CadreShell id={cadre} tab={tab} fleet={fleet.fleet}>
-      {tab === 'home' ? <Home machines={machines} cadre={cadre} fleetState={fleet} /> : <CadreScreen id={cadre} tab={tab} fleet={fleet.fleet} />}
+      {/* keyed by cadre: moving to another cadre in the app starts its screen afresh, while the
+          shell and the fleet data stay loaded */}
+      {tab === 'home' ? <Home key={cadre} machines={machines} cadre={cadre} fleetState={fleet} /> : <CadreScreen key={`${cadre}/${tab}`} id={cadre} tab={tab} fleet={fleet.fleet} />}
     </CadreShell>
   );
 }

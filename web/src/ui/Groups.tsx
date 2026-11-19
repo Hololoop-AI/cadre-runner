@@ -3,7 +3,7 @@
 // icon (GroupIcon.tsx). Choosing one filters the Work list. React only, so
 // its look lives in groups.css, not the generated fleet.css. With no group
 // defined it still draws Home and Other: it is the way between cadres, and
-// the page strip beside it and the page's left margin assume it is there.
+// the page icons beside it and the page's left margin assume it is there.
 //
 // On a wide screen its top button folds it to a thin rail and back; the
 // browser keeps that with the view (Sel). On a phone it is hidden: the

@@ -1,11 +1,12 @@
 /* A cadre's shell (Cadre.tsx) and Hololoop's cards (Hololoop.tsx). React
    only, so not part of the generated fleet.css; colours are the theme's
-   variables. Wide: the cadre rail (groups.css), then the cadre's pages as a
-   second strip of icons; one button folds both. Phone: one menu button
-   opens the rail and the pages; nothing else of the shell shows. */
+   variables. Wide: the cadre rail (groups.css), the cadre's pages as quiet
+   icons beside it, and the same pages as named tabs under the header; one
+   button folds the rail and the icons, the tabs stay. Phone: one menu button
+   opens the rail and the pages, and the tabs show under the header. */
 
-/* the cadre's pages: a second strip of neon icons beside the cadre rail
-   (PageRail, PageIcon.tsx); same look as the rail's entries (groups.css) */
+/* the cadre's pages as quiet neon icons beside the cadre rail (PageRail,
+   PageIcon.tsx), the same look as the rail's entries (groups.css) */
 nav.pages-rail a{position:relative;display:flex;align-items:center;gap:10px;color:var(--muted);text-decoration:none;font-size:13px}
 nav.pages-rail .gi{display:grid;place-items:center;width:28px;height:28px;flex:none;color:var(--label);transition:color .15s,filter .15s}
 nav.pages-rail .gsvg{width:100%;height:100%;overflow:visible}
@@ -97,14 +98,20 @@ body.home header button.cmenu{padding:3px 11px;border:1px solid var(--border);bo
 @media (min-width:641px){
  body.home header button.cmenu{display:none}
  .cdrawer{display:none}
- /* the pages strip sits beside the cadre rail (44px, groups.css) and folds with it */
+ /* the page icons beside the cadre rail (44px, groups.css): one even column, no column behind
+    them, spaced like the rail and level with its first entry; the open one glows. Folded, they
+    slide away to the left and fade (.gone), and the tabs remain. */
  body.home:has(nav.groups):has(.pages-wide){padding-left:108px}
- .pages-wide{position:fixed;left:44px;top:0;bottom:0;width:44px;box-sizing:border-box;padding:36px 4px 10px;
-  background:color-mix(in srgb,var(--sunk) 70%,var(--bg));border-right:1px solid var(--border);overflow-y:auto;z-index:5}
- .pages-wide nav.pages-rail{display:flex;flex-direction:column;align-items:center;gap:10px}
- .pages-wide nav.pages-rail a{justify-content:center;width:100%;padding:3px 0}
- .pages-wide nav.pages-rail a.on::before{content:"";position:absolute;left:-4px;top:5px;height:22px;width:3px;
-  border-radius:0 3px 3px 0;background:var(--accent)}
+ body.home:has(nav.groups.shut):has(.pages-wide.gone){padding-left:28px}
+ .pages-wide{position:fixed;left:44px;top:0;bottom:0;width:44px;box-sizing:border-box;padding:44px 0 10px;
+  overflow-y:auto;z-index:5;transition:opacity .22s ease,transform .22s ease}
+ .pages-wide nav.pages-rail{display:flex;flex-direction:column;align-items:center;gap:8px}
+ .pages-wide nav.pages-rail a{justify-content:center;width:100%;height:36px}
+ .pages-wide nav.pages-rail a.on .gi{filter:drop-shadow(0 0 5px currentColor)}
+ .pages-wide.gone{opacity:0;transform:translateX(-28px);pointer-events:none}
+ /* the rail eases in and out when folded */
+ body.home{transition:padding-left .22s ease}
+ nav.groups{transition:width .22s ease,padding .22s ease}
  /* the name is the tooltip and what a screen reader says */
  .pages-wide nav.pages-rail .gn{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
  .cmainwrap{min-width:0}
@@ -160,3 +167,42 @@ section.rtype h3{margin:14px 0 6px;font-size:13px;text-transform:uppercase;lette
 ul.records{list-style:none;margin:0;padding:0}
 ul.records li{display:flex;gap:.6rem;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border)}
 ul.records li .when{margin-left:auto;font-size:12px;color:var(--muted)}
+
+/* The cadre's pages as named tabs under the header (PageTabs), on every screen, folded or not.
+   The open tab's underline is one element that slides to the next tab as it opens. */
+.ptabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--border);margin:4px 0 18px}
+.ptabs a{position:relative;display:flex;align-items:center;gap:7px;padding:8px 12px;margin-bottom:-1px;color:var(--muted);
+ text-decoration:none;font-size:13px}
+.ptabs a .gi{display:grid;place-items:center;width:18px;height:18px;color:var(--label)}
+.ptabs a .gsvg{width:100%;height:100%;overflow:visible}
+.ptabs a:hover{color:var(--fg)}
+.ptabs a.on{color:var(--fg)}
+.ptabs a.on .gi{color:var(--accent);filter:drop-shadow(0 0 3px currentColor)}
+.ptabs .tabline{position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent);
+ view-transition-name:tab-underline}
+
+/* Moving between screens: in the app (goInApp), the old screen crossfades into the new one where
+   the browser supports view transitions; the rail, the page icons and the tabs hold still, and
+   the underline slides. Where it does not, the new screen fades in. A full page load (a link from
+   outside) crossfades the same way in browsers that do it across pages. */
+@view-transition{navigation:auto}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.18s}
+::view-transition-group(tab-underline){animation-duration:.24s;animation-timing-function:cubic-bezier(.3,.7,.2,1)}
+nav.groups{view-transition-name:cadre-rail}
+.pages-wide{view-transition-name:cadre-pages}
+.ptabs{view-transition-name:cadre-tabs}
+@supports not (view-transition-name:none){.cmainwrap{animation:screenin .18s ease-out both}}
+@keyframes screenin{from{opacity:.4}to{opacity:1}}
+
+@media (prefers-reduced-motion:reduce){
+ @view-transition{navigation:none}
+ body.home,nav.groups,.pages-wide{transition:none}
+ .cmainwrap{animation:none}
+}
+/* Phone: the tabs stay one row and scroll sideways rather than wrap; only sideways: no vertical
+   drag inside the row (overflow-y hidden, touch pans x only), and the scroll does not drag the page */
+@media (max-width:640px){
+ .ptabs{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+  touch-action:pan-x;overscroll-behavior-x:contain}
+ .ptabs a{flex:none}
+}

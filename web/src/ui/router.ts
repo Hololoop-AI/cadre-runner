@@ -5,6 +5,11 @@ import { HOLO, OTHER } from '../model';
 // (/library, /costs, /runs, /tree/<task>) so their links stay the Python
 // pages' links; while the app is served under /app/, a click on one of those
 // links stays inside the app instead of leaving for the Python page.
+//
+// Moving between the cadre app's screens (Holo, a cadre's home, its tabs)
+// never reloads the page: goInApp changes the address and App redraws on
+// popstate, as it does for back and forward (keepCadreMovesInApp catches the
+// links). Every other screen still loads as a page of its own.
 
 /** One screen of the app. */
 export type Route =
@@ -80,6 +85,56 @@ export function go(path: string) {
 }
 
 /**
+ * Move to a screen of the cadre app (Holo, a cadre's home or one of its tabs)
+ * without reloading the page: the address changes (pushState) and the app
+ * redraws the screen, so the rail and the tabs stay where they are and nothing
+ * flashes. App redraws on popstate (router's one change signal, the same one
+ * back and forward send); this dispatches it marked as our own move, so the
+ * new screen starts at its top while back and forward keep the browser's own
+ * scroll restoration.
+ */
+export function goInApp(path: string) {
+  // already there (the open tab, the current cadre): no extra Back step
+  if (window.location.pathname + window.location.search === MOUNT + path) return;
+  window.history.pushState(null, '', MOUNT + path);
+  window.dispatchEvent(new PopStateEvent('popstate', { state: { cadreMove: true } }));
+}
+
+/** Whether a click is a plain left click, the kind a link follows in this tab. */
+function plainClick(e: MouseEvent): boolean {
+  return !e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+}
+
+/** Whether a path is a screen of the cadre app: Holo, a cadre's home or one of its tabs. */
+function cadreScreen(path: string): boolean {
+  const r = route(path);
+  return r?.screen === 'home' || r?.screen === 'cadre';
+}
+
+/**
+ * While a cadre screen is showing, any plain click on a link to another cadre
+ * screen (a tab, a page icon, Holo's cadre cards, "the board") moves in the app
+ * (goInApp) instead of loading a new page. Links to the other screens (a page,
+ * a run's tree, costs) still load as pages, as do modified and middle clicks.
+ */
+export function keepCadreMovesInApp(): () => void {
+  const onClick = (e: MouseEvent) => {
+    if (!plainClick(e)) return;
+    const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
+    const url = new URL(a.href);
+    if (url.origin !== window.location.origin) return;
+    const path = MOUNT && url.pathname.startsWith(MOUNT) ? url.pathname.slice(MOUNT.length) || '/' : url.pathname;
+    const here = window.location.pathname.slice(MOUNT.length) || '/';
+    if (!cadreScreen(path) || !cadreScreen(here)) return;
+    e.preventDefault();
+    goInApp(path + url.search);
+  };
+  document.addEventListener('click', onClick);
+  return () => document.removeEventListener('click', onClick);
+}
+
+/**
  * While mounted under /app, a plain click on a same-origin link to one of
  * the app's own screens goes to that screen inside the app. Anything else
  * (review pages, /page/<key>, another machine's links) is left alone.
@@ -87,7 +142,7 @@ export function go(path: string) {
 export function keepLinksInApp(): () => void {
   if (!MOUNT) return () => {};
   const onClick = (e: MouseEvent) => {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!plainClick(e)) return;
     const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
     if (!a || (a.target && a.target !== '_self')) return;
     const url = new URL(a.href);

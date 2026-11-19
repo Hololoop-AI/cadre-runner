@@ -216,13 +216,37 @@ describe('a cadre app', () => {
     expect(rail.querySelectorAll('svg.gsvg').length).toBe(2);
   });
 
-  it('folds the pages strip away with the rail, in one click, and remembers it', async () => {
+  it('folds the page icons away with the rail, in one click, keeps the tabs, and remembers it', async () => {
     serving('/c/dev');
     await act(async () => { render(<App />); });
     await act(async () => { (document.querySelector('nav.groups button.gfold') as HTMLButtonElement).click(); });
     expect(document.querySelector('nav.groups.shut')).toBeTruthy();
-    expect(document.querySelector('.pages-wide')).toBeNull();
+    expect(document.querySelector('.pages-wide.gone')?.hasAttribute('inert')).toBe(true);
+    expect(document.querySelectorAll('nav.ptabs a').length).toBe(6);
     expect(window.localStorage.getItem('cadre.railShut')).toBe('1');
+  });
+
+  it("names the cadre's pages as tabs under the header, the open one marked and underlined", async () => {
+    serving('/c/dev/kanban');
+    await act(async () => { render(<App />); });
+    const tabs = document.querySelector('nav.ptabs') as HTMLElement;
+    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['Home', 'Kanban', 'Blackboard', 'Records', 'Agents', 'Settings']);
+    const open = tabs.querySelector('a.on')!;
+    expect(open.getAttribute('href')).toBe('/c/dev/kanban');
+    expect(open.querySelector('.tabline')).toBeTruthy();
+  });
+
+  it('moves to another tab inside the app, without a reload: the address changes and the new screen draws', async () => {
+    serving('/c/dev');
+    await act(async () => { render(<App />); });
+    const kept = document.querySelector('nav.groups');
+    const tabs = document.querySelector('nav.ptabs') as HTMLElement;
+    await act(async () => { (within(tabs).getByText('Records').closest('a') as HTMLAnchorElement).click(); });
+    expect(window.location.pathname).toBe('/c/dev/records');
+    expect(document.querySelector('nav.ptabs a.on')!.getAttribute('href')).toBe('/c/dev/records');
+    expect(await screen.findByText(/cadres-own-runs/)).toBeTruthy();
+    // the same rail element: the shell stayed, nothing reloaded
+    expect(document.querySelector('nav.groups')).toBe(kept);
   });
 
   it('puts the rail, the pages and settings behind one menu button for a phone', async () => {
