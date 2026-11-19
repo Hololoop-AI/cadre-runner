@@ -8,6 +8,11 @@ All notable changes to Cadre are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Fleet: each cadre's pages are named tabs under the header on every screen,
+  and quiet icons beside the cadre rail; folding the rail slides the icons away
+  and the tabs stay. Moving between tabs, page icons and cadres happens in the
+  app without a reload, with a crossfade where the browser supports it, so the
+  screen never flashes. On a phone the tabs are one row that scrolls sideways.
 - Pages say when they were written, beside the round, and link the sections
   and references they mention.
 - Fleet: tooltips show after 300 ms; the board has find and opens a linked card
