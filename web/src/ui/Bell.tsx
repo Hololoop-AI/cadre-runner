@@ -167,6 +167,10 @@ export function Bell() {
         aria-label={!unread.length ? 'Notifications' : `Notifications, ${unread.length} new` + (problems ? `, ${problems} failed` : '')}>
         {BELL}{unread.length > 0 && <span className="fbell-count">{unread.length}</span>}
       </button>
+      {/* in the frame the page below is another document: the click that closes the menu
+          lands on this instead, so it never reaches the page (no annotation from it),
+          as the page's own menus swallow theirs */}
+      {open && framed && <div className="fbell-shield" aria-hidden="true" onMouseDown={() => setOpen(false)} />}
       {open && (
         <div className="fbell-menu" role="menu" aria-label="Notifications">
           <div className="fbell-head"><span>{framed ? 'On other pages' : 'On review pages'}</span>
