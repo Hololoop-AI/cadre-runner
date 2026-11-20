@@ -157,6 +157,27 @@ describe('the bell', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('closes when you click into the page in the frame (the click lands in the page, not here)', async () => {
+    await draw();
+    const bell = screen.getByRole('button', { name: /Notifications/ });
+    fireEvent.click(bell);
+    expect(bell.getAttribute('aria-expanded')).toBe('true');
+    const page = document.createElement('iframe');
+    document.body.appendChild(page);
+    page.focus();
+    act(() => { window.dispatchEvent(new FocusEvent('blur')); });
+    expect(bell.getAttribute('aria-expanded')).toBe('false');
+    page.remove();
+  });
+
+  it('stays open when the window loses focus to something other than the page in the frame', async () => {
+    await draw();
+    const bell = screen.getByRole('button', { name: /Notifications/ });
+    fireEvent.click(bell);
+    act(() => { window.dispatchEvent(new FocusEvent('blur')); });
+    expect(bell.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('remembers a muted chime', async () => {
     await draw();
     fireEvent.click(screen.getByRole('button', { name: /Notifications/ }));

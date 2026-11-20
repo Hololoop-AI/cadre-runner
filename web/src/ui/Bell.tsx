@@ -135,11 +135,16 @@ export function Bell() {
     if (!open) return;
     const away = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    // a click in the page the frame shows lands in that page's document, never here;
+    // what this window sees is losing focus to the iframe
+    const intoPage = () => { if (document.activeElement instanceof HTMLIFrameElement) setOpen(false); };
     document.addEventListener('mousedown', away);
     document.addEventListener('keydown', esc);
+    window.addEventListener('blur', intoPage);
     return () => {
       document.removeEventListener('mousedown', away);
       document.removeEventListener('keydown', esc);
+      window.removeEventListener('blur', intoPage);
     };
   }, [open]);
   if (!bells) return null;
