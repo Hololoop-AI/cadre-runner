@@ -21,6 +21,19 @@ All notable changes to Cadre are recorded here. The format follows
   unopened.
 
 ### Added
+- Cadre's notification center: `GET /api/notifications` is answered by
+  Cadre itself from the page server's event log; the page server no longer
+  has a bell of its own. Every fleet screen has the bell at the right end of
+  its header (one `TopBar`; a test refuses a screen that writes its own
+  header), and so does the frame around a review page. A soft, low two-note chime
+  plays once across tabs when something needs you: a dialogue's turn came
+  back ("Your turn"; or "Run timed out", "Run interrupted", "Run failed") or an agent replied, the page you are
+  on included. A failed run has its own falling chime, a warning icon and a
+  warning-coloured badge. An agent at work shows as one quiet "Working on it" row;
+  mid-turn rewrites and side pages are not listed. Mute it with the speaker
+  button in the bell's menu. It updates
+  from the fleet stream the tab already holds. A review page opened on its
+  own now opens inside the fleet's frame.
 - Learn, the study cadre: shipped beside Dev, Kitchen and Personal, with the
   five learning skills (shipped in `.agents/skills`), a Review tab (study
   problems of any shape, reviewed on a schedule), a home showing what is due,

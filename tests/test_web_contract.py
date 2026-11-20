@@ -30,7 +30,7 @@ import statusd
 CONTRACT = cc.load()
 WEB_SRC = ROOT / "web" / "src"
 
-GETS = ["/api/deck", "/api/blackboard", "/api/records", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
+GETS = ["/api/notifications", "/api/deck", "/api/blackboard", "/api/records", "/api/fleet/version", "/api/fleet", "/api/backends", "/api/newwork", "/fs", "/costs.json",
         "/api/library", "/api/costs", "/api/runs", "/api/tree", "/api/project/{id}", "/api/page/{key}",
         "/api/view/{key}", "/api/kanban", "/api/nav"]
 # what a path parameter is filled with when a case is requested
@@ -109,6 +109,13 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setattr(statusd, "live_turns", lambda: {"task-a": "1 agent · Bash, just now"})
     monkeypatch.setattr(statusd, "journal_batches", lambda a, *r: [{}, {}])
     monkeypatch.setattr(statusd, "_known_keys", lambda: (set(), [], {}))
+    # the page server's state, as the notification center reads it
+    rs = tmp_path / ".rs"
+    rs.mkdir()
+    (rs / "events.jsonl").write_text(json.dumps({"ts": "2026-11-17T10:05:00.000Z", "type": "page.version",
+                                                 "subject": "aaaa", "data": {}}) + "\n")
+    (rs / "state.json").write_text(json.dumps({"sessions": {"aaaa": {"file": str(rs / "a.html")}}}))
+    monkeypatch.setattr(statusd, "surface_state_dir", lambda: rs)
     monkeypatch.setattr(statusd.library_mod, "scan", lambda **kw: [
         {"kind": "skill", "name": "review", "invoke": "/review", "description": "d",
          "path": "/home/me/.claude/skills/review/SKILL.md", "scope": "user", "origin": "linked",

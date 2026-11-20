@@ -56,6 +56,7 @@ from runnerlib import conversations as conv_mod
 from runnerlib import costs as costs_mod
 from runnerlib import items as items_mod
 from runnerlib import kanban as kanban_mod
+from runnerlib import notifications as notifications_mod
 from runnerlib import library as library_mod
 from runnerlib import backends as backends_mod
 from runnerlib import projects as projects_mod
@@ -190,6 +191,9 @@ RUNS_LIMIT = 200
 # screen of the React app (REACT_ROUTE); what it reads is VIEW_API_PATH<key>.
 VIEW_PATH = "/view/"
 VIEW_API_PATH = "/api/view/"
+# Cadre's notification center (runnerlib/notifications.py); the page server
+# has no notifications of its own.
+NOTIFICATIONS_API_PATH = "/api/notifications"
 # Your deck (personal plus the team cards synced into it), and where a study
 # session is started from a page or from the deck.
 CARDS_PATH = "/cards"
@@ -2270,6 +2274,25 @@ class Handler(BaseHTTPRequestHandler):
         self._redirect(back, f"Launched {result}. Its page appears under running when "
                              "the first round finishes.")
 
+    def _session_into_frame(self, path: str, raw_query: str) -> bool:
+        """A review page asked for as the tab's own page goes to the fleet's
+        frame around it (/view/<key>, query kept; the browser keeps the
+        #fragment), which runs the notification center. Only a top-level
+        navigation the browser marks as one (Sec-Fetch-Dest: document) moves:
+        the frame's own load (iframe), a thread window (?embed=), clients that
+        send no such header (curl, the CLI), and every request while the app
+        is not built are forwarded to the page server unchanged."""
+        key = path[len(SESSION_PREFIX):] if path.startswith(SESSION_PREFIX) else ""
+        if (not SESSION_KEY.fullmatch(key) or "embed" in urllib.parse.parse_qs(raw_query, keep_blank_values=True)
+                or self.headers.get("Sec-Fetch-Dest") != "document" or not (APP_DIR / "index.html").is_file()):
+            return False
+        self.send_response(302)
+        self.send_header("Location", view_href(path) + ("?" + raw_query if raw_query else ""))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
     def _redirect(self, where: str, notice: str):
         """Where a form post lands, with what happened. A browser form gets a
         303 (so a refresh does not re-post); a client that asks for JSON (the
@@ -2501,6 +2524,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == KANBAN_PATH and self.command == "POST":
             self._kanban_post()
+            return
+        if path == NOTIFICATIONS_API_PATH and self.command in ("GET", "HEAD"):
+            self._send_json(notifications_mod.payload(surface_state_dir(), DATA_DIR))
+            return
+        if self.command == "GET" and self._session_into_frame(path, raw_query):
             return
         if path == KANBAN_API_PATH and self.command in ("GET", "HEAD"):
             self._send_json(kanban_mod.load(DATA_DIR))
