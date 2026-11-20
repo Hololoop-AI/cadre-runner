@@ -178,6 +178,26 @@ describe('the bell', () => {
     expect(bell.getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('in the frame, the click that closes the menu stays out of the page below (no annotation from it)', async () => {
+    await act(async () => {
+      render(<ServerProvider base=""><NotificationCenter exclude="bbbb"><TopBar><h1>Frame</h1></TopBar></NotificationCenter></ServerProvider>);
+    });
+    const bell = screen.getByRole('button', { name: /Notifications/ });
+    expect(document.querySelector('.fbell-shield')).toBeNull();
+    fireEvent.click(bell);
+    const shield = document.querySelector('.fbell-shield');
+    expect(shield).not.toBeNull();
+    fireEvent.mouseDown(shield!);
+    expect(bell.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('.fbell-shield')).toBeNull();
+  });
+
+  it('on a fleet screen (no page below) outside clicks still go through', async () => {
+    await draw();
+    fireEvent.click(screen.getByRole('button', { name: /Notifications/ }));
+    expect(document.querySelector('.fbell-shield')).toBeNull();
+  });
+
   it('remembers a muted chime', async () => {
     await draw();
     fireEvent.click(screen.getByRole('button', { name: /Notifications/ }));
