@@ -57,6 +57,14 @@ of "rounds after the first" below apply.
    those same words say to. If the page proposes a commit plan and the tree no
    longer splits cleanly the way it says, stop at the last clean commit and
    report.
+   When those words do say to push, open a PR or merge, deliver it the way the
+   repository itself requires: read its contribution rules (CONTRIBUTING.md,
+   AGENTS.md, required checks) first. If they send changes through a local
+   gate that validates and pushes for you (for example `git push
+   no-mistakes`), that gate is the push: drive it to its outcome, decide the
+   findings it marks as yours to decide, and stop only on findings it marks
+   as the driver's, quoting them on the page. Fix commits the gate adds are
+   part of delivering; list each one on the page.
 4. **Verify before you claim.** "Tests pass" means you ran them in `$cwd` this
    turn; quote the command and what it printed. "Committed" means `git log`
    shows it; quote it.
