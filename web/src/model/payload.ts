@@ -532,3 +532,25 @@ export interface Deck {
   sessions: StudySession[];
   notice: string;
 }
+
+/** One row of Cadre's notification center (runnerlib/notifications.py): a review page that moved. */
+export interface Notification {
+  key: string;
+  type: string;
+  /** needs you: "Your turn", "Run timed out", "Run interrupted", "Run failed", "Agent replied"; quiet: "Working on it" */
+  label: string;
+  /** needs the driver: the only rows that count and chime (runnerlib/notifications.py classify) */
+  actionable: boolean;
+  /** a run that failed (timed out, interrupted or failed): a warning icon and its own chime */
+  problem: boolean;
+  /** ISO time: when a turn came back, when work started ("Working on it"), or the reply's own time */
+  at: string;
+  title: string;
+  /** the page server's address for it, `/session/<key>` (the fleet opens it in its frame) */
+  url: string;
+}
+
+/** GET /api/notifications: review pages that moved, one row per page, newest first. */
+export interface Notifications {
+  notifications: Notification[];
+}

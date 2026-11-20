@@ -207,3 +207,87 @@ multiple backends / computers running the cadre backends"). So:
   the agent's page into annotatable sections is served by review-surface
   inside the frame; the app does not reach into it. The driver: "Review
   surface serves it now though, by design."
+
+## Amendment, 2026-11-18 to 20: Cadre owns the notification center
+The driver asked for the notifications "to be accessible from any page of
+the system", with a sound, and then: "Is there a way to use the centralized
+notification center from anywhere in the system so that review surface never
+needs to bother itself with notifications?" So:
+
+- **`GET /api/notifications` (app tier) is statusd's own.**
+  `runnerlib/notifications.py` reads the page server's event log
+  (`events.jsonl`, the record it keeps for host apps) and decides what is
+  news (one row per page, its latest event; thread pages left out). The
+  page server has no bell or summary route of its own any more (removed in
+  review-surface's own change, at the driver's choice, 18 Nov 2026).
+- **A review page is always shown in the fleet's frame.** A top-level
+  navigation to `/session/<key>` (`Sec-Fetch-Dest: document`) is answered
+  with a redirect to `/view/<key>` (query kept, and the frame passes the
+  query and `#fragment` on to the page); the frame's own load, a thread
+  window (`?embed=`), clients without the header, and every request while
+  `web/dist` is not built are forwarded unchanged. The
+  frame runs the app and draws the bell in its bar, so the bell, the chime
+  and read state follow the reader onto every review page with no
+  notification code in the page server.
+- **Pushed by the fleet stream, not polled:** the app re-reads the list when
+  `/fleet/events` says `change`, which it says within about a second of any
+  review-page event (statusd counts the page server's `/api/events` into its
+  version). A tab's subscribers share one `EventSource` per URL
+  (`api.subscribe`), so the bell costs no connection of its own against the
+  browser's six per host.
+- **Three tiers, and only the first chimes** (the driver's call, 19 Nov
+  2026). *Needs you* (`actionable`: counted, chimes): a dialogue task's
+  newest page whose task's newest turn ended (the runner's history log) at
+  or after the page's last change, less 2 s (the page server logs the last
+  write up to ~0.3 s after the stamp), unanswered since ("Your turn", or
+  for a failed turn what its log says happened: "Run timed out", "Run
+  interrupted" or "Run failed"; timed when the turn ended); or an agent's
+  reply in a page's chat. A failed turn is also `problem`: a warning icon,
+  the warning colour on the badge, and its own chime (the driver, 19 Nov
+  2026: "a failure should get a special chime and possibly an icon"). *Working* (listed quietly): the task has a turn in
+  flight in the runner's registry ("Working on it", timed from your answer
+  or the agent's first write since, so rewrites mid-turn never move it).
+  *Not listed*: side pages no dialogue owns, an earlier round's page, and a
+  page you answered that the agent has neither started on nor written since.
+  The browser remembers which rows it chimed for by page and time, so a turn
+  that ended earlier than a row already rung still rings once. On blue, 24 h
+  to 18 Nov 2026: 50 bell rows before, about 37 chimes after; the driver's
+  one-task try-out on teal went from 7 chimes to 2.
+- **The page you are on:** the bell's menu leaves out the page the frame
+  shows (the page shows its own new version), but that page's news still
+  chimes, so waiting on an agent in its own page rings when it answers.
+- **Read state is the browser's,** in localStorage under the keys the page
+  server's old bell used, so a reader's "seen" carries over.
+
+Invariants (tested in `tests/test_notifications.py`, `src/api/subscribe.test.ts`,
+`src/ui/bellStore.test.ts`):
+- Cadre reads the page server's files only on its own machine, never writes
+  them, honours its path variables (`REVIEW_SURFACE_STATE_DIR`,
+  `REVIEW_SURFACE_LINKS`, `REVIEW_SURFACE_EVENTS`), and skips torn or
+  foreign lines. It reads `events.jsonl`, the `thread-of` lines of
+  `links.jsonl`, and `sessions[key].file` in `state.json` (re-read only when
+  it changes; a half-written read keeps the last good copy). Review Surface's
+  `AGENTS.md` names all three as read by hosts.
+- Exactly one component answers `/api/notifications` for an origin: statusd.
+- At most one `EventSource` per URL per tab.
+- A new row chimes in one tab: under a Web Lock where the browser has them
+  (HTTPS or localhost); over plain HTTP, tabs decide a random 0–250 ms apart
+  and re-read what was chimed, which makes a double chime unlikely, not
+  impossible.
+
+Rollout: merge and deploy Cadre first, restart its statusd and reload open
+Fleet tabs, then merge and deploy Review Surface. In between, a review page
+shows two bells (its old one reads Cadre's list); the other order would leave
+no bell at all.
+
+Revisit when: a turn's placeholder can land within 2 s of the previous
+turn's end (then stamp the page's last event into the turn record instead of
+joining on time); answers start arriving other than as page feedback;
+several Cadre instances share one page server; a bell fetch takes over 50 ms
+or the history log passes 5 MB; the event log's last 256 KB no longer reach
+back to the oldest page still waiting on you; the page server changes its
+event log's format or place, or the `state.json` and `links.jsonl` fields
+above; the page server runs on another machine than its Cadre; anything (a
+shell, a webview, a browser on the page server's own port) shows review
+pages without going through statusd; a second host app wants the same list.
+

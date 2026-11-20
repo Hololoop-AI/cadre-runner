@@ -4,6 +4,7 @@
 import type { ReactNode } from 'react';
 import type { Live } from '../api';
 import { usd } from '../model';
+import { TopBar } from './TopBar';
 
 const LIVE_TEXT: Record<Live, [string, string]> = {
   connecting: ['connecting…', ''],
@@ -30,13 +31,13 @@ export function Header({ weekUsd, live, snapshot, onNewWork, switcher, menu, gro
 }) {
   const [text, title] = LIVE_TEXT[live];
   return (
-    <header>
+    <TopBar>
       <h1>Cadre<span className="dot">.</span>{groupName && <span className="group">{groupName}</span>}</h1>{menu}{switcher}<span className="sp"></span>
       {weekUsd != null && <a href="/costs">{`${usd(weekUsd)} in 7 days`}</a>}
       {links && <><a href={boardHref}>{boardLabel}</a><a href="/cards">cards</a><a href="/runs">every run</a></>}
       <span id="live" className={live === 'connecting' ? 'live' : `live ${live}`}
         title={live === 'connecting' ? `snapshot ${snapshot || '—'}` : title}>{text}</span>
       <button type="button" className="primary" id="newworkbtn" onClick={onNewWork}>+ New work</button>
-    </header>
+    </TopBar>
   );
 }

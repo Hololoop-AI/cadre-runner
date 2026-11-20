@@ -28,7 +28,7 @@ The calls (all declared in `contracts/statusd.openapi.json`):
 home directory and the skill picker's library), `GET /fs` (folder
 completion), `GET /api/library`, `/api/costs`, `/api/runs`, `/api/tree`,
 `/api/project/<id>`, `/api/page/<key>`, `/api/view/<key>` (the other screens), `GET /api/backends` (the machine switcher), the
-`GET /fleet/events` stream (re-fetch on `change`), and the Python page's own
+`GET /fleet/events` stream (re-fetch on `change`), `GET /api/notifications` (Cadre's notification center, `runnerlib/notifications.py`; re-read on each stream `change`), and the Python page's own
 form posts: `/tasks`, `/items`, `/repair`, `/projects`, `/study`. With another machine
 chosen, every call goes to that machine directly.
 

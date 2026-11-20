@@ -708,6 +708,24 @@
           }
         }
       }
+    },
+    "/api/notifications": {
+      "get": {
+        "x-tier": "app",
+        "summary": "Cadre's notification center (runnerlib/notifications.py): review pages that moved, one row per page, its latest event, newest first, read from the page server's event log. Every bell reads it; the page server has none of its own. `actionable` rows need the driver (a dialogue turn came back and is unanswered, or an agent replied) and are the only ones that chime; the rest are listed quietly. `problem` marks a turn that failed, labelled by what happened (\"Run timed out\", \"Run interrupted\", \"Run failed\"): its own icon and chime.",
+        "responses": {
+          "200": {
+            "description": "the bell's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notifications"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3005,6 +3023,63 @@
           "id",
           "do"
         ]
+      },
+      "Notification": {
+        "x-ts": "Notification",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "type",
+          "label",
+          "at",
+          "title",
+          "url",
+          "actionable",
+          "problem"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "actionable": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Notifications": {
+        "x-ts": "Notifications",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "notifications"
+        ],
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          }
+        }
       }
     }
   }

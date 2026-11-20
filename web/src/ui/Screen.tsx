@@ -3,11 +3,12 @@
 // fetch-once hook each of those screens reads its data with.
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { TopBar } from './TopBar';
 
 /** True inside a cadre's shell (Cadre.tsx): the shell draws the header, so a screen draws only its title. */
 export const Framed = createContext(false);
 
-/** `<div class="wrap"><header><h1>Name.</h1></header>…` with the tab title (`dot` false: no accent dot, as the manage page). */
+/** `div.wrap`, the header (TopBar) holding `h1` Name., then the screen, with the tab title (`dot` false: no accent dot, as the manage page). */
 export function Screen({ name, after = '', dot = true, tab, children }: {
   name: string; after?: string; dot?: boolean; tab: string; children: ReactNode;
 }) {
@@ -18,7 +19,7 @@ export function Screen({ name, after = '', dot = true, tab, children }: {
   if (framed) return <section className="cscreen"><h2 className="sect">{name}{after}</h2>{children}</section>;
   return (
     <div className="wrap">
-      <header><h1>{name}{dot && <span className="dot">.</span>}{after}</h1></header>
+      <TopBar><h1>{name}{dot && <span className="dot">.</span>}{after}</h1></TopBar>
       {children}
     </div>
   );

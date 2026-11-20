@@ -510,6 +510,50 @@ export interface CadreRecord {
 export interface CadreRecords {
     records: CadreRecord[];
 }
+/** One row of Cadre's notification center (runnerlib/notifications.py): a review page that moved. */
+export interface Notification {
+    key: string;
+    type: string;
+    /** needs you: "Your turn", "Run timed out", "Run interrupted", "Run failed", "Agent replied"; quiet: "Working on it" */
+    label: string;
+    /** needs the driver: the only rows that count and chime (runnerlib/notifications.py classify) */
+    actionable: boolean;
+    /** a run that failed (timed out, interrupted or failed): a warning icon and its own chime */
+    problem: boolean;
+    /** ISO time: when a turn came back, when work started ("Working on it"), or the reply's own time */
+    at: string;
+    title: string;
+    /** the page server's address for it, `/session/<key>` (the fleet opens it in its frame) */
+    url: string;
+}
+/** GET /api/notifications: review pages that moved, one row per page, newest first. */
+export interface Notifications {
+    notifications: Notification[];
+}
+// --- from notifications.ts
+/**
+ * What one fetch of `rows` (newest first) does to the browser's read state.
+ * A browser that never looked or never chimed takes everything already
+ * listed as history: no count, no chime. Otherwise it rings for a row that
+ * needs the reader (`actionable`; the rest are listed quietly), is unseen,
+ * and was not chimed for before; `ring` says which chime, the problem one
+ * when a new row is a failed run. Rows are remembered by page and time, not
+ * by one newest time, because a turn's "Your turn" is timed when the turn
+ * ended, which can be earlier than a row already chimed for. The caller
+ * records `chimed` only once a chime played (or the reader muted it), so a
+ * tab that cannot play sound leaves the chime to one that can.
+ */
+export declare function bellStep(rows: Notification[], chimed: string[] | null, seenAt: string | null): {
+    seenAt: string;
+    chimed: string[];
+    ring: false | 'ready' | 'problem';
+};
+/** How a row is remembered as chimed for: its page and the time it says. */
+export declare function chimeId(row: Notification): string;
+/** Is this row newer than the newest time the reader has seen ('' or null = none seen)? */
+export declare function isUnread(row: Notification, seenAt: string | null): boolean;
+/** The rows that need the reader and that they have not seen: what the badge counts. */
+export declare function unreadNotifications(rows: Notification[], seenAt: string | null): Notification[];
 // --- from cadres.ts
 /**
  * Holo's cards: one per cadre, then Other when anything is in it.

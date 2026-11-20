@@ -15,6 +15,7 @@ import { LearnPanel } from './Learn';
 import { buildHome, effectiveView, HOLO, inGroup, limitChoices, loadSel, needsYou, OTHER, runsOnCards, s, saveSel, serverView, tagChips, viewHref, workRows, type Kanban, type NewWorkInfo, type Sel } from '../model';
 import { followThemeFavicon } from './favicon';
 import { groupSuffix } from './Groups';
+import { NotificationCenter } from './Bell';
 import { Header } from './Header';
 import { CadreScreen, CadreShell, cadreHref, useChrome } from './Cadre';
 import { CadreCardList, useHoloRedirect } from './Holo';
@@ -90,6 +91,7 @@ export function App() {
   }, [here]);
   return (
     <ServerProvider base={machines.base}>
+      <NotificationCenter key={'bell' + machines.base} exclude={here.screen === 'view' ? here.key : ''}>
       {here.screen === 'home' ? <CadreApp key={machines.base} machines={machines} cadre={HOLO} tab="home" />
         : here.screen === 'cadre' ? <CadreApp key={machines.base} machines={machines} cadre={here.cadre} tab={here.tab} />
         : here.screen === 'library' ? <LibraryScreen key={machines.base} />
@@ -101,6 +103,7 @@ export function App() {
                   : here.screen === 'view' ? <ViewScreen key={machines.base} pageKey={here.key} />
                   : <TreeScreen key={machines.base} task={here.task} />}
       <ScreenForms />
+      </NotificationCenter>
     </ServerProvider>
   );
 }

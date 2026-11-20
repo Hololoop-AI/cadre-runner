@@ -42,10 +42,12 @@ export interface Server {
     fetchRecords(cadre: string): Promise<CadreRecords>;
     /** GET /api/deck: Learn's deck, its topics and its study sessions */
     fetchDeck(): Promise<Deck>;
+    /** GET /api/notifications: Cadre's notification center, review pages that moved */
+    fetchNotifications(): Promise<Notifications>;
     /** POST one of the Python page's forms to this machine (postForm) */
     post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
     /** this machine's fleet stream (subscribe) */
-    subscribe(onChange: () => void, onLive: (l: Live) => void): () => void;
+    subscribe(onChange: () => void, onLive?: (l: Live) => void): () => void;
 }
 /** The API of the machine at `base` ('' = the one the app was loaded from). */
 export declare function connect(base: string): Server;
@@ -76,7 +78,11 @@ export type Live = 'connecting' | 'on' | 'half' | 'off';
 export declare const FALLBACK_POLL_MS = 30000;
 /**
  * Subscribe to /fleet/events the way the Python page does: `hello` and
- * `change` re-fetch (debounced 250 ms), `source` reports whether every
- * backend answers, and a lost stream falls back to a 30 s poll.
+ * `source` say how live the stream is, `change` asks for a re-fetch (soon,
+ * coalesced), and while the stream is down a slow poll stands in. Every
+ * subscriber in this tab shares one connection per URL (the screen's lists and
+ * the header's bell), because a browser allows only six per host. A stream the
+ * browser gave up on is reopened after a pause. A subscriber that joins a
+ * stream already open is told where it stands and gets one catch-up change.
  */
-export declare function subscribe(onChange: () => void, onLive: (l: Live) => void, url?: string): () => void;
+export declare function subscribe(onChange: () => void, onLive?: (l: Live) => void, url?: string): () => void;

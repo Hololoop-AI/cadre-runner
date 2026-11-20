@@ -1,0 +1,54 @@
+/* The bell (Bell.tsx) at the right end of every screen's header (TopBar.tsx)
+   and of the bar over a framed review page (View.tsx). React only, so not part
+   of the generated fleet.css; colours are its variables. `.fbell .fbell-button`
+   outranks the home page's `body.home header button`, which would otherwise pad
+   the icon out of its box. */
+.fbell{position:relative;display:inline-flex;align-self:center;flex-shrink:0;margin-left:auto}
+.fbell .fbell-button{position:relative;display:grid;place-items:center;box-sizing:border-box;width:34px;height:34px;
+ padding:0;margin:0;border:1px solid var(--border);border-radius:9px;background:transparent;color:var(--label);
+ cursor:pointer;font:inherit;line-height:1}
+.fbell .fbell-button:hover,.fbell .fbell-button[aria-expanded=true]{border-color:var(--muted);
+ background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}
+.fbell .fbell-button.has-unread{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.fbell .fbell-button svg{display:block}
+.fbell .fbell-count{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;
+ display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--accent);
+ color:var(--on-accent);font:700 11px/1 var(--sans)}
+.fbell .fbell-menu{position:absolute;top:42px;right:0;z-index:70;width:min(340px,calc(100vw - 24px));
+ max-height:min(70vh,520px);overflow:auto;box-sizing:border-box;padding:6px;border:1px solid var(--border);border-radius:12px;
+ background:var(--card);box-shadow:0 8px 28px rgba(0,0,0,.45);text-align:left}
+.fbell .fbell-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 4px 5px 10px;
+ color:var(--muted);font:700 9px/1.2 var(--sans);letter-spacing:.08em;text-transform:uppercase}
+.fbell .fbell-sound{display:grid;place-items:center;width:26px;height:26px;padding:0;margin:0;border:1px solid transparent;
+ border-radius:7px;background:transparent;color:var(--accent);cursor:pointer}
+.fbell .fbell-sound.off{color:var(--muted)}
+.fbell .fbell-sound:hover{border-color:var(--border);color:var(--fg)}
+.fbell .fbell-sound svg{display:block}
+.fbell .fbell-empty{margin:4px 10px 8px;color:var(--muted);font:12px var(--sans)}
+.fbell .fbell-menu a.fbell-row{position:relative;display:grid;gap:2px;padding:9px 10px 9px 22px;border-radius:6px;
+ color:var(--fg);text-decoration:none;font:13px var(--sans)}
+.fbell .fbell-menu a.fbell-row:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}
+.fbell .fbell-row.unread::before{content:"";position:absolute;left:9px;top:15px;width:7px;height:7px;border-radius:999px;background:var(--accent)}
+.fbell .fbell-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fbell .fbell-meta{color:var(--muted);font-size:11px}
+/* an agent at work, Working on it: listed as a sign of life, never counted or chimed */
+.fbell .fbell-menu a.fbell-row.quiet .fbell-title{font-weight:400;color:var(--muted)}
+/* a run that failed: the warning colour on the badge, its row, and a triangle before its title */
+.fbell .fbell-button.has-problem{color:var(--hot);border-color:color-mix(in srgb,var(--hot) 55%,transparent)}
+.fbell .fbell-button.has-problem .fbell-count{background:var(--hot)}
+.fbell .fbell-row.problem.unread::before{background:var(--hot)}
+.fbell .fbell-alert{display:inline-flex;vertical-align:-2px;margin-right:5px;color:var(--hot)}
+.fbell .fbell-row.problem .fbell-meta{color:var(--hot)}
+/* Phones: the bell stays on the title's row. fleet.css gives a phone header's title a row of its
+   own, which pushed the bell under it; here the title shares the row and gives way instead. On the
+   home screens the row is full (title, menu, cost, + New work), so the 7-day cost, which the costs
+   screen also shows, steps out of the header below 480 px. */
+@media (max-width:640px){
+ header:has(> .fbell) > h1{flex-basis:auto;flex-grow:1;min-width:0}
+}
+@media (max-width:480px){
+ header:has(> .fbell) > a[href$='/costs']{display:none}
+}
+@media (max-width:360px){
+ body.home header:has(> .fbell){column-gap:6px}
+}

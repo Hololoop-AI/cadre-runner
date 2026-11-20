@@ -4,7 +4,7 @@
 // peers' pages: statusd.CORS_ORIGINS); `connect` binds the calls to one
 // machine. This file is the module's only public entry.
 import type {
-  Backend, Backends, Blackboard, CadreRecords, Deck, CostSummary, Dirs, Fleet, Kanban, Nav, Library, NewWorkInfo, PagePayload, ProjectPayload, Runs, TreePayload,
+  Backend, Backends, Blackboard, Notifications, CadreRecords, Deck, CostSummary, Dirs, Fleet, Kanban, Nav, Library, NewWorkInfo, PagePayload, ProjectPayload, Runs, TreePayload,
   ViewInfo,
 } from '../model';
 
@@ -60,10 +60,12 @@ export interface Server {
   fetchRecords(cadre: string): Promise<CadreRecords>;
   /** GET /api/deck: Learn's deck, its topics and its study sessions */
   fetchDeck(): Promise<Deck>;
+  /** GET /api/notifications: Cadre's notification center, review pages that moved */
+  fetchNotifications(): Promise<Notifications>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
-  subscribe(onChange: () => void, onLive: (l: Live) => void): () => void;
+  subscribe(onChange: () => void, onLive?: (l: Live) => void): () => void;
 }
 
 /** The API of the machine at `base` ('' = the one the app was loaded from). */
@@ -88,6 +90,7 @@ export function connect(base: string): Server {
     fetchBlackboard: () => getJson<Blackboard>(at('/api/blackboard?limit=100')),
     fetchRecords: (cadre) => getJson<CadreRecords>(at('/api/records?cadre=' + encodeURIComponent(cadre))),
     fetchDeck: () => getJson<Deck>(at('/api/deck')),
+    fetchNotifications: () => getJson<Notifications>(at('/api/notifications')),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };
@@ -151,50 +154,108 @@ export const FALLBACK_POLL_MS = 30000;
 
 /**
  * Subscribe to /fleet/events the way the Python page does: `hello` and
- * `change` re-fetch (debounced 250 ms), `source` reports whether every
- * backend answers, and a lost stream falls back to a 30 s poll.
+ * `source` say how live the stream is, `change` asks for a re-fetch (soon,
+ * coalesced), and while the stream is down a slow poll stands in. Every
+ * subscriber in this tab shares one connection per URL (the screen's lists and
+ * the header's bell), because a browser allows only six per host. A stream the
+ * browser gave up on is reopened after a pause. A subscriber that joins a
+ * stream already open is told where it stands and gets one catch-up change.
  */
-export function subscribe(onChange: () => void, onLive: (l: Live) => void, url = '/fleet/events'): () => void {
-  let soonT: ReturnType<typeof setTimeout> | undefined;
-  let poll: ReturnType<typeof setInterval> | undefined;
-  const soon = () => {
-    clearTimeout(soonT);
-    soonT = setTimeout(onChange, 250);
-  };
-  const startPoll = () => {
-    if (!poll) poll = setInterval(onChange, FALLBACK_POLL_MS);
-  };
-  const stopPoll = () => {
-    if (poll) clearInterval(poll);
-    poll = undefined;
-  };
-  const upstream = (e: Event) => {
-    try {
-      return !!JSON.parse((e as MessageEvent<string>).data)?.upstream;
-    } catch {
-      return false;
-    }
-  };
+export function subscribe(onChange: () => void, onLive: (l: Live) => void = () => {}, url = '/fleet/events'): () => void {
+  const sub: Sub = { onChange, onLive, soonT: undefined, poll: undefined };
   if (typeof EventSource === 'undefined') {
     onLive('off');
-    startPoll();
-    return stopPoll;
+    startPoll(sub);
+    return () => stopPoll(sub);
   }
-  const es = new EventSource(url);
-  es.addEventListener('hello', (e) => {
-    onLive(upstream(e) ? 'on' : 'half');
-    stopPoll();
-    soon(); // catch up on anything missed while away
-  });
-  es.addEventListener('source', (e) => onLive(upstream(e) ? 'on' : 'half'));
-  es.addEventListener('change', soon);
-  es.onerror = () => {
-    onLive('off');
-    startPoll();
-  };
+  let hub = HUBS.get(url);
+  if (!hub) {
+    hub = { url, es: null, subs: new Set(), live: 'connecting', retry: undefined };
+    HUBS.set(url, hub);
+    openStream(hub);
+  } else if (hub.live !== 'connecting') {
+    onLive(hub.live);
+    if (hub.live === 'off') startPoll(sub);
+    soon(sub);
+  }
+  hub.subs.add(sub);
+  const mine = hub;
+  let done = false;
   return () => {
-    es.close();
-    stopPoll();
-    clearTimeout(soonT);
+    if (done) return;
+    done = true;
+    mine.subs.delete(sub);
+    stopPoll(sub);
+    clearTimeout(sub.soonT);
+    if (mine.subs.size === 0) {
+      mine.es?.close();
+      clearTimeout(mine.retry);
+      if (HUBS.get(url) === mine) HUBS.delete(url);
+    }
+  };
+}
+
+/** How long a stream the browser closed for good waits before it is opened again. */
+const REOPEN_MS = 5000;
+
+interface Sub {
+  onChange: () => void;
+  onLive: (l: Live) => void;
+  soonT: ReturnType<typeof setTimeout> | undefined;
+  poll: ReturnType<typeof setInterval> | undefined;
+}
+interface Hub {
+  url: string;
+  es: EventSource | null;
+  subs: Set<Sub>;
+  live: Live;
+  retry: ReturnType<typeof setTimeout> | undefined;
+}
+const HUBS = new Map<string, Hub>();
+
+function soon(sub: Sub) {
+  clearTimeout(sub.soonT);
+  sub.soonT = setTimeout(sub.onChange, 250);
+}
+function startPoll(sub: Sub) {
+  if (!sub.poll) sub.poll = setInterval(sub.onChange, FALLBACK_POLL_MS);
+}
+function stopPoll(sub: Sub) {
+  if (sub.poll) clearInterval(sub.poll);
+  sub.poll = undefined;
+}
+
+function upstream(e: Event): boolean {
+  try {
+    return !!JSON.parse((e as MessageEvent<string>).data)?.upstream;
+  } catch {
+    return false;
+  }
+}
+
+/** Open the hub's stream and hand its events to every subscriber. */
+function openStream(hub: Hub) {
+  const es = new EventSource(hub.url);
+  hub.es = es;
+  const setLive = (l: Live) => {
+    hub.live = l;
+    hub.subs.forEach((s) => s.onLive(l));
+  };
+  es.addEventListener('hello', (e) => {
+    setLive(upstream(e) ? 'on' : 'half');
+    hub.subs.forEach((s) => {
+      stopPoll(s);
+      soon(s); // catch up on anything missed while away
+    });
+  });
+  es.addEventListener('source', (e) => setLive(upstream(e) ? 'on' : 'half'));
+  es.addEventListener('change', () => hub.subs.forEach(soon));
+  es.onerror = () => {
+    setLive('off');
+    hub.subs.forEach(startPoll);
+    // the browser retries on its own unless it closed the stream for good (a 502, a wrong type)
+    if (es.readyState === 2 && hub.subs.size > 0 && HUBS.get(hub.url) === hub) {
+      hub.retry = setTimeout(() => { if (HUBS.get(hub.url) === hub && hub.subs.size > 0) openStream(hub); }, REOPEN_MS);
+    }
   };
 }

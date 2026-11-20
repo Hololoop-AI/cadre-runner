@@ -30,6 +30,7 @@ import { goInApp } from './router';
 import { Framed } from './Screen';
 import { useServer } from './server';
 import './shell.css';
+import { TopBar } from './TopBar';
 
 /** A cadre's path: Other is /c/other, any other cadre /c/<its id>. */
 export function cadreHref(id: string, tab = ''): string {
@@ -111,10 +112,10 @@ export function CadreBar({ chrome, title }: { chrome: Chrome; title: string }) {
   useEffect(() => { document.title = `${chrome.name} — ${title}`; }, [chrome.name, title]);
   return (
     <>
-      <header>
+      <TopBar>
         <h1>Cadre<span className="dot">.</span><span className="group">{chrome.name.toLowerCase().replace(/\s+/g, '-')}</span></h1>
         {chrome.menu}<span className="sp"></span><a href="/">Holo</a>
-      </header>
+      </TopBar>
       {chrome.tabs}
     </>
   );

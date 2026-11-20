@@ -17,6 +17,7 @@ import { useOnce } from './Screen';
 import { useServer } from './server';
 import './view.css';
 import { BackLink } from './Back';
+import { Bell } from './Bell';
 
 const SESSION = '/session/';
 
@@ -47,20 +48,27 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
         const next = p.slice(SESSION.length);
         setKey(next);
         // absolute: another machine's <base> would re-aim a relative URL
-        history.replaceState(null, '', window.location.origin + MOUNT + '/view/' + next);
+        // the same page keeps its deep link (query, #section); another page gets a clean address
+        const same = window.location.pathname.endsWith('/view/' + next);
+        history.replaceState(null, '', window.location.origin + MOUNT + '/view/' + next
+          + (same ? window.location.search + window.location.hash : ''));
       }
     } catch {
       /* another machine's page: nothing to read */
     }
   };
 
-  const src = server.url(SESSION + encodeURIComponent(pageKey));
+  // a deep link's query and #section reach the page, as they would have at /session/<key>
+  const deep = new URLSearchParams(window.location.search);
+  deep.delete('notice'); // the frame's own
+  const src = server.url(SESSION + encodeURIComponent(pageKey) + (deep.size ? '?' + deep : '') + window.location.hash);
   return (
     <div className="view">
       <nav className="viewbar">
         <span><BackLink up={window.location.origin + MOUNT + '/'} home={window.location.origin + MOUNT + '/'} target="_self" framed /></span>
         <span className="title">{title}</span>
         {notice && <span className="notice">{notice}</span>}
+        <Bell />
       </nav>
       <iframe ref={frame} src={src} title="surface" onLoad={onLoad} />
     </div>

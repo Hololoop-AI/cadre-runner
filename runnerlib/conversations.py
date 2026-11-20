@@ -414,11 +414,14 @@ def page_title(file: str) -> str:
     return title
 
 
-def _epoch(iso) -> float:
+def epoch(iso) -> float:
     try:
         return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return 0.0
+
+
+_epoch = epoch  # the name this module's own callers use
 
 
 def load_pages(state_dir: Path | None = None) -> dict:
