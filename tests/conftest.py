@@ -19,7 +19,7 @@ def _clean_cadre_env(monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_live_rust_board(monkeypatch, tmp_path_factory):
     """No test reaches the machine's real Rust board (the user service at
-    $XDG_RUNTIME_DIR/picatrix/blackboard.sock): the socket points at a path
+    $XDG_RUNTIME_DIR/qadre/blackboard.sock): the socket points at a path
     nothing serves. Tests that want a board use `rust_board`."""
     monkeypatch.setenv("BLACKBOARD_SOCKET", str(tmp_path_factory.mktemp("noboard") / "none.sock"))
 

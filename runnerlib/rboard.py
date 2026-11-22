@@ -13,7 +13,9 @@ SQLite, which the runner's heartbeats and task events still use; this one
 carries what cadres hand each other (Learn's study asks and answers first).
 
 Where the board is: $BLACKBOARD_SOCKET, else
-$XDG_RUNTIME_DIR/picatrix/blackboard.sock — the board's own default.
+$XDG_RUNTIME_DIR/qadre/blackboard.sock — the board's own default. While the
+picatrix shims stand, the old $XDG_RUNTIME_DIR/picatrix/blackboard.sock is
+used when nothing is at the qadre path but something is at the old one.
 """
 
 import http.client
@@ -41,8 +43,9 @@ class BoardRefused(BoardError):
 def default_socket() -> Path:
     if os.environ.get("BLACKBOARD_SOCKET"):
         return Path(os.environ["BLACKBOARD_SOCKET"])
-    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    return Path(run) / "picatrix" / "blackboard.sock"
+    run = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+    new, old = run / "qadre" / "blackboard.sock", run / "picatrix" / "blackboard.sock"
+    return old if not new.exists() and old.exists() else new
 
 
 class _UnixConnection(http.client.HTTPConnection):

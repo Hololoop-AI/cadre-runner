@@ -60,9 +60,18 @@ def test_no_board_is_a_board_error_not_a_crash(tmp_path):
         c.read()
 
 
-def test_the_socket_defaults_to_the_boards_own(monkeypatch):
+def test_the_socket_defaults_to_the_boards_own(monkeypatch, tmp_path):
     monkeypatch.delenv("BLACKBOARD_SOCKET", raising=False)
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1234")
-    assert str(rboard.default_socket()) == "/run/user/1234/picatrix/blackboard.sock"
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    qadre, picatrix = tmp_path / "qadre" / "blackboard.sock", tmp_path / "picatrix" / "blackboard.sock"
+    assert rboard.default_socket() == qadre
+    # Transition: a board still on the old picatrix path is found there,
+    # until something is at the qadre path.
+    picatrix.parent.mkdir()
+    picatrix.touch()
+    assert rboard.default_socket() == picatrix
+    qadre.parent.mkdir()
+    qadre.touch()
+    assert rboard.default_socket() == qadre
     monkeypatch.setenv("BLACKBOARD_SOCKET", "/tmp/x.sock")
     assert str(rboard.default_socket()) == "/tmp/x.sock"

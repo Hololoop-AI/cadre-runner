@@ -7,7 +7,7 @@ question), and come back as review. `source` names the topic, not a repo.
 A stand-in for Arboreus's cards, living inside Cadre so learning happens where
 the work is read rather than in a second app (driver's call, 2026-10-22, on the
 page "Keeping up with AI-written code": "make a vibed version in cadre
-prototype now"). Arboreus is meant to fold into Picatrix later, so the shape
+prototype now"). Arboreus is meant to fold into Qadre later, so the shape
 here mirrors its schema (migrations 0001 cards, 0004 reviews) closely enough to
 copy across; the scheduler is the same FSRS family (py-fsrs here, rs-fsrs
 there).

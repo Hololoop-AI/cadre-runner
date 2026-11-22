@@ -1,5 +1,5 @@
 """The study hand-off against the machine's REAL Rust board (the
-blackboard.service user unit at $XDG_RUNTIME_DIR/picatrix/blackboard.sock),
+blackboard.service user unit, found where rboard.default_socket() looks),
 not a scratch child. Opt in: BLACKBOARD_LIVE=1 python3 -m pytest -q
 tests/test_learn_live.py. Skipped otherwise, and skipped when no board
 answers there.
@@ -12,7 +12,6 @@ else reads. The board is append-only, so its few events stay there.
 
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -23,11 +22,12 @@ LIVE = os.environ.get("BLACKBOARD_LIVE") == "1"
 
 
 @pytest.fixture
-def live_board():
+def live_board(monkeypatch):
     if not LIVE:
         pytest.skip("live board test: set BLACKBOARD_LIVE=1")
-    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    client = rboard.Client(Path(run) / "picatrix" / "blackboard.sock")
+    with monkeypatch.context() as m:  # past conftest's no-live-board override
+        m.delenv("BLACKBOARD_SOCKET", raising=False)
+        client = rboard.Client(rboard.default_socket())
     if not client.up():
         pytest.skip("no board answers on the machine's socket")
     return client

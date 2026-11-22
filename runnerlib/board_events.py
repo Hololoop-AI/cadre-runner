@@ -1,6 +1,6 @@
 """v0 blackboard stub: append-only JSONL with read-since-N, per the
 review-surface decision (2026-08-23) — enough to learn the event shape;
-the real board (Picatrix's engine) replaces it. Events, not state: the
+the real board (Qadre's engine) replaces it. Events, not state: the
 review inbox, the notification feed, and stage feedback all read this."""
 
 import json
