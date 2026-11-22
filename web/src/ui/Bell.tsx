@@ -13,7 +13,7 @@
 //
 // Read state lives in this origin's localStorage (bellStore.ts).
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
 import { bellStep, isoEpoch, isUnread, relTime, unreadNotifications, viewHref, type Notification } from '../model';
 import { useServer } from './server';
 import { playChime, unlockChimeOnGesture } from './chime';
@@ -124,10 +124,42 @@ const SOUND_ON = <Icon size={14}><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15
 const PROBLEM = <Icon size={13}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4" /><path d="M12 17h.01" /></Icon>;
 const SOUND_OFF = <Icon size={14}><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="m23 9-6 6" /><path d="m17 9 6 6" /></Icon>;
 
-/** The bell button and its menu, at the right end of the header (TopBar). Nothing outside `NotificationCenter`. */
-export function Bell() {
+/** What the bell's badge shows: the unread count, whether one is a failed run, and the button's name. */
+export function useBellBadge(): { count: number; problem: boolean; label: string } {
   const bells = useContext(BellContext);
-  const [open, setOpen] = useState(false);
+  const unread = bells ? unreadNotifications(bells.rows, bells.seen) : [];
+  const problems = unread.filter((row) => row.problem).length;
+  const label = !unread.length ? 'Notifications' : `Notifications, ${unread.length} new` + (problems ? `, ${problems} failed` : '');
+  return { count: unread.length, problem: problems > 0, label };
+}
+
+/** Where the menu hangs when something other than this bell's button opens it, in this window. */
+export interface BellAnchor { top: number; right: number }
+/** Opening and closing the bell from outside it: the framed page's own bell (PageBell.ts). */
+export interface BellHandle { toggle: (at: BellAnchor) => void; close: () => void }
+
+/**
+ * The bell button and its menu, at the right end of the header (TopBar). Nothing outside
+ * `NotificationCenter`. `button={false}` draws the menu only: something else is the button
+ * and opens it through `handle`, saying where the menu hangs; `onOpenChange` tells it.
+ */
+export function Bell({ button = true, handle, onOpenChange }:
+  { button?: boolean; handle?: Ref<BellHandle>; onOpenChange?: (open: boolean) => void } = {}) {
+  const bells = useContext(BellContext);
+  const badge = useBellBadge();
+  const [open, setOpenState] = useState(false);
+  const [at, setAt] = useState<BellAnchor | null>(null);
+  const setOpen = (next: boolean) => {
+    setOpenState(next);
+    if (!next) setAt(null);
+  };
+  useEffect(() => { onOpenChange?.(open); }, [open, onOpenChange]);
+  useEffect(() => {
+    if (!at) return;
+    const moved = () => setOpen(false);
+    window.addEventListener('resize', moved);
+    return () => window.removeEventListener('resize', moved);
+  }, [at]);
   // what was seen before the menu opened: its rows keep their unread mark while it is open
   const [seenBefore, setSeenBefore] = useState<string | null>(null);
   const wrap = useRef<HTMLSpanElement>(null);
@@ -147,32 +179,34 @@ export function Bell() {
       window.removeEventListener('blur', intoPage);
     };
   }, [open]);
-  if (!bells) return null;
-  const { rows, seen, sound, framed, href, markSeen, setSound } = bells;
-  const unread = unreadNotifications(rows, seen);
-  const problems = unread.filter((row) => row.problem).length;
-  // opening clears the badge; the rows stay marked until the menu closes
-  const rowSeen = open ? seenBefore : seen;
-  const toggle = () => {
+  const toggle = (where: BellAnchor | null = null) => {
+    if (!bells) return;
     if (!open) {
-      setSeenBefore(seen);
-      markSeen();
+      setSeenBefore(bells.seen);
+      bells.markSeen();
+      setAt(where);
     }
     setOpen(!open);
   };
+  useImperativeHandle(handle, () => ({ toggle, close: () => setOpen(false) }));
+  if (!bells) return null;
+  const { rows, seen, sound, framed, href, setSound } = bells;
+  // opening clears the badge; the rows stay marked until the menu closes
+  const rowSeen = open ? seenBefore : seen;
   return (
     <span className="fbell" ref={wrap} data-beyond-parity="">
-      <button type="button" className={problems ? 'fbell-button has-unread has-problem' : unread.length ? 'fbell-button has-unread' : 'fbell-button'} title="Notifications"
-        aria-haspopup="menu" aria-expanded={open} onClick={toggle}
-        aria-label={!unread.length ? 'Notifications' : `Notifications, ${unread.length} new` + (problems ? `, ${problems} failed` : '')}>
-        {BELL}{unread.length > 0 && <span className="fbell-count">{unread.length}</span>}
+      <button type="button" className={badge.count && badge.problem ? 'fbell-button has-unread has-problem' : badge.count ? 'fbell-button has-unread' : 'fbell-button'} title="Notifications"
+        aria-haspopup="menu" aria-expanded={open} onClick={() => toggle()} hidden={!button}
+        aria-label={badge.label}>
+        {BELL}{badge.count > 0 && <span className="fbell-count">{badge.count}</span>}
       </button>
       {/* in the frame the page below is another document: the click that closes the menu
           lands on this instead, so it never reaches the page (no annotation from it),
           as the page's own menus swallow theirs */}
       {open && framed && <div className="fbell-shield" aria-hidden="true" onMouseDown={() => setOpen(false)} />}
       {open && (
-        <div className="fbell-menu" role="menu" aria-label="Notifications">
+        <div className={at ? 'fbell-menu at-page' : 'fbell-menu'} role="menu" aria-label="Notifications"
+          style={at ? { position: 'fixed', top: at.top, right: at.right } : undefined}>
           <div className="fbell-head"><span>{framed ? 'On other pages' : 'On review pages'}</span>
             <button type="button" className={sound ? 'fbell-sound' : 'fbell-sound off'} aria-pressed={sound}
               aria-label={sound ? 'Sound on' : 'Sound off'} title={sound ? 'Sound on: a soft chime when something new arrives. Click to mute' : 'Sound off. Click to hear a chime when something new arrives'}

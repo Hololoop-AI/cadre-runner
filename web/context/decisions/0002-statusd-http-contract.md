@@ -291,3 +291,24 @@ above; the page server runs on another machine than its Cadre; anything (a
 shell, a webview, a browser on the page server's own port) shows review
 pages without going through statusd; a second host app wants the same list.
 
+## Amendment, 2026-11-22: the bell's button sits in the page's own bar
+The frame's bar had grown to hold the bell, stacked over the page's own bar.
+The driver asked for the bar as it was before the notification center: the
+frame's bar slim again (the way back and the title), and the bell down in the
+page's bar where the page server's own bell used to be. Cadre still owns the
+list, the chime, the read state and the menu; only the button moved. So the
+frame now talks to the page, by `postMessage` only (the page may be another
+machine's), under a contract Review Surface owns (its README, "Framing
+hosts"): the page offers (`review-surface:barHello`), the frame answers
+`review-surface-host:carryBell` and sends `bellState` (count, failed run,
+open, the button's name) on every change, and the page reports `bellClick`
+(the button's box, so the menu hangs under it) and `bellClose` (Escape in
+the page). `web/src/ui/PageBell.ts` is the one place that speaks it.
+
+- **Either side can deploy first.** A page that loads without offering (an
+  older page server) gets the button back in the frame's bar; an older frame
+  never answers, so the page shows no bell.
+- **The page cannot move the menu off the window**: the position it reports
+  is clamped, and a resize closes a menu hung from it.
+- **Revisit when** a second host frames review pages, or the page's bar wants
+  more of the host's controls than the bell.

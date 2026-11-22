@@ -8,7 +8,9 @@
 // served by any of them: the page server lets this machine's fleet and the
 // configured machines' apps frame it (statusd.framable_header). The page's
 // annotation layer is the page server's own script inside the frame; the
-// frame never reaches into it beyond reading its title.
+// frame never reaches into it beyond reading its title. The bell sits in the
+// page's own bar, where it used to be, and the frame's bar stays slim
+// (PageBell.ts); a page that cannot carry it gets it back up here.
 
 import { useEffect, useRef, useState } from 'react';
 import { noticeOf } from '../api';
@@ -19,6 +21,7 @@ import { useServer } from './server';
 import './view.css';
 import { UpLink } from './Back';
 import { Bell } from './Bell';
+import { usePageBell } from './PageBell';
 
 const SESSION = '/session/';
 
@@ -30,6 +33,7 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
   const [frameTitle, setFrameTitle] = useState('');
   const [notice] = useState(() => noticeOf(window.location.href));
   const frame = useRef<HTMLIFrameElement>(null);
+  const pageBell = usePageBell(frame);
   const title = frameTitle || (key === pageKey ? data?.title : '') || '';
 
   useEffect(() => {
@@ -40,6 +44,7 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
   // follows the frame to another surface. Another machine's page is
   // cross-origin: reading it throws, and the bar keeps what /api/view said.
   const onLoad = () => {
+    pageBell.frameLoaded();
     try {
       const w = frame.current?.contentWindow;
       const d = w?.document;
@@ -71,7 +76,7 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
         <span><UpLink href={window.location.origin + MOUNT + up.href} name={up.name} target="_self" /></span>
         <span className="title">{title}</span>
         {notice && <span className="notice">{notice}</span>}
-        <Bell />
+        <Bell {...pageBell.bell} />
       </nav>
       {/* named for screen readers by aria-label, not title: the app shows every title as a
           tooltip (tooltips.ts), which put a stray "surface" tip over the page */}

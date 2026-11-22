@@ -11,6 +11,8 @@
  background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}
 .fbell .fbell-button.has-unread{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .fbell .fbell-button svg{display:block}
+/* the framed page draws this button in its own bar (Bell's remote): only the menu is ours */
+.fbell .fbell-button[hidden]{display:none}
 .fbell .fbell-count{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;
  display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--accent);
  color:var(--on-accent);font:700 11px/1 var(--sans)}
@@ -45,6 +47,8 @@
    home screens the row is full (title, menu, cost, + New work), so the 7-day cost, which the costs
    screen also shows, steps out of the header below 480 px. */
 @media (max-width:640px){
+ /* hung from the framed page's bell: pinned to the window's right edge, as phones have no room to hang it from the bell */
+ .fbell .fbell-menu.at-page{right:12px!important}
  header:has(> .fbell) > h1{flex-basis:auto;flex-grow:1;min-width:0}
 }
 @media (max-width:480px){
