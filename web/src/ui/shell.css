@@ -205,4 +205,6 @@ nav.groups{view-transition-name:cadre-rail}
  .ptabs{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
   touch-action:pan-x;overscroll-behavior-x:contain}
  .ptabs a{flex:none}
+ /* the row clips below itself (overflow-y hidden), so the open tab's underline sits just inside it */
+ .ptabs .tabline{bottom:0}
 }
