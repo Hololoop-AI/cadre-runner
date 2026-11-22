@@ -4,7 +4,7 @@ import { ServerProvider } from './server';
 import { ViewScreen } from './View';
 
 // The frame is a screen of the app: it loads the chosen machine's page, so it
-// works whichever machine is chosen. Its bar is the way back and the title
+// works whichever machine is chosen. Its bar is the way up and the title
 // only: study starts from a thread on the page, so the bar has no study box
 // and no "open alone" link.
 function answering(view: object) {
@@ -25,7 +25,9 @@ describe('ViewScreen', () => {
   it("frames this machine's page under a way back and its title, with no study box", async () => {
     answering({ key: 'k1', session: '/session/k1', title: 'Pantry plan', task: 'task-a' });
     await act(async () => { render(<ServerProvider base=""><ViewScreen pageKey="k1" /></ServerProvider>); });
-    expect(screen.getByTitle('surface').getAttribute('src')).toBe(window.location.origin + '/session/k1');
+    expect(screen.getByLabelText('Pantry plan').getAttribute('src')).toBe(window.location.origin + '/session/k1');
+    // no title on the frame: the app would show it as a tooltip over the page
+    expect(document.querySelector('iframe')?.hasAttribute('title')).toBe(false);
     expect(screen.getByText('Pantry plan')).toBeTruthy();
     expect(document.title).toBe('Pantry plan — Cadre');
     expect(screen.getByText('← back').getAttribute('href')).toBe(window.location.origin + '/');
@@ -33,11 +35,18 @@ describe('ViewScreen', () => {
     expect(screen.queryByText(/open alone/)).toBeNull();
   });
 
+  it('goes up to the home of the cadre the page belongs to, named on the link', async () => {
+    answering({ key: 'k3', session: '/session/k3', title: 'Curry', task: 'task-c', cadre: 'kitchen', cadre_name: 'Kitchen' });
+    await act(async () => { render(<ServerProvider base=""><ViewScreen pageKey="k3" /></ServerProvider>); });
+    expect(screen.getByText('← back').getAttribute('href')).toBe(window.location.origin + '/c/kitchen');
+    expect(screen.getByText('← back').getAttribute('title')).toBe("back to Kitchen's home");
+  });
+
   it("frames the chosen machine's page", async () => {
     const calls = answering({ key: 'k2', session: '/session/k2', title: '', task: null });
     await act(async () => { render(<ServerProvider base="http://box-2:8183"><ViewScreen pageKey="k2" /></ServerProvider>); });
     expect(calls[0].url).toBe('http://box-2:8183/api/view/k2');
-    expect(screen.getByTitle('surface').getAttribute('src')).toBe('http://box-2:8183/session/k2');
+    expect(screen.getByLabelText('Review page').getAttribute('src')).toBe('http://box-2:8183/session/k2');
     expect(screen.queryByText(/open alone/)).toBeNull();
     expect(document.title).toBe('Surface — Cadre');
   });

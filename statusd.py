@@ -250,7 +250,25 @@ def view_payload(key: str) -> dict:
     row = next((r for r in read_snapshot().get("surfaces") or [] if r.get("path") == session), {})
     _, _, pages = load_graph()
     title = (pages.get(key) or {}).get("title") or row.get("title") or ""
-    return {"key": key, "session": session, "title": str(title), "task": row.get("task") or None}
+    return {"key": key, "session": session, "title": str(title), "task": row.get("task") or None,
+            **view_cadre(row)}
+
+
+def view_cadre(row: dict) -> dict:
+    """The cadre a framed page belongs to, for the frame's way up to that
+    cadre's home: the run's cadre when the page is a run's, else the one its
+    project falls under. Empty when there is no telling (a page the snapshot
+    does not know); the frame then goes up to the fleet."""
+    if not row:
+        return {"cadre": "", "cadre_name": ""}
+    try:
+        projs = load_projects()
+        cadre = cadres_mod.owner(cadres_mod.load(DATA_DIR), projs, row.get("task") or "",
+                                 project=row.get("project") or "")
+    except (OSError, ValueError):
+        return {"cadre": "", "cadre_name": ""}
+    names = {c["id"]: c["name"] for c in cadres_mod.cadre_list(projs)} | cadres_mod.SPECIAL
+    return {"cadre": cadre or "", "cadre_name": names.get(cadre, "") if cadre else ""}
 
 
 # --------------------------------------------------------------------- model

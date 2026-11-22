@@ -2368,13 +2368,21 @@
               "string",
               "null"
             ]
+          },
+          "cadre": {
+            "type": "string"
+          },
+          "cadre_name": {
+            "type": "string"
           }
         },
         "required": [
           "key",
           "session",
           "title",
-          "task"
+          "task",
+          "cadre",
+          "cadre_name"
         ]
       },
       "ProjectContext": {
