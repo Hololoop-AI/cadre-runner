@@ -36,6 +36,7 @@ from html import escape
 from pathlib import Path
 
 from . import board_events
+from . import page_target
 from . import theme as theme_mod
 from .conversations import THREAD_KINDS
 
@@ -442,6 +443,10 @@ def _images(p: dict) -> str:
     carries them unchanged, and an image sent with no words still counts as
     feedback. Turns read the path directly: the page server stores the file."""
     lines = []
+    if p.get("pictured"):
+        # the picture the note is on: not the driver's attachment, but the page's own
+        # file, added by _on_picture
+        lines.append(f"[the image this note is on: {p['pictured']}]")
     for a in p.get("attachments") or []:
         if isinstance(a, dict) and a.get("path"):
             size = f", {a['width']}x{a['height']}" if a.get("width") and a.get("height") else ""
@@ -455,14 +460,37 @@ def with_images(text: str, p: dict) -> str:
     return "\n\n".join(part for part in (text.strip(), _images(p)) if part)
 
 
-def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
+def _on_picture(p: dict, page: str | None) -> dict:
+    """A note on a picture has no text to quote: quote what the page says about
+    the picture (its caption, else its alt text) as the anchor, and pass the
+    picture itself when it is a file beside the page (page_target.describe).
+    Best effort: whatever goes wrong here, the note arrives as it always did,
+    because by now the page server has handed the notes over and a failure
+    would lose them."""
+    if not page or str(p.get("text") or "").strip() or not p.get("selector"):
+        return p
+    try:
+        seen = page_target.describe(page, str(p["selector"]), str(p.get("tag") or ""))
+    except Exception:
+        return p
+    if not seen:
+        return p
+    words = (f"the image captioned \u201c{seen['caption']}\u201d" if seen["caption"]
+             else f"the image described as \u201c{seen['alt']}\u201d" if seen["alt"]
+             else "the image " + Path(seen["image"]).name)
+    return {**p, "text": words[:ANCHOR_LIMIT], **({"pictured": seen["image"]} if seen["image"] else {})}
+
+
+def _classify_prompts(prompts: list[dict], page: str | None = None) -> tuple[list[dict], list[dict]]:
     """(decisions/answers, free-text feedback). Tokens are authoritative; every
     non-token prompt is driver feedback worth recording. Both kinds carry the
-    annotation anchor they arrived with."""
+    annotation anchor they arrived with; `page` is the page they were made on,
+    which names what a note on a picture is about."""
     structured, free = [], []
     for p in prompts:
         if not isinstance(p, dict):
             p = {"prompt": str(p)}
+        p = _on_picture(p, page)
         text = str(p.get("prompt") or "")
         anchor = _anchor(p)
         t = _TASK_DECISION_RE.search(text)
@@ -486,7 +514,7 @@ def _classify_prompts(prompts: list[dict]) -> tuple[list[dict], list[dict]]:
     return structured, free
 
 
-def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[dict]]:
+def _parse_feedback(raw: str, page: str | None = None) -> tuple[dict | None, list[dict], list[dict]]:
     """Parse `poll --json` output: (payload, structured, free). payload is
     None when the line isn't JSON (old CLI on PATH, or an error banner)."""
     line = next((l for l in raw.splitlines() if l.startswith("{")), "")
@@ -494,7 +522,7 @@ def _parse_feedback(raw: str) -> tuple[dict | None, list[dict], list[dict]]:
         payload = json.loads(line)
     except json.JSONDecodeError:
         return None, [], []
-    structured, free = _classify_prompts(payload.get("prompts") or [])
+    structured, free = _classify_prompts(payload.get("prompts") or [], page)
     return payload, structured, free
 
 
@@ -534,7 +562,7 @@ def _handle_poll(cfg, reg, log, path: str, meta: dict, raw: str) -> None:
     decisions, and the driver's free-text annotations. Shared by the feedback
     consume pass and by agent replies, which poll the same session and would
     otherwise CONSUME queued feedback into the void."""
-    payload, structured, free = _parse_feedback(raw)
+    payload, structured, free = _parse_feedback(raw, path)
     status = (payload or {}).get("status") or ""
     had_prompts = bool((payload or {}).get("prompts"))
     # "Send & End" delivers the final feedback once with an ended status —
@@ -747,7 +775,7 @@ def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
         except Exception as e:
             log(f"surface: adoption poll failed for {Path(path).name}: {e}")
             continue
-        payload, structured, free = _parse_feedback(raw)
+        payload, structured, free = _parse_feedback(raw, path)
         notes = [{"anchor": i.get("anchor") or "",
                   "text": (i.get("text") or "").strip()}
                  for i in [*structured, *free]]
