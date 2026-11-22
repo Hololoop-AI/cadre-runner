@@ -16,5 +16,6 @@ def test_topbar_is_the_only_header_and_it_draws_the_bell():
                  and re.search(r"<header[\s>]", f.read_text(encoding="utf-8"))]
     assert offenders == [], f"draw the header with <TopBar>, not <header>: {offenders}"
     assert re.search(r"<header>.*<Bell\s*/>\s*</header>", (UI / "TopBar.tsx").read_text(encoding="utf-8"))
-    # the frame around a review page has no header; its bar draws the bell
-    assert re.search(r"<Bell\s*/>\s*</nav>", (UI / "View.tsx").read_text(encoding="utf-8"))
+    # the frame around a review page has no header; its bar draws the bell's menu,
+    # and the button too when the page in it cannot carry it (PageBell.ts)
+    assert re.search(r"<Bell\b[^>]*/>\s*</nav>", (UI / "View.tsx").read_text(encoding="utf-8"))
