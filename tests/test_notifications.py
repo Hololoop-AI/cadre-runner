@@ -360,3 +360,8 @@ def test_only_a_proxy_on_this_machine_may_say_the_scheme(ip, claimed, proto):
     import statusd
     headers = {"X-Forwarded-Proto": claimed} if claimed else {}
     assert statusd.forwarded_proto(ip, headers) == proto
+
+
+def test_an_address_that_is_not_a_plain_ip_is_not_trusted():
+    import statusd
+    assert statusd.forwarded_proto("fe80::1%eth0x", {"X-Forwarded-Proto": "https"}) == "http"

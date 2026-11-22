@@ -40,6 +40,9 @@ const BellContext = createContext<BellState | null>(null);
  * frame shows: the menu leaves it out (the page shows its own new version),
  * but its news still chimes, so waiting on an agent in its page rings too.
  */
+/** How long one notifications read may take before it is dropped. */
+const READ_TIMEOUT_MS = 15000;
+
 export function NotificationCenter({ exclude = '', children }: { exclude?: string; children: ReactNode }) {
   const server = useServer();
   // another machine's rows are its own log: keep its read state apart
@@ -74,7 +77,8 @@ export function NotificationCenter({ exclude = '', children }: { exclude?: strin
   async function readOnce(mine: { gone: boolean }) {
     let list: Notification[];
     try {
-      list = (await server.fetchNotifications()).notifications || [];
+      // a read that hangs must not hold the bell: give up and let the next change ask again
+      list = (await server.fetchNotifications(AbortSignal.timeout(READ_TIMEOUT_MS))).notifications || [];
     } catch {
       return; // no backend, or another machine refusing: no bell news
     }

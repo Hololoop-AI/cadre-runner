@@ -61,7 +61,7 @@ export interface Server {
   /** GET /api/deck: Learn's deck, its topics and its study sessions */
   fetchDeck(): Promise<Deck>;
   /** GET /api/notifications: Cadre's notification center, review pages that moved */
-  fetchNotifications(): Promise<Notifications>;
+  fetchNotifications(signal?: AbortSignal): Promise<Notifications>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
@@ -90,7 +90,7 @@ export function connect(base: string): Server {
     fetchBlackboard: () => getJson<Blackboard>(at('/api/blackboard?limit=100')),
     fetchRecords: (cadre) => getJson<CadreRecords>(at('/api/records?cadre=' + encodeURIComponent(cadre))),
     fetchDeck: () => getJson<Deck>(at('/api/deck')),
-    fetchNotifications: () => getJson<Notifications>(at('/api/notifications')),
+    fetchNotifications: (signal) => getJson<Notifications>(at('/api/notifications'), signal),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };
@@ -179,7 +179,7 @@ export function subscribe(onChange: () => void, onLive: (l: Live) => void = () =
   }
   let hub = HUBS.get(url);
   if (!hub) {
-    hub = { url, es: null, subs: new Set(), live: 'connecting', retry: undefined, channel: null, release: null, closed: false };
+    hub = { url, es: null, subs: new Set(), live: 'connecting', retry: undefined, channel: null, release: null, closed: false, id: Math.random().toString(36).slice(2) };
     HUBS.set(url, hub);
     start(hub);
   } else if (hub.live !== 'connecting') {
@@ -224,11 +224,13 @@ interface Hub {
   release: (() => void) | null;
   /** every subscriber in this tab has left */
   closed: boolean;
+  /** names this tab on the channel, so the leader can answer it alone */
+  id: string;
 }
 const HUBS = new Map<string, Hub>();
 
-/** What travels between tabs: a stream state (`catchUp` after a (re)connect) or a change. */
-type Relay = { t: 'live'; live: Live; catchUp?: boolean } | { t: 'change' } | { t: 'ask' };
+/** What travels between tabs: a stream state (`catchUp` after a (re)connect; `to` one tab only) or a change. */
+type Relay = { t: 'live'; live: Live; catchUp?: boolean; to?: string } | { t: 'change' } | { t: 'ask'; from: string };
 
 function soon(sub: Sub) {
   clearTimeout(sub.soonT);
@@ -264,7 +266,7 @@ function start(hub: Hub) {
   const channel = new BroadcastChannel(name);
   hub.channel = channel;
   channel.onmessage = (e: MessageEvent<Relay>) => heard(hub, e.data);
-  channel.postMessage({ t: 'ask' } satisfies Relay); // where does the leader's stream stand?
+  channel.postMessage({ t: 'ask', from: hub.id } satisfies Relay); // where does the leader's stream stand?
   locks.request(name, () => {
     if (hub.closed) return undefined; // every subscriber left while this tab waited
     return new Promise<void>((resolve) => {
@@ -291,9 +293,10 @@ function stop(hub: Hub) {
 function heard(hub: Hub, msg: Relay) {
   if (hub.closed) return;
   if (msg.t === 'ask') {
-    if (hub.release && hub.live !== 'connecting') hub.channel?.postMessage({ t: 'live', live: hub.live, catchUp: true } satisfies Relay);
+    if (hub.release && hub.live !== 'connecting') hub.channel?.postMessage({ t: 'live', live: hub.live, catchUp: true, to: msg.from } satisfies Relay);
     return;
   }
+  if (msg.t === 'live' && msg.to && msg.to !== hub.id) return; // the leader answering another tab
   if (!hub.release) apply(hub, msg);
 }
 

@@ -1963,7 +1963,11 @@ def forwarded_proto(client_ip: str, headers) -> str:
     six-connections-per-host limit) says the browser's scheme in
     X-Forwarded-Proto. Believe that only from loopback: anyone else could
     claim any scheme."""
-    if ipaddress.ip_address(client_ip.removeprefix("::ffff:")).is_loopback:
+    try:
+        loopback = ipaddress.ip_address(client_ip.removeprefix("::ffff:")).is_loopback
+    except ValueError:  # not a plain IP address (a scoped or odd socket address)
+        loopback = False
+    if loopback:
         claimed = (headers.get("X-Forwarded-Proto") or "").split(",")[-1].strip().lower()
         if claimed in ("http", "https"):
             return claimed
@@ -2033,7 +2037,8 @@ class Handler(BaseHTTPRequestHandler):
         # its REVIEW_SURFACE_ALLOWED_HOSTS list (set in the daemon's env).
         if self.headers.get("Host"):
             req.add_header("X-Forwarded-Host", self.headers["Host"])
-            req.add_header("X-Forwarded-Proto", forwarded_proto(self.client_address[0], self.headers))
+        # always ours, never a remote client's own claim copied through above
+        req.add_header("X-Forwarded-Proto", forwarded_proto(self.client_address[0], self.headers))
         try:
             resp = urllib.request.urlopen(req, timeout=300)
         except urllib.error.HTTPError as e:

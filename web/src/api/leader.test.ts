@@ -90,6 +90,19 @@ describe('subscribe across tabs', () => {
     expect(change).toHaveBeenCalledTimes(1);
   });
 
+  it('the answer to a joining tab goes to it alone: tabs already open do not fetch again', async () => {
+    (await tab())(() => {}, () => {}, '/fleet/events');
+    await settle();
+    open()[0].fire('hello', '{"upstream": true}');
+    const b = vi.fn();
+    (await tab())(b, () => {}, '/fleet/events');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(b).toHaveBeenCalledTimes(1);
+    (await tab())(() => {}, () => {}, '/fleet/events'); // a third tab opens
+    await vi.advanceTimersByTimeAsync(300);
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+
   it('when the leading tab closes, a waiting tab opens the stream', async () => {
     const stopA = (await tab())(() => {}, () => {}, '/fleet/events');
     await settle();
@@ -114,5 +127,12 @@ describe('subscribe across tabs', () => {
     open()[0].onerror?.();
     await settle();
     expect(live).toHaveBeenCalledWith('off');
+  });
+
+  it('different machines elect separately', async () => {
+    (await tab())(() => {}, () => {}, 'http://box-1/fleet/events');
+    (await tab())(() => {}, () => {}, 'http://box-2/fleet/events');
+    await settle();
+    expect(open().map((s) => s.url).sort()).toEqual(['http://box-1/fleet/events', 'http://box-2/fleet/events']);
   });
 });
