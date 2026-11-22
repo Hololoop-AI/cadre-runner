@@ -61,7 +61,7 @@ export interface Server {
   /** GET /api/deck: Learn's deck, its topics and its study sessions */
   fetchDeck(): Promise<Deck>;
   /** GET /api/notifications: Cadre's notification center, review pages that moved */
-  fetchNotifications(): Promise<Notifications>;
+  fetchNotifications(signal?: AbortSignal): Promise<Notifications>;
   /** POST one of the Python page's forms to this machine (postForm) */
   post(action: string, form: HTMLFormElement | URLSearchParams): Promise<Landing>;
   /** this machine's fleet stream (subscribe) */
@@ -90,7 +90,7 @@ export function connect(base: string): Server {
     fetchBlackboard: () => getJson<Blackboard>(at('/api/blackboard?limit=100')),
     fetchRecords: (cadre) => getJson<CadreRecords>(at('/api/records?cadre=' + encodeURIComponent(cadre))),
     fetchDeck: () => getJson<Deck>(at('/api/deck')),
-    fetchNotifications: () => getJson<Notifications>(at('/api/notifications')),
+    fetchNotifications: (signal) => getJson<Notifications>(at('/api/notifications'), signal),
     post: (action, form) => postForm(at(action), form),
     subscribe: (onChange, onLive) => subscribe(onChange, onLive, at('/fleet/events')),
   };
@@ -155,11 +155,20 @@ export const FALLBACK_POLL_MS = 30000;
 /**
  * Subscribe to /fleet/events the way the Python page does: `hello` and
  * `source` say how live the stream is, `change` asks for a re-fetch (soon,
- * coalesced), and while the stream is down a slow poll stands in. Every
- * subscriber in this tab shares one connection per URL (the screen's lists and
- * the header's bell), because a browser allows only six per host. A stream the
+ * coalesced), and while the stream is down a slow poll stands in. A stream the
  * browser gave up on is reopened after a pause. A subscriber that joins a
  * stream already open is told where it stands and gets one catch-up change.
+ *
+ * One connection per browser, not per tab: every Cadre tab on an origin is the
+ * same app wanting the same news, and over HTTP/1.1 a browser allows only six
+ * connections per host, so a few open tabs used to starve every other request
+ * (a page's send among them). Inside a tab every subscriber shares one hub per
+ * URL (the screen's lists and the header's bell). Across tabs, where the
+ * browser has Web Locks (HTTPS or localhost), the tabs elect one leader per URL
+ * with a lock: the leader holds the stream and relays what it hears to the
+ * other tabs over a BroadcastChannel. When the leader closes, the lock passes
+ * to a tab that was waiting for it, which opens the stream. Without Web Locks
+ * each tab holds its own stream.
  */
 export function subscribe(onChange: () => void, onLive: (l: Live) => void = () => {}, url = '/fleet/events'): () => void {
   const sub: Sub = { onChange, onLive, soonT: undefined, poll: undefined };
@@ -170,9 +179,9 @@ export function subscribe(onChange: () => void, onLive: (l: Live) => void = () =
   }
   let hub = HUBS.get(url);
   if (!hub) {
-    hub = { url, es: null, subs: new Set(), live: 'connecting', retry: undefined };
+    hub = { url, es: null, subs: new Set(), live: 'connecting', retry: undefined, channel: null, release: null, closed: false, id: Math.random().toString(36).slice(2) };
     HUBS.set(url, hub);
-    openStream(hub);
+    start(hub);
   } else if (hub.live !== 'connecting') {
     onLive(hub.live);
     if (hub.live === 'off') startPoll(sub);
@@ -188,8 +197,7 @@ export function subscribe(onChange: () => void, onLive: (l: Live) => void = () =
     stopPoll(sub);
     clearTimeout(sub.soonT);
     if (mine.subs.size === 0) {
-      mine.es?.close();
-      clearTimeout(mine.retry);
+      stop(mine);
       if (HUBS.get(url) === mine) HUBS.delete(url);
     }
   };
@@ -210,8 +218,19 @@ interface Hub {
   subs: Set<Sub>;
   live: Live;
   retry: ReturnType<typeof setTimeout> | undefined;
+  /** to and from the other tabs; null when this tab holds its own stream */
+  channel: BroadcastChannel | null;
+  /** set while this tab is the leader: gives the lock back */
+  release: (() => void) | null;
+  /** every subscriber in this tab has left */
+  closed: boolean;
+  /** names this tab on the channel, so the leader can answer it alone */
+  id: string;
 }
 const HUBS = new Map<string, Hub>();
+
+/** What travels between tabs: a stream state (`catchUp` after a (re)connect; `to` one tab only) or a change. */
+type Relay = { t: 'live'; live: Live; catchUp?: boolean; to?: string } | { t: 'change' } | { t: 'ask'; from: string };
 
 function soon(sub: Sub) {
   clearTimeout(sub.soonT);
@@ -233,26 +252,83 @@ function upstream(e: Event): boolean {
   }
 }
 
+/** Web Locks and BroadcastChannel both, or neither: a leader needs a way to tell the others. */
+function lockManager(): LockManager | undefined {
+  if (typeof BroadcastChannel === 'undefined') return undefined;
+  return (navigator as Navigator & { locks?: LockManager }).locks;
+}
+
+/** Become the URL's leader when the lock comes free, hearing the leader until then. */
+function start(hub: Hub) {
+  const locks = lockManager();
+  if (!locks) return openStream(hub);
+  const name = 'cadre:fleet-stream:' + new URL(hub.url, window.location.href).href;
+  const channel = new BroadcastChannel(name);
+  hub.channel = channel;
+  channel.onmessage = (e: MessageEvent<Relay>) => heard(hub, e.data);
+  channel.postMessage({ t: 'ask', from: hub.id } satisfies Relay); // where does the leader's stream stand?
+  locks.request(name, () => {
+    if (hub.closed) return undefined; // every subscriber left while this tab waited
+    return new Promise<void>((resolve) => {
+      hub.release = resolve;
+      openStream(hub);
+    });
+  }).catch(() => {
+    if (!hub.closed && !hub.es) openStream(hub); // no lock to be had: hold a stream of our own
+  });
+}
+
+function stop(hub: Hub) {
+  hub.closed = true;
+  hub.es?.close();
+  hub.es = null;
+  clearTimeout(hub.retry);
+  hub.channel?.close();
+  hub.channel = null;
+  hub.release?.(); // the next waiting tab becomes the leader
+  hub.release = null;
+}
+
+/** A message from another tab. Only the leader answers a question; only the others take news. */
+function heard(hub: Hub, msg: Relay) {
+  if (hub.closed) return;
+  if (msg.t === 'ask') {
+    if (hub.release && hub.live !== 'connecting') hub.channel?.postMessage({ t: 'live', live: hub.live, catchUp: true, to: msg.from } satisfies Relay);
+    return;
+  }
+  if (msg.t === 'live' && msg.to && msg.to !== hub.id) return; // the leader answering another tab
+  if (!hub.release) apply(hub, msg);
+}
+
+/** What the stream said, in this tab, and (from the leader) in every other tab. */
+function emit(hub: Hub, msg: Relay) {
+  apply(hub, msg);
+  if (hub.release) hub.channel?.postMessage(msg);
+}
+
+function apply(hub: Hub, msg: Relay) {
+  if (msg.t === 'change') return hub.subs.forEach(soon);
+  if (msg.t !== 'live') return;
+  hub.live = msg.live;
+  hub.subs.forEach((s) => {
+    s.onLive(msg.live);
+    if (msg.live === 'off') startPoll(s);
+    else if (msg.catchUp) {
+      stopPoll(s);
+      soon(s); // catch up on anything missed while away
+    }
+  });
+}
+
 /** Open the hub's stream and hand its events to every subscriber. */
 function openStream(hub: Hub) {
   const es = new EventSource(hub.url);
   hub.es = es;
-  const setLive = (l: Live) => {
-    hub.live = l;
-    hub.subs.forEach((s) => s.onLive(l));
-  };
-  es.addEventListener('hello', (e) => {
-    setLive(upstream(e) ? 'on' : 'half');
-    hub.subs.forEach((s) => {
-      stopPoll(s);
-      soon(s); // catch up on anything missed while away
-    });
-  });
-  es.addEventListener('source', (e) => setLive(upstream(e) ? 'on' : 'half'));
-  es.addEventListener('change', () => hub.subs.forEach(soon));
+  es.addEventListener('hello', (e) => emit(hub, { t: 'live', live: upstream(e) ? 'on' : 'half', catchUp: true }));
+  es.addEventListener('source', (e) => emit(hub, { t: 'live', live: upstream(e) ? 'on' : 'half' }));
+  es.addEventListener('change', () => emit(hub, { t: 'change' }));
   es.onerror = () => {
-    setLive('off');
-    hub.subs.forEach(startPoll);
+    emit(hub, { t: 'live', live: 'off' });
     // the browser retries on its own unless it closed the stream for good (a 502, a wrong type)
     if (es.readyState === 2 && hub.subs.size > 0 && HUBS.get(hub.url) === hub) {
       hub.retry = setTimeout(() => { if (HUBS.get(hub.url) === hub && hub.subs.size > 0) openStream(hub); }, REOPEN_MS);

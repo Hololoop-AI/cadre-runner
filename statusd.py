@@ -28,6 +28,7 @@ works through the proxy.
 
 import gzip
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -1954,6 +1955,25 @@ def index_with_fleet(index: Path) -> tuple[bytes, bytes]:
     return _INDEX["html"], _INDEX["gz"]
 
 
+def forwarded_proto(client_ip: str, headers) -> str:
+    """The scheme the browser used, for the page server's origin guard.
+
+    This server speaks plain HTTP, but an HTTPS proxy on the same machine (for
+    example `tailscale serve`, which gives the browser HTTP/2 and so lifts its
+    six-connections-per-host limit) says the browser's scheme in
+    X-Forwarded-Proto. Believe that only from loopback: anyone else could
+    claim any scheme."""
+    try:
+        loopback = ipaddress.ip_address(client_ip.removeprefix("::ffff:")).is_loopback
+    except ValueError:  # not a plain IP address (a scoped or odd socket address)
+        loopback = False
+    if loopback:
+        claimed = (headers.get("X-Forwarded-Proto") or "").split(",")[-1].strip().lower()
+        if claimed in ("http", "https"):
+            return claimed
+    return "http"
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -2017,7 +2037,8 @@ class Handler(BaseHTTPRequestHandler):
         # its REVIEW_SURFACE_ALLOWED_HOSTS list (set in the daemon's env).
         if self.headers.get("Host"):
             req.add_header("X-Forwarded-Host", self.headers["Host"])
-            req.add_header("X-Forwarded-Proto", "http")
+        # always ours, never a remote client's own claim copied through above
+        req.add_header("X-Forwarded-Proto", forwarded_proto(self.client_address[0], self.headers))
         try:
             resp = urllib.request.urlopen(req, timeout=300)
         except urllib.error.HTTPError as e:

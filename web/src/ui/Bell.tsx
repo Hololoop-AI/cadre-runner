@@ -40,6 +40,9 @@ const BellContext = createContext<BellState | null>(null);
  * frame shows: the menu leaves it out (the page shows its own new version),
  * but its news still chimes, so waiting on an agent in its page rings too.
  */
+/** How long one notifications read may take before it is dropped. */
+const READ_TIMEOUT_MS = 15000;
+
 export function NotificationCenter({ exclude = '', children }: { exclude?: string; children: ReactNode }) {
   const server = useServer();
   // another machine's rows are its own log: keep its read state apart
@@ -49,17 +52,37 @@ export function NotificationCenter({ exclude = '', children }: { exclude?: strin
   const [rows, setRows] = useState<Notification[]>([]);
   const [seen, setSeen] = useState(() => read(seenKey));
   const [sound, setSoundState] = useState(() => read(SOUND_KEY) !== 'off');
-  const latest = useRef(0);
+  // One read in flight at a time: changes that land while it runs ask for one
+  // more read after it, not one each. A stalled connection used to stack a
+  // fetch per change, queued in the browser ahead of everything else.
+  const run = useRef({ busy: false, again: false, gone: false });
 
   const refresh = useCallback(async () => {
-    const asked = ++latest.current;
+    const mine = run.current;
+    if (mine.busy) {
+      mine.again = true;
+      return;
+    }
+    mine.busy = true;
+    try {
+      do {
+        mine.again = false;
+        await readOnce(mine);
+      } while (mine.again && !mine.gone);
+    } finally {
+      mine.busy = false;
+    }
+  }, [server, suffix, seenKey, chimedKey]); // eslint-disable-line react-hooks/exhaustive-deps -- readOnce reads only these
+
+  async function readOnce(mine: { gone: boolean }) {
     let list: Notification[];
     try {
-      list = (await server.fetchNotifications()).notifications || [];
+      // a read that hangs must not hold the bell: give up and let the next change ask again
+      list = (await server.fetchNotifications(AbortSignal.timeout(READ_TIMEOUT_MS))).notifications || [];
     } catch {
       return; // no backend, or another machine refusing: no bell news
     }
-    if (asked !== latest.current) return; // a newer fetch is on its way
+    if (mine.gone) return; // answers still on their way are for a center that is gone
     await underChimeLock(suffix, () => {
       const prevSeen = read(seenKey);
       const prevChimed = readChimed(chimedKey);
@@ -74,7 +97,7 @@ export function NotificationCenter({ exclude = '', children }: { exclude?: strin
     });
     setSeen(read(seenKey));
     setRows(list);
-  }, [server, suffix, seenKey, chimedKey]);
+  }
 
   useEffect(() => unlockChimeOnGesture(), []);
   useEffect(() => {
@@ -87,7 +110,8 @@ export function NotificationCenter({ exclude = '', children }: { exclude?: strin
     };
     window.addEventListener('storage', stored);
     return () => {
-      latest.current++; // answers still on their way are for a center that is gone
+      run.current.gone = true; // answers still on their way are for a center that is gone
+      run.current = { busy: false, again: false, gone: false };
       stop();
       window.removeEventListener('storage', stored);
     };

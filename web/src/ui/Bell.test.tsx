@@ -90,6 +90,25 @@ describe('the bell', () => {
     expect(JSON.parse(localStorage.getItem(CHIMED)!)).toEqual(['aaaa@' + older.at]);
   });
 
+  it('keeps one read in flight: changes while it is stuck ask for one more read, not one each', async () => {
+    await draw();
+    const before = calls.length;
+    let answer: (r: Response) => void = () => {};
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      calls.push(url);
+      return new Promise<Response>((resolve) => { answer = resolve; });
+    }));
+    vi.useFakeTimers();
+    await act(async () => { FakeStream.all[0].fire('change'); await vi.advanceTimersByTimeAsync(300); });
+    for (let i = 0; i < 5; i++) await act(async () => { FakeStream.all[0].fire('change'); await vi.advanceTimersByTimeAsync(300); });
+    expect(calls.length - before).toBe(1);
+    await act(async () => { answer(new Response(JSON.stringify({ notifications: rows }))); await vi.advanceTimersByTimeAsync(0); });
+    expect(calls.length - before).toBe(2);
+    await act(async () => { answer(new Response(JSON.stringify({ notifications: rows }))); await vi.advanceTimersByTimeAsync(0); });
+    expect(calls.length - before).toBe(2);
+    vi.useRealTimers();
+  });
+
   it('with the sound muted the new row is claimed, so no other tab rings for it either', async () => {
     rows = [older];
     localStorage.setItem(SEEN, older.at);
