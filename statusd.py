@@ -28,9 +28,9 @@ works through the proxy.
 
 import gzip
 import hashlib
+import ipaddress
 import json
 import os
-import ipaddress
 import re
 import sqlite3
 import sys
@@ -1953,7 +1953,6 @@ def index_with_fleet(index: Path) -> tuple[bytes, bytes]:
         out = html.replace(b"</head>", tag + b"</head>", 1)
         _INDEX.update(body=body, index=html, html=out, gz=gzip.compress(out, 6))
     return _INDEX["html"], _INDEX["gz"]
-
 
 
 def forwarded_proto(client_ip: str, headers) -> str:
