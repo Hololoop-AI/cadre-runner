@@ -318,3 +318,45 @@ def test_the_page_servers_state_is_reread_only_when_it_changes_and_a_torn_read_k
     assert list(n._sessions(tmp_path)) == ["aaaa"]
     f.write_text(json.dumps({"sessions": {"aaaa": {"file": "a"}, "bbbb": {"file": "b"}}}))
     assert sorted(n._sessions(tmp_path)) == ["aaaa", "bbbb"]
+
+
+# ---- behind an HTTPS proxy: the page server's origin guard needs the browser's scheme
+def test_the_browser_scheme_from_a_local_https_proxy_reaches_the_page_server(statusd_server, monkeypatch):
+    import statusd
+    from http.server import BaseHTTPRequestHandler
+    seen = {}
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.update({k.lower(): v for k, v in self.headers.items()})
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    up = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setattr(statusd, "SURFACE", f"http://127.0.0.1:{up.server_address[1]}")
+        req = urllib.request.Request(statusd_server + "/api/aaaa/agent-status",
+                                     headers={"X-Forwarded-Proto": "https"})
+        urllib.request.urlopen(req, timeout=5).close()
+        assert seen["x-forwarded-proto"] == "https"
+    finally:
+        up.shutdown()
+        up.server_close()
+
+
+@pytest.mark.parametrize("ip,claimed,proto", [
+    ("127.0.0.1", "https", "https"),
+    ("::1", "https", "https"),
+    ("::ffff:127.0.0.1", "https", "https"),
+    ("127.0.0.1", None, "http"),             # no proxy: plain HTTP
+    ("127.0.0.1", "gopher", "http"),         # not a web scheme
+    ("100.64.0.5", "https", "http"),         # a remote client cannot claim a scheme
+])
+def test_only_a_proxy_on_this_machine_may_say_the_scheme(ip, claimed, proto):
+    import statusd
+    headers = {"X-Forwarded-Proto": claimed} if claimed else {}
+    assert statusd.forwarded_proto(ip, headers) == proto
