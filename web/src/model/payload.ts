@@ -471,6 +471,10 @@ export interface ViewInfo {
   title: string;
   /** the dialogue's task when it is one (the study box needs it), else null */
   task: string | null;
+  /** the cadre the page belongs to, for the way up to its home; '' when unknown */
+  cadre?: string;
+  /** that cadre's name, the up link's label */
+  cadre_name?: string;
 }
 
 /** GET /api/page/<key>: one conversation and the repairs that apply to it. */

@@ -1,6 +1,6 @@
 // The frame around one surface (/view/<key>): a bar with the way back to the
-// fleet and the page's title, and the agent's own page filling the rest of the
-// window in an iframe. Study starts from a thread on the page itself (select a
+// page's cadre home and the page's title, and the agent's own page filling the
+// rest of the window in an iframe. Study starts from a thread on the page itself (select a
 // passage, then Study), so the bar carries no study box of its own.
 //
 // The page is the chosen machine's /session/<key>, so the frame works
@@ -12,11 +12,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { noticeOf } from '../api';
+import { cadreHref } from '../model';
 import { MOUNT } from './router';
 import { useOnce } from './Screen';
 import { useServer } from './server';
 import './view.css';
-import { BackLink } from './Back';
+import { UpLink } from './Back';
 import { Bell } from './Bell';
 
 const SESSION = '/session/';
@@ -62,15 +63,19 @@ export function ViewScreen({ pageKey }: { pageKey: string }) {
   const deep = new URLSearchParams(window.location.search);
   deep.delete('notice'); // the frame's own
   const src = server.url(SESSION + encodeURIComponent(pageKey) + (deep.size ? '?' + deep : '') + window.location.hash);
+  // the way back: the page's cadre home when the fleet knows it, else the fleet
+  const up = data?.cadre ? { href: cadreHref(data.cadre), name: data.cadre_name || '' } : { href: '/', name: '' };
   return (
     <div className="view">
       <nav className="viewbar">
-        <span><BackLink up={window.location.origin + MOUNT + '/'} home={window.location.origin + MOUNT + '/'} target="_self" framed /></span>
+        <span><UpLink href={window.location.origin + MOUNT + up.href} name={up.name} target="_self" /></span>
         <span className="title">{title}</span>
         {notice && <span className="notice">{notice}</span>}
         <Bell />
       </nav>
-      <iframe ref={frame} src={src} title="surface" onLoad={onLoad} />
+      {/* named for screen readers by aria-label, not title: the app shows every title as a
+          tooltip (tooltips.ts), which put a stray "surface" tip over the page */}
+      <iframe ref={frame} src={src} aria-label={title || 'Review page'} onLoad={onLoad} />
     </div>
   );
 }

@@ -436,9 +436,13 @@ def test_the_frame_reads_its_session_and_title_and_refuses_a_bad_key():
             code, body = srv.get("/api/view/ef6c7a101f9b55b3")
             assert code == 200 and json.loads(body) == {
                 "key": "ef6c7a101f9b55b3", "session": "/session/ef6c7a101f9b55b3",
-                "title": "Pantry plan", "task": "task-x"}
-            # a page the snapshot does not know still frames, with no study box
-            assert json.loads(srv.get("/api/view/aaaaaaaaaaaaaaaa")[1])["task"] is None
+                "title": "Pantry plan", "task": "task-x",
+                # no project and no cadre on record: the run falls under Other
+                "cadre": "~other", "cadre_name": "Other"}
+            # a page the snapshot does not know still frames, with no study box,
+            # and with no cadre: its way up is to the fleet
+            unknown = json.loads(srv.get("/api/view/aaaaaaaaaaaaaaaa")[1])
+            assert unknown["task"] is None and unknown["cadre"] == "" and unknown["cadre_name"] == ""
             for bad in ("/api/view/..%2Fetc", "/api/view/a%22b", "/api/view/"):
                 try:
                     srv.get(bad)
@@ -447,6 +451,24 @@ def test_the_frame_reads_its_session_and_title_and_refuses_a_bad_key():
                     assert e.code == 404
         finally:
             srv.close()
+
+
+def test_a_framed_page_names_the_cadre_its_run_belongs_to(monkeypatch):
+    """The frame's way up goes to the home of the page's cadre: the run's own
+    cadre when one is on record, else the one its project falls under."""
+    projs = {"dev": {"id": "dev", "name": "Dev", "dirs": []},
+             "site": {"id": "site", "name": "Site", "group": "dev", "dirs": ["/home/dev/site"]}}
+    monkeypatch.setattr(statusd, "load_projects", lambda *a, **k: projs)
+    monkeypatch.setattr(statusd.cadres_mod, "load", lambda _d: {"task-k": "dev"})
+    assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "dev", "cadre_name": "Dev"}
+    assert statusd.view_cadre({"task": "", "project": "site"}) == {"cadre": "dev", "cadre_name": "Dev"}
+    assert statusd.view_cadre({}) == {"cadre": "", "cadre_name": ""}
+    # a cadre no longer known (archived, removed) is not linked to
+    monkeypatch.setattr(statusd.cadres_mod, "load", lambda _d: {"task-k": "gone"})
+    assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "", "cadre_name": ""}
+    # a broken record leaves the way back to the fleet, never fails the view
+    monkeypatch.setattr(statusd, "load_projects", lambda *a, **k: {"dev": "not a record"})
+    assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "", "cadre_name": ""}
 
 
 def test_proxy_lets_only_the_fleet_frame_a_session():

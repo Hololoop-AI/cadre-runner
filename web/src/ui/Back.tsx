@@ -15,25 +15,17 @@ export function cameFromApp(doc: Document = document, hist: History = history): 
   }
 }
 
-export function BackLink({ up = '/', home = '/', target, framed = false }: {
+export function BackLink({ up = '/', home = '/', target }: {
   /** where back goes when the page was not reached from this app */
   up?: string;
   /** where "fleet" goes */
   home?: string;
   target?: string;
-  /**
-   * The screen shows another page in a frame (the page viewer). Every link
-   * followed inside that frame (a section link, a page rewrite) adds its own
-   * history entry, so history.back would step through those first and take
-   * several clicks. Such a screen goes straight to the page it was opened from.
-   */
-  framed?: boolean;
 }) {
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !cameFromApp()) return;
     e.preventDefault();
-    if (framed) window.location.assign(document.referrer);
-    else history.back();
+    history.back();
   };
   return (
     <>
@@ -41,4 +33,16 @@ export function BackLink({ up = '/', home = '/', target, framed = false }: {
       {up !== home && <>{' · '}<a href={home} target={target}>fleet</a></>}
     </>
   );
+}
+
+/**
+ * The way up from a page in the page viewer: always to the home of the cadre
+ * the page belongs to, else the fleet; its tooltip names where ("back to Dev's home"). It
+ * climbs; it does not retrace. The browser's own back retraces, which a link
+ * here could only guess at: every link followed inside the framed page adds
+ * history entries of its own.
+ */
+export function UpLink({ href, name, target }: { href: string; name: string; target?: string }) {
+  // labelled "back": it climbs to the cadre's home, which its tooltip names
+  return <a className="back" href={href} target={target} title={name ? `back to ${name}'s home` : 'back to the fleet'}>← back</a>;
 }

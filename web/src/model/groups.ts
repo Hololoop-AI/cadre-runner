@@ -30,6 +30,13 @@ export const OTHER = '~other';
 /** Holo, the fleet's home (/), is a cadre with runs of its own: the meta work on the cadres and the system (runnerlib/cadres.py HOLO). */
 export const HOLO = '~holo';
 
+/** A cadre's path: Other is /c/other, Holo (and Home) /c/holo, any other cadre /c/<its id>; a home tab of Holo or Home is /. */
+export function cadreHref(id: string, tab = ''): string {
+  if ((id === HOME_GROUP || id === HOLO) && (!tab || tab === 'home')) return '/';
+  const base = `/c/${id === OTHER ? 'other' : id === HOLO || id === HOME_GROUP ? 'holo' : encodeURIComponent(id)}`;
+  return tab && tab !== 'home' ? `${base}/${tab}` : base;
+}
+
 /** One sidebar entry: a group's id and name (OTHER for the rest). */
 export interface Group {
   id: string;

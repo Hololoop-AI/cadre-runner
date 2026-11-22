@@ -415,6 +415,11 @@ def week_usd(turns: list[dict], tasks: dict, projs: dict, now: float | None = No
     return out
 
 
+def name_of(projs: dict, cadre: str) -> str:
+    """A cadre's display name: Other's and Holo's own, else its record's, else its id."""
+    return SPECIAL.get(cadre) or (projs.get(cadre) or {}).get("name") or cadre
+
+
 def nav(projs: dict, cadre: str, *, board: str = "") -> dict:
     """What the shell draws for `cadre` (GET /api/nav?cadre=<id>): its rail
     entry, its screens as header tabs (from the project record's `nav`, else
@@ -423,7 +428,7 @@ def nav(projs: dict, cadre: str, *, board: str = "") -> dict:
     (none until the board has them) and pinned pages (the record's
     `pinned`: [{label, href}]) — and what its Settings tab shows."""
     rec = projs.get(cadre) or {}
-    name = SPECIAL.get(cadre) or rec.get("name") or cadre
+    name = name_of(projs, cadre)
     base = "/c/" + {OTHER: "other", HOLO: "holo"}.get(cadre, cadre)
     home = "/" if cadre == HOLO else base
     default = BOARD_NAV if board and cadre == board else DEFAULT_NAV
