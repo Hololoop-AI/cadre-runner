@@ -463,6 +463,12 @@ def test_a_framed_page_names_the_cadre_its_run_belongs_to(monkeypatch):
     assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "dev", "cadre_name": "Dev"}
     assert statusd.view_cadre({"task": "", "project": "site"}) == {"cadre": "dev", "cadre_name": "Dev"}
     assert statusd.view_cadre({}) == {"cadre": "", "cadre_name": ""}
+    # a cadre no longer known (archived, removed) is not linked to
+    monkeypatch.setattr(statusd.cadres_mod, "load", lambda _d: {"task-k": "gone"})
+    assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "", "cadre_name": ""}
+    # a broken record leaves the way back to the fleet, never fails the view
+    monkeypatch.setattr(statusd, "load_projects", lambda *a, **k: {"dev": "not a record"})
+    assert statusd.view_cadre({"task": "task-k"}) == {"cadre": "", "cadre_name": ""}
 
 
 def test_proxy_lets_only_the_fleet_frame_a_session():

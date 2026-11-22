@@ -43,6 +43,6 @@ export function BackLink({ up = '/', home = '/', target }: {
  * history entries of its own.
  */
 export function UpLink({ href, name, target }: { href: string; name: string; target?: string }) {
-  // labelled "back" for now (the driver's call), though it climbs to the cadre's home
+  // labelled "back": it climbs to the cadre's home, which its tooltip names
   return <a className="back" href={href} target={target} title={name ? `back to ${name}'s home` : 'back to the fleet'}>← back</a>;
 }

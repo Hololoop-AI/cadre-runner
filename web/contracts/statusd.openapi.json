@@ -2380,9 +2380,7 @@
           "key",
           "session",
           "title",
-          "task",
-          "cadre",
-          "cadre_name"
+          "task"
         ]
       },
       "ProjectContext": {

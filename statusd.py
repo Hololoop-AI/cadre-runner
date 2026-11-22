@@ -255,20 +255,24 @@ def view_payload(key: str) -> dict:
 
 
 def view_cadre(row: dict) -> dict:
-    """The cadre a framed page belongs to, for the frame's way up to that
+    """The cadre a framed page belongs to, for the frame's way back to that
     cadre's home: the run's cadre when the page is a run's, else the one its
     project falls under. Empty when there is no telling (a page the snapshot
-    does not know); the frame then goes up to the fleet."""
+    does not know, a cadre since archived or removed): the frame then goes to
+    the fleet. Only decoration for the way back, so nothing here may fail the
+    view itself."""
+    none = {"cadre": "", "cadre_name": ""}
     if not row:
-        return {"cadre": "", "cadre_name": ""}
+        return none
     try:
         projs = load_projects()
         cadre = cadres_mod.owner(cadres_mod.load(DATA_DIR), projs, row.get("task") or "",
                                  project=row.get("project") or "")
-    except (OSError, ValueError):
-        return {"cadre": "", "cadre_name": ""}
-    names = {c["id"]: c["name"] for c in cadres_mod.cadre_list(projs)} | cadres_mod.SPECIAL
-    return {"cadre": cadre or "", "cadre_name": names.get(cadre, "") if cadre else ""}
+        if not cadre or not cadres_mod.known(projs, cadre):
+            return none
+        return {"cadre": cadre, "cadre_name": cadres_mod.name_of(projs, cadre)}
+    except Exception:  # noqa: BLE001 - a bad record must not take the frame down
+        return none
 
 
 # --------------------------------------------------------------------- model

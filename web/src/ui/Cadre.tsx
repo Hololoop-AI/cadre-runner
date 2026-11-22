@@ -19,7 +19,7 @@
 // the tabs and Settings stay in reach from every one of them.
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { buildHome, groupBadges, HOLO, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
+import { buildHome, cadreHref, groupBadges, HOLO, HOME_GROUP, OTHER, serverView, type Fleet, type Group, type Nav } from '../model';
 import { RecordsScreen } from './Records';
 import { BlackboardScreen } from './Blackboard';
 import { AgentsList, ReviewScreen } from './Learn';
@@ -32,12 +32,8 @@ import { useServer } from './server';
 import './shell.css';
 import { TopBar } from './TopBar';
 
-/** A cadre's path: Other is /c/other, any other cadre /c/<its id>. */
-export function cadreHref(id: string, tab = ''): string {
-  if ((id === HOME_GROUP || id === HOLO) && (!tab || tab === 'home')) return '/';
-  const base = `/c/${id === OTHER ? 'other' : id === HOLO || id === HOME_GROUP ? 'holo' : encodeURIComponent(id)}`;
-  return tab && tab !== 'home' ? `${base}/${tab}` : base;
-}
+// a cadre's path lives in the model, so screens that need only the path do not pull in the shell
+export { cadreHref };
 
 /** The rail entry a rail id opens: Home is Holo (/), any cadre its own app. */
 export function railPick(id: string) {
