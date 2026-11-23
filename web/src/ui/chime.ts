@@ -2,6 +2,11 @@
 // sound file to ship. Browsers let a page play sound only after the reader
 // has touched it once (autoplay policy), so the context is made, or resumed,
 // on the first click or key press; before that a chime is silently skipped.
+// On a review page every click lands in the framed page, never in this
+// document, but the browser counts it for this window too
+// (navigator.userActivation, propagated to the frame's ancestors): so the
+// context is also made when focus moves into the page after a click, and,
+// failing that, when a chime is due.
 
 let ctx: AudioContext | null = null;
 
@@ -17,18 +22,30 @@ function context(): AudioContext | null {
   return ctx;
 }
 
+/** Whether the reader has ever clicked or typed in this window, or in a page framed in it. */
+function touched(): boolean {
+  return navigator.userActivation?.hasBeenActive === true;
+}
+
 /** Make the audio context on the reader's first gesture. Returns the stop function. */
-export function unlockChimeOnGesture(doc: Document = document): () => void {
+export function unlockChimeOnGesture(doc: Document = document, win: Window = window): () => void {
+  // listen until the sound actually runs: a browser that wants a click in this very window
+  // (rather than one in the framed page) keeps the context suspended until then
   const unlock = () => {
-    void context()?.resume().catch(() => {});
-    stop();
+    const c = context();
+    if (!c) return stop();
+    void c.resume().then(() => { if (c.state === 'running') stop(); }).catch(() => {});
   };
+  // a click in the framed review page takes focus out of this window: by then it counts as touched
+  const intoFrame = () => { if (touched()) unlock(); };
   const stop = () => {
     doc.removeEventListener('pointerdown', unlock, true);
     doc.removeEventListener('keydown', unlock, true);
+    win.removeEventListener('blur', intoFrame);
   };
   doc.addEventListener('pointerdown', unlock, true);
   doc.addEventListener('keydown', unlock, true);
+  win.addEventListener('blur', intoFrame);
   return stop;
 }
 
@@ -59,8 +76,14 @@ const CHIMES: Record<'ready' | 'problem', Note[]> = {
 
 /** Play a chime, quiet. False when this tab cannot play sound yet. */
 export function playChime(kind: 'ready' | 'problem' = 'ready', volume = 0.08): boolean {
-  const c = ctx; // only once a gesture made it: never start audio on our own
-  if (!c || c.state !== 'running') return false;
+  // only once the reader has touched this window or its page: never start audio on our own
+  const c = ctx ?? (touched() ? context() : null);
+  if (!c) return false;
+  if (c.state !== 'running') {
+    // not this chime, but the next one: the browser may still accept the earlier click
+    if (touched()) void c.resume().catch(() => {});
+    return false;
+  }
   const t0 = c.currentTime;
   CHIMES[kind].forEach((note) => playNote(c, note, t0, volume));
   return true;
