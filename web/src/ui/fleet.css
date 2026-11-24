@@ -393,7 +393,13 @@ details.addtag[open]{display:inline-flex}
 .card.items[hidden]{display:none}
 details.item[data-machine] .proj::after{content:' · ' attr(data-machine)}
 dialog#newwork{background:var(--card);color:var(--fg);border:1px solid var(--border);
- border-radius:12px;width:min(560px,92vw)}
+ border-radius:12px;width:min(560px,92vw);
+ /* fit the part of the screen that shows: a phone browser's own bars cover the rest (100vh and
+    the dialog's default reach under them, and Start was hidden there); the form scrolls inside */
+ max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;padding-bottom:0}
+/* Cancel and Start stay in view at the foot of the dialog however long the form scrolls */
+dialog#newwork .dlgacts{position:sticky;bottom:0;margin:14px -1em 0;padding:10px 1em calc(10px + env(safe-area-inset-bottom,0px));
+ background:var(--card);border-top:1px solid var(--border)}
 dialog#newwork::backdrop{background:#0008}
 dialog#newwork h3{margin:0}
 dialog#newwork label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
