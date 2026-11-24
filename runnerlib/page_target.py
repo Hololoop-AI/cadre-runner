@@ -1,4 +1,5 @@
-"""What a driver's note on a picture is about, read back from the page file.
+"""What a driver's note is on, read back from the page file: the picture a
+note on a picture is about, and for any note its whole passage and section.
 
 The page server records a note's target as a selector plus the element's text
 (runnerlib/surface.py, _anchor). A picture has no text, so a note on one used
@@ -39,6 +40,13 @@ _ITEMS = {"li": {"li"}, "dt": {"dt", "dd"}, "dd": {"dt", "dd"}, "tr": {"tr"},
 _ITEM_SCOPE = {"ul", "ol", "dl", "table", "tbody", "thead", "tfoot", "select"}
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
          "source", "track", "wbr"}
+# What a browser's innerText leaves out, and the tags it puts a break around:
+# the file's words have to read as the page server's did (`text` in its
+# context(), innerText with whitespace collapsed) for a clipped quote to be
+# recognised as the start of them.
+_UNSEEN = {"head", "script", "style", "template", "noscript"}
+_IN_HEAD = {"base", "link", "meta", "noscript", "script", "style", "template", "title"}
+_BREAKS = _CLOSES_P | {"br", "li", "tr", "td", "th", "dt", "dd", "body", "html"}
 _PICTURES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
 
 
@@ -55,7 +63,21 @@ class _Tree(HTMLParser):
         self.root = _Node("#root", {}, None)
         self.open = [self.root]
 
+    def _space(self):
+        node = _Node("#text", {}, self.open[-1])
+        node.text.append(" ")
+        self.open[-1].kids.append(node)
+
     def handle_starttag(self, tag, attrs):
+        # A browser ends <head> at the first tag that cannot be in it, even when
+        # the page never closes it; otherwise the whole body would be unseen.
+        if tag not in _IN_HEAD:
+            for i in range(len(self.open) - 1, 0, -1):
+                if self.open[i].tag == "head":
+                    del self.open[i:]
+                    break
+        if tag in _BREAKS:
+            self._space()
         if tag in _CLOSES_P and self.open[-1].tag == "p":
             self.open.pop()
         if tag in _ITEMS:
@@ -71,19 +93,25 @@ class _Tree(HTMLParser):
             self.open.append(node)
 
     def handle_startendtag(self, tag, attrs):
+        if tag in _BREAKS:
+            self._space()
         self.open[-1].kids.append(_Node(tag, {k: v or "" for k, v in attrs}, self.open[-1]))
 
     def handle_endtag(self, tag):
         for i in range(len(self.open) - 1, 0, -1):
             if self.open[i].tag == tag:
                 del self.open[i:]
+                if tag in _BREAKS:
+                    self._space()
                 return
 
     def handle_data(self, data):
-        # only a caption's words are ever read: keep them, and nothing else
-        for node in self.open[1:]:
-            if node.tag == "figcaption":
-                node.text.append(data)
+        # Text is a child node of its own, in document order, so an element's
+        # words read back in the order the page shows them (`_text`).
+        if data and not any(n.tag in _UNSEEN for n in self.open):
+            node = _Node("#text", {}, self.open[-1])
+            node.text.append(data)
+            self.open[-1].kids.append(node)
 
 
 def _walk(node: _Node):
@@ -120,7 +148,58 @@ def _select(root: _Node, selector: str) -> list[_Node]:
 
 
 def _text(node: _Node) -> str:
-    return " ".join("".join(node.text).split())
+    """Every word inside `node`, whitespace collapsed as a browser's
+    innerText roughly would."""
+    return " ".join("".join(k.text[0] for k in _walk(node) if k.tag == "#text").split())
+
+
+_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+def _the_element(page: Path, selector: str, tags=()) -> tuple[_Node, _Node] | None:
+    """(the page's root, the one element `selector` names in it), or None when
+    the file is unreadable or the selector does not name exactly one element
+    (of one of `tags`, when given)."""
+    if not selector:
+        return None
+    try:
+        stat = page.stat()
+        root = _parsed(str(page), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+    hits = [n for n in _select(root, selector) if not tags or n.tag in tags]
+    return (root, hits[0]) if len(hits) == 1 else None
+
+
+def _ancestry(node: _Node):
+    """`node`, then each element it sits in, up to the root."""
+    while node is not None:
+        yield node
+        node = node.up
+
+
+def locate(page: str | Path, selector: str, tag: str = "") -> dict | None:
+    """`{"text": ..., "heading": ...}` for the element a note is on: all of its
+    words (the page server sends only the first 240 characters), and the
+    nearest heading above it, so the next turn can find the note in the page.
+    A note on a heading, or on something inside one, has no heading above it
+    to name. `tag`, when it is an element's, must match too: a page whose DOM
+    differs from its file can shift a count onto another element.
+    None when the selector does not name exactly one element of the file."""
+    found = _the_element(Path(page), selector, (tag,) if tag and tag != "text" else ())
+    if not found:
+        return None
+    root, el = found
+    if any(n.tag in _HEADINGS for n in _ancestry(el)):
+        return {"text": _text(el), "heading": ""}
+    last = None
+    for node in _walk(root):
+        if node is el:
+            break
+        if node.tag in _HEADINGS:
+            last = node
+    heading = "" if last is None else _text(last)
+    return {"text": _text(el), "heading": heading}
 
 
 def describe(page: str | Path, selector: str, tag: str) -> dict | None:
@@ -128,17 +207,12 @@ def describe(page: str | Path, selector: str, tag: str) -> dict | None:
     note is on, or None when the page does not say. `image` is a file in the
     page's own directory, never one outside it."""
     page = Path(page)
-    if not selector or tag not in ("img", "figure", "picture"):
+    if tag not in ("img", "figure", "picture"):
         return None
-    try:
-        stat = page.stat()
-        root = _parsed(str(page), stat.st_mtime_ns, stat.st_size)
-    except OSError:
+    found = _the_element(page, selector, (tag,))
+    if not found:
         return None
-    hits = [n for n in _select(root, selector) if n.tag == tag]
-    if len(hits) != 1:
-        return None
-    el = hits[0]
+    el = found[1]
     figure = el if el.tag == "figure" else (el.up if el.up and el.up.tag in ("figure", "picture") else None)
     if figure is not None and figure.tag == "picture":
         figure = figure.up if figure.up and figure.up.tag == "figure" else None

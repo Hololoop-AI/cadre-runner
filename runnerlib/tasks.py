@@ -391,7 +391,8 @@ def format_feedback(notes: list[dict]) -> str:
     Each note is quoted under the text it was attached to, because an
     annotation without its anchor is a floating sentence the session has to
     guess the target of (the same finding that put anchors on surface feedback
-    in the first place).
+    in the first place). A note that knows its section says so first, so the
+    session can find it in the whole page ($surface_prev).
     """
     out = []
     for note in notes:
@@ -399,8 +400,10 @@ def format_feedback(notes: list[dict]) -> str:
         text = (note.get("text") or "").strip()
         if not text:
             continue
+        section = (note.get("section") or "").strip()
+        where = f"On the page, under the heading \u201c{section}\u201d:\n\n" if section else ""
         quoted = "> " + anchor.replace("\n", "\n> ") + "\n\n" if anchor else ""
-        out.append(quoted + text)
+        out.append(where + quoted + text)
     return "\n\n---\n\n".join(out)
 
 

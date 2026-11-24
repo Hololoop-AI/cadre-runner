@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from runnerlib import page_target, tasks
-from runnerlib.surface import _parse_feedback
+from runnerlib.surface import PASSAGE_LIMIT, _parse_feedback
 
 PAGE = """<!doctype html><html><head><title>p</title></head><body><main class=wrap>
 <section id=mockups>
@@ -95,7 +95,8 @@ def test_the_next_turn_reads_the_note_under_the_picture_and_opens_the_picture():
                 "selector": "section#mockups > p"})
     _, _, free = _parse_feedback(raw, str(d / "page.html"))
     feedback = tasks.format_feedback(free)
-    assert feedback.startswith("> the image captioned \u201cA on desktop: one bar.\u201d\n\nThis failed to render\n\n"
+    assert feedback.startswith("On the page, under the heading \u201cMockups\u201d:\n\n"
+                               "> the image captioned \u201cA on desktop: one bar.\u201d\n\nThis failed to render\n\n"
                                f"[the image this note is on: {(d / 'media' / 'a.png').resolve()}]")
     # a note on text is quoted under its text, as it always was
     assert feedback.endswith("> Text inline\n\nShorter")
@@ -167,3 +168,110 @@ def test_a_note_on_a_figure_and_a_page_rewritten_between_polls():
     assert page_target.describe(page, "figure#f", "figure")["caption"] == "One"
     page.write_text('<figure id=f><img src="media/b.png" alt="Second"><figcaption>Two, rewritten</figcaption></figure>')
     assert page_target.describe(page, "figure#f", "figure")["caption"] == "Two, rewritten"
+
+
+LONG = ("The page server quotes only the first part of what a note is on, so a long "
+        "paragraph arrives cut short and the next turn has to go and find the rest. ") * 4
+
+TEXT_PAGE = f"""<!doctype html><html><body><main>
+<h2 id=one>The plan</h2><p>Short one.</p>
+<section><h2 id=two>Driver calls</h2><h3>1. Which board?</h3>
+<p>{LONG}<a href="#x">a link</a> and <code>code</code> after it.</p></section>
+<h2 id=three>Check it</h2>
+</main></body></html>"""
+
+
+def text_page() -> Path:
+    page = SCRATCH / "text.html"
+    page.write_text(TEXT_PAGE)
+    return page
+
+
+def test_locate_reads_the_whole_passage_and_the_heading_above_it():
+    seen = page_target.locate(text_page(), "main > section > p")
+    assert seen["text"] == " ".join((LONG + "a link and code after it.").split())
+    assert seen["heading"] == "1. Which board?"
+    assert page_target.locate(text_page(), "main > p")["heading"] == "The plan"
+    # a note on a heading is not "under" itself
+    assert page_target.locate(text_page(), "h2#three")["heading"] == ""
+    assert page_target.locate(text_page(), "main > h2") is None         # two of them: not one
+    assert page_target.locate(SCRATCH / "missing.html", "p") is None
+
+
+def test_a_note_on_a_long_passage_arrives_with_all_of_it_and_its_section():
+    page = text_page()
+    clipped = " ".join(LONG.split())[:240]           # what the page server sends
+    raw = poll({"uid": "1", "prompt": "Push back on this", "tag": "p", "text": clipped,
+                "selector": "main > section > p"})
+    _, _, free = _parse_feedback(raw, str(page))
+    feedback = tasks.format_feedback(free)
+    assert feedback.startswith("On the page, under the heading \u201c1. Which board?\u201d:\n\n> ")
+    assert "a link and code after it." in feedback and feedback.endswith("\n\nPush back on this")
+
+
+def test_words_the_file_does_not_start_with_are_kept_as_sent():
+    """The page the driver saw can differ from its file (a script changed it):
+    then their quote stands, and no heading is guessed from the file either."""
+    raw = poll({"uid": "1", "prompt": "Odd", "tag": "p", "text": "Something a script wrote",
+                "selector": "main > p"})
+    _, _, free = _parse_feedback(raw, str(text_page()))
+    assert tasks.format_feedback(free) == "> Something a script wrote\n\nOdd"
+
+
+def test_a_passage_is_bounded():
+    huge = "word " * 2000
+    page = SCRATCH / "huge.html"
+    page.write_text(f"<html><body><h2>H</h2><p>{huge}</p></body></html>")
+    raw = poll({"uid": "1", "prompt": "Too long", "tag": "p", "text": " ".join(huge.split())[:240], "selector": "body > p"})
+    _, _, free = _parse_feedback(raw, str(page))
+    anchor = free[0]["anchor"]
+    assert len(anchor) <= PASSAGE_LIMIT + 2 and len(anchor) > 240
+    assert anchor.endswith(" \u2026")
+
+
+def test_a_selection_of_words_keeps_exactly_those_words():
+    """A driver who selected words chose them: the note is not widened to the
+    paragraph, though it still says where it is."""
+    raw = poll({"uid": "", "prompt": "This bit", "tag": "text", "text": "quotes only the first part",
+                "selector": "main > section > p"})
+    _, _, free = _parse_feedback(raw, str(text_page()))
+    assert tasks.format_feedback(free) == ("On the page, under the heading \u201c1. Which board?\u201d:\n\n"
+                                           "> quotes only the first part\n\nThis bit")
+
+
+def test_a_short_note_is_not_widened():
+    """Under the page server's clip, what it sent is the whole of what the
+    driver saw; only the heading is added."""
+    raw = poll({"uid": "1", "prompt": "Yes", "tag": "p", "text": "Short one.", "selector": "main > p"})
+    _, _, free = _parse_feedback(raw, str(text_page()))
+    assert free[0]["anchor"] == "Short one." and free[0]["section"] == "The plan"
+
+
+def test_the_file_reads_as_the_browser_shows_it():
+    page = SCRATCH / "seen.html"
+    page.write_text("<html><head><title>T</title><style>.a{}</style></head><body>"
+                    "<h2>Plan <code>x</code></h2>"
+                    "<div id=d>Hi<script>var s=1;</script> there<br>next<ul><li>a</li><li>b</li></ul></div>"
+                    "</body></html>")
+    seen = page_target.locate(page, "div#d")
+    assert seen == {"text": "Hi there next a b", "heading": "Plan x"}
+    # a note on something inside a heading has no heading above it
+    assert page_target.locate(page, "h2 > code")["heading"] == ""
+    # the tag must match when it is an element's
+    assert page_target.locate(page, "div#d", "p") is None
+
+
+def test_a_heading_the_page_server_sent_is_kept():
+    clipped = " ".join(LONG.split())[:240]
+    raw = poll({"uid": "1", "prompt": "Here", "tag": "p", "text": clipped,
+                "selector": "main > section > p", "section": "Its own heading"})
+    _, _, free = _parse_feedback(raw, str(text_page()))
+    assert free[0]["section"] == "Its own heading"
+
+
+def test_inside_a_later_heading_and_with_head_left_open():
+    page = SCRATCH / "nested.html"
+    page.write_text("<html><head><title>T</title><body><h2>A</h2><p>x</p>"
+                    "<h2>B <span>inner</span></h2><p>under B</p></body></html>")
+    assert page_target.locate(page, "html > body > h2:nth-of-type(2) > span")["heading"] == ""
+    assert page_target.locate(page, "html > body > p:nth-of-type(2)") == {"text": "under B", "heading": "B inner"}

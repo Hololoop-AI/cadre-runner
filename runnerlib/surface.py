@@ -424,6 +424,12 @@ def _read_outbox(cfg) -> list[dict]:
 
 
 ANCHOR_LIMIT = 200
+# A passage read back whole from the page file (_in_place) is longer than
+# what the page server sends, but still bounded: a note on a whole section
+# must not paste the section into every turn's prompt. Everything that reads a
+# note's anchor gets the longer one: the next turn's feedback, and the passage
+# a side thread opened on it starts from.
+PASSAGE_LIMIT = 1500
 
 
 def _anchor(p: dict) -> dict:
@@ -433,7 +439,8 @@ def _anchor(p: dict) -> dict:
     return {"uid": str(p.get("uid") or ""),
             "selector": str(p.get("selector") or ""),
             "tag": str(p.get("tag") or ""),
-            "anchor": str(p.get("text") or "").strip()}
+            "anchor": str(p.get("text") or "").strip(),
+            **({"section": str(p["section"])} if p.get("section") else {})}
 
 
 def _images(p: dict) -> str:
@@ -481,6 +488,57 @@ def _on_picture(p: dict, page: str | None) -> dict:
     return {**p, "text": words[:ANCHOR_LIMIT], **({"pictured": seen["image"]} if seen["image"] else {})}
 
 
+# The page server clips what a note is on to this many characters
+# (review-surface src/artifact-sdk.js, context() and the text-selection path).
+SERVER_CLIP = 240
+
+
+def _clip(text: str, limit: int) -> str:
+    """At most `limit` characters, cut at a word and marked, so the next turn
+    can tell the passage goes on."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " \u2026"
+
+
+def _in_place(p: dict, page: str | None) -> dict:
+    """A note's whole passage and the heading it sits under, read back from
+    the page file (page_target.locate). The page server quotes only the first
+    240 characters of what a note is on, and the next turn had no way to tell
+    which section of the page it belonged to.
+
+    Only where the file shows what the driver saw: the passage is restored when
+    the server's words were clipped and the file's element starts with them,
+    and the heading is added only when the file agrees with those words. A
+    selection of words (tag `text`) is never widened: the driver chose those
+    exact words. A heading the page server sent itself is kept.
+
+    A stopgap, and best effort like _on_picture: any failure leaves the note as
+    it came. Delete it rather than port it once the page system sends the whole
+    passage and its section with each note, or keeps pages anywhere other than a
+    file the runner can read."""
+    sel = str(p.get("selector") or "")
+    if not page or not sel:
+        return p
+    try:
+        seen = page_target.locate(page, sel, str(p.get("tag") or ""))
+    except Exception:
+        return p
+    if not seen:
+        return p
+    raw = str(p.get("text") or "")
+    sent = " ".join(raw.split())
+    whole = seen["text"]
+    agrees = not sent or whole.startswith(sent) or (p.get("tag") == "text" and sent in whole)
+    out = dict(p)
+    if (p.get("tag") != "text" and len(raw) >= SERVER_CLIP
+            and len(whole) > len(sent) and whole.startswith(sent)):
+        out["text"] = _clip(whole, PASSAGE_LIMIT)
+    if agrees and seen["heading"] and not p.get("section"):
+        out["section"] = _clip(seen["heading"], ANCHOR_LIMIT)
+    return out
+
+
 def _classify_prompts(prompts: list[dict], page: str | None = None) -> tuple[list[dict], list[dict]]:
     """(decisions/answers, free-text feedback). Tokens are authoritative; every
     non-token prompt is driver feedback worth recording. Both kinds carry the
@@ -490,7 +548,9 @@ def _classify_prompts(prompts: list[dict], page: str | None = None) -> tuple[lis
     for p in prompts:
         if not isinstance(p, dict):
             p = {"prompt": str(p)}
-        p = _on_picture(p, page)
+        # Placed before a picture is named, so the file is compared with what
+        # the page server itself sent about the element.
+        p = _on_picture(_in_place(p, page), page)
         text = str(p.get("prompt") or "")
         anchor = _anchor(p)
         t = _TASK_DECISION_RE.search(text)
@@ -777,7 +837,8 @@ def _adopt_unowned(cfg, reg, log, sess: dict) -> None:
             continue
         payload, structured, free = _parse_feedback(raw, path)
         notes = [{"anchor": i.get("anchor") or "",
-                  "text": (i.get("text") or "").strip()}
+                  "text": (i.get("text") or "").strip(),
+                  **({"section": i["section"]} if i.get("section") else {})}
                  for i in [*structured, *free]]
         notes = [n for n in notes if n["text"]]
         if not notes:
@@ -1152,7 +1213,7 @@ def _keep(cfg, task_id: str, name: str, notes: list[dict]) -> Path:
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_text(json.dumps(
         [{"text": n.get("text") or "", "anchor": n.get("anchor") or "",
-          "prompt": n.get("prompt") or ""}
+          "section": n.get("section") or "", "prompt": n.get("prompt") or ""}
          for n in notes], indent=1))
     return kept
 
