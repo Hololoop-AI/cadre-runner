@@ -164,12 +164,14 @@ describe('a cadre app', () => {
   it('draws the work as cards by default, and opens one large above everything with its runs and Start work', async () => {
     serving('/c/dev');
     await act(async () => { render(<App />); });
-    const tile = document.querySelector('button.wtile[data-card=aaaaaa]') as HTMLButtonElement;
+    const tile = document.querySelector('.wtile[data-card=aaaaaa]') as HTMLElement;
     expect(tile.textContent).toContain('Cadre slice 2');
     expect(tile.querySelector('.stbadge, .badge')!.textContent).toBe('Your turn');
-    expect(document.querySelector('button.wtile.loose')!.textContent).toContain('t-dev page'); // a run on no card is a card too, dashed
+    expect(document.querySelector('.wtile.loose')!.textContent).toContain('t-dev page'); // a run on no card is a card too, dashed
+    // one click on the tile goes to its newest review page; its corner button opens the card
+    expect(tile.querySelector('a.wtlink')!.getAttribute('href')).toMatch(/^\/view\//);
     expect(document.querySelector('dialog.wlarge')).toBeNull();
-    await act(async () => { tile.click(); });
+    await act(async () => { (tile.querySelector('button.wtdetails') as HTMLButtonElement).click(); });
     const large = document.querySelector('dialog.wlarge') as HTMLDialogElement;
     expect(large.getAttribute('aria-label')).toBe('Cadre slice 2');
     expect(within(large).getByText('t-card page')).toBeTruthy();
@@ -179,7 +181,7 @@ describe('a cadre app', () => {
     // the choice of list is kept
     await act(async () => { screen.getByRole('button', { name: 'List' }).click(); });
     expect(window.localStorage.getItem('cadre.workMode')).toBe('list');
-    expect(document.querySelector('button.wtile')).toBeNull();
+    expect(document.querySelector('.wtile')).toBeNull();
     expect(document.querySelector('details.wcard[data-card=aaaaaa]')).toBeTruthy();
   });
 
