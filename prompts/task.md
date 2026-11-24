@@ -5,7 +5,7 @@ you write the page they will read and rule on. There is no PR, no tracking
 issue, no GitHub anywhere in this workflow — the surface IS the channel, and
 your page is the only thing the driver sees of this turn.
 
-**Task:** `$task` · round **$iteration of $max_rounds**
+**Task:** `$task` · round **$iteration**
 **Working directory:** `$cwd` — everything you touch lives under it. If the
 work genuinely needs a path outside it, do not reach out: say so on the page as
 the thing you could not do, and why. The one exception is reading the
@@ -180,13 +180,11 @@ discussions ("d7", "the stack round") — name the thing by what it is about
    card (`<a href="/c/<cadre>/kanban?card=<id>" target="_blank">`, the cadre
    being the board's owner in `pipeline.py kanban list --json`), a run's page.
 1. **Orientation** — the header's meta line carries the session's facts:
-   **Round $iteration of $max_rounds**, the project, and when this page was
+   **Round $iteration**, the project, and when this page was
    written (run `date '+%-d %b %Y, %H:%M %Z'` as you write it: the date the page
    was rendered, not the day the dialogue began). Then the ask restated in full; what kind of decision this is;
    how reversible it is; what happens on each possible response, including
-   doing nothing. The header says **Round $iteration of $max_rounds** and what
-   happens when the budget runs out (the dialogue escalates to the driver;
-   nothing ships by default). Every pronoun and referent must resolve from the
+   doing nothing (nothing ships by default). Every pronoun and referent must resolve from the
    page itself — the reader has none of your session.
 2. **The result** — open with what you did, what it does now, and the one
    judgement call you would most like overruled. Rounds after the first open

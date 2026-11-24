@@ -42,4 +42,4 @@ default_model = "opus"
 # tutor = "medium"
 
 [limits]
-max_rounds_per_stage = 5           # dialogue rounds offered, and agent-to-agent handoffs per task
+max_rounds_per_stage = 5           # agent-to-agent handoffs per task (dialogue rounds are not capped)

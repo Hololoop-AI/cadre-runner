@@ -14,6 +14,7 @@ Run directly: python3 tests/test_dialogue_actions.py
 
 import io
 import json
+import re
 import os
 import sys
 import tempfile
@@ -594,7 +595,9 @@ def test_a_feedback_turn_resumes_the_recorded_session_at_round_two():
 
     # the driver's words and the round reached the RENDERED prompt
     assert "the second table is unreadable" in turn["prompt"]
-    assert "round **2 of 5**" in turn["prompt"]
+    # a dialogue has no round budget (Continue keeps going), so the round is shown alone
+    assert "round **2**" in turn["prompt"]
+    assert not re.search(r"round \*\*\d+\*\* of|of \$max_rounds", turn["prompt"], re.I)
     assert "$feedback" not in turn["prompt"] and "$cwd" not in turn["prompt"]
     assert str(work) in turn["prompt"]
 
