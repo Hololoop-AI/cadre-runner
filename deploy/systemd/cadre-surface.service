@@ -12,6 +12,11 @@ Environment=REVIEW_SURFACE_NO_OPEN=1
 # without spending a round of the dialogue. Keep it equal to runnerlib/surface.py
 # ANNOTATION_ACTIONS, which `pipeline.py up` passes (tests/test_up.py checks).
 Environment='REVIEW_SURFACE_ANNOTATION_ACTIONS=[{"id":"thread","label":"Thread","title":"Talk about this in a side chat; ask it to teach you, or to send a note to the page. This dialogue keeps its round","prefix":"thread: ","deliver":"now","fallback":"this passage"}]'
+# The ⋮ menu inside Cadre: "Send page and end" hidden (the verdict form closes a
+# round), "End session" disabled as under revision. Equal to runnerlib/surface.py
+# MENU_HIDE and MENU_DISABLE (tests/test_up.py checks).
+Environment=REVIEW_SURFACE_MENU_HIDE=send-page-and-end
+Environment=REVIEW_SURFACE_MENU_DISABLE=end-session
 ExecStart=/usr/bin/node %h/Projects/review-surface/dist/cli.mjs server --port 4387
 Restart=on-failure
 RestartSec=3
