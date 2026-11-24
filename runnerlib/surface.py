@@ -1084,6 +1084,15 @@ ANNOTATION_ACTIONS = json.dumps([{
 }], separators=(",", ":"))
 
 
+# The page server's ⋮ menu inside Cadre: "Send page and end" has no job here (the
+# verdict form sends the notes and closes the round), so it is hidden; "End
+# session" stays listed but disabled, marked as under revision, until ending a
+# session means something for a Cadre dialogue (driver, 23 Nov 2026). `up`
+# passes these too, and the service unit carries the same values.
+MENU_HIDE = "send-page-and-end"
+MENU_DISABLE = "end-session"
+
+
 def _side_thread(note: dict) -> tuple[str, str] | None:
     """(mode, topic) for a `thread:` / `learn:` / `study:` annotation, else None."""
     m = _SIDE_RE.match(note.get("text") or "")

@@ -87,3 +87,15 @@ def test_up_gives_the_page_server_the_study_button_the_service_unit_does(monkeyp
                 if "REVIEW_SURFACE_ANNOTATION_ACTIONS=" in ln)
     (assignment,) = shlex.split(line.split("=", 1)[1])
     assert assignment == "REVIEW_SURFACE_ANNOTATION_ACTIONS=" + surface.ANNOTATION_ACTIONS
+
+
+def test_up_hides_and_disables_the_menu_items_the_service_unit_does(monkeypatch):
+    for name in ("REVIEW_SURFACE_MENU_HIDE", "REVIEW_SURFACE_MENU_DISABLE"):
+        monkeypatch.delenv(name, raising=False)
+    ran, _ = _up(monkeypatch, _checks(**{"review-surface server": "nothing answering"}))
+    assert ran["env"]["REVIEW_SURFACE_MENU_HIDE"] == surface.MENU_HIDE == "send-page-and-end"
+    assert ran["env"]["REVIEW_SURFACE_MENU_DISABLE"] == surface.MENU_DISABLE == "end-session"
+    unit = Path(__file__).resolve().parents[1] / "deploy/systemd/cadre-surface.service"
+    lines = [ln for ln in unit.read_text().splitlines() if ln.startswith("Environment=REVIEW_SURFACE_MENU_")]
+    assert lines == ["Environment=REVIEW_SURFACE_MENU_HIDE=" + surface.MENU_HIDE,
+                     "Environment=REVIEW_SURFACE_MENU_DISABLE=" + surface.MENU_DISABLE]

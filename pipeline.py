@@ -191,6 +191,10 @@ def cmd_up(cfg, args):
            # the Thread button on the annotation popup; an operator's own value wins
            "REVIEW_SURFACE_ANNOTATION_ACTIONS": (os.environ.get("REVIEW_SURFACE_ANNOTATION_ACTIONS")
                                                  or surface_mod.ANNOTATION_ACTIONS),
+           # the ⋮ menu items Cadre hides and disables; an operator's own value wins
+           "REVIEW_SURFACE_MENU_HIDE": os.environ.get("REVIEW_SURFACE_MENU_HIDE") or surface_mod.MENU_HIDE,
+           "REVIEW_SURFACE_MENU_DISABLE": (os.environ.get("REVIEW_SURFACE_MENU_DISABLE")
+                                           or surface_mod.MENU_DISABLE),
            **({"CADRE_CONFIG": args.config} if args.config else {}),
            **_allowed_hosts_env(cfg, server_running)}
     sys.exit(_supervise(_up_children(cfg, args, start_server=not server_running), env))
