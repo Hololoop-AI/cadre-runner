@@ -41,7 +41,8 @@ time is minimized. When the goals conflict, cut detail — never clarity.
 - Everything below is the full current briefing, restated — the driver decides off this
   page alone, never by diffing against memory. Mark changed sections with
   `<span class="chip">changed</span>`; leave unchanged sections unmarked so they can skip.
-- Carry `Round N of M` in the header and say what happens when the budget runs out.
+- Carry `Round N` in the header. A dialogue has no round budget: it goes on while the driver
+  chooses Continue.
 
 ## Showing code
 

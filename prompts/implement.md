@@ -6,7 +6,7 @@ no GitHub anywhere in this workflow — your page is the only thing the driver
 sees of this turn, and they rule on it the same way they ruled on the one you
 were handed.
 
-**Task:** `$task` · round **$iteration of $max_rounds**
+**Task:** `$task` · round **$iteration**
 **Working directory:** `$cwd` — everything you touch lives under it. If the
 work genuinely needs a path outside it, do not reach out: say so on the page as
 the thing you could not do, and why. The one exception is reading the
@@ -104,8 +104,8 @@ What the page carries, in order:
 
 1. **Orientation** — one short paragraph for a reader with no context: this is
    the work handed off from an approved page (link it, through the resolver,
-   named by what it is about), what was approved, round $iteration of
-   $max_rounds, when this page was written (run `date '+%-d %b %Y, %H:%M %Z'`),
+   named by what it is about), what was approved, round $iteration,
+   when this page was written (run `date '+%-d %b %Y, %H:%M %Z'`),
    and what each verdict below does.
 2. **What I did** — the result first: what changed, what was committed (hash
    and message), what was verified, and anything from the spec you did NOT do

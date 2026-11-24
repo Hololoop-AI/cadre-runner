@@ -506,7 +506,7 @@ def write_feedback(cfg, reg, task_id: str, cwd: str, notes: list[dict],
     payload shape is the config's, not this function's — `target` tells it from
     the other two commands on the topic, `resume` is what the spawn seam reads
     to continue the session rather than start one, and the bumped `iteration`
-    is what the node renders as "round N of M". Notes side threads carried to
+    is what the node renders as "round N". Notes side threads carried to
     this dialogue ride along after the driver's own.
     """
     text = format_feedback(list(notes) + take_carried(cfg, task_id))
